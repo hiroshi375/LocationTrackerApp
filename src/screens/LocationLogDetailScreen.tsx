@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
-    Button,
+    Pressable,
     ScrollView,
     StyleSheet,
     TextInput,
@@ -222,16 +222,34 @@ export default function LocationLogDetailScreen({ route, navigation }: Props) {
                 />
 
                 <View style={styles.buttonSpace}>
-                    <Button
-                        title={saving ? "保存中..." : "メモを保存"}
+                    <Pressable
+                        style={({ pressed }) => [
+                            styles.primaryButton,
+                            pressed && !saving && styles.primaryButtonPressed,
+                            saving && styles.primaryButtonDisabled,
+                        ]}
                         onPress={handleSaveMemo}
                         disabled={saving}
-                    />
+                    >
+                        <Text style={styles.primaryButtonText}>
+                            {saving ? "保存中..." : "メモを保存"}
+                        </Text>
+                    </Pressable>
                 </View>
             </View>
 
             <View style={styles.buttonSpace}>
-                <Button title="この位置を地図で表示" onPress={handleOpenMap} />
+                <Pressable
+                    style={({ pressed }) => [
+                        styles.primaryButton,
+                        pressed && styles.primaryButtonPressed,
+                    ]}
+                    onPress={handleOpenMap}
+                >
+                    <Text style={styles.primaryButtonText}>
+                        この位置を地図で表示
+                    </Text>
+                </Pressable>
             </View>
         </ScrollView>
     );
@@ -301,5 +319,24 @@ const styles = StyleSheet.create({
     },
     buttonSpace: {
         marginTop: 12,
+    },
+    primaryButton: {
+        backgroundColor: "#4b6f8f",
+        borderRadius: 8,
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    primaryButtonPressed: {
+        opacity: 0.75,
+    },
+    primaryButtonDisabled: {
+        opacity: 0.5,
+    },
+    primaryButtonText: {
+        color: "#fff",
+        fontSize: 15,
+        fontWeight: "bold",
     },
 });

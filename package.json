@@ -8,7 +8,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "postinstall": "bash scripts/fix-nested-links.sh"
   },
   "dependencies": {
     "@aws-amplify/core": "^6.16.4",
@@ -53,8 +54,6 @@
     "xstate": "^4.38.3"
   },
   "devDependencies": {
-    "@aws-amplify/backend": "^1.23.0",
-    "@aws-amplify/backend-cli": "^1.8.3",
     "@babel/core": "^7.29.7",
     "@babel/generator": "^7.29.7",
     "@babel/traverse": "^7.29.7",

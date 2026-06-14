@@ -1,10 +1,11 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { getCurrentUser } from "aws-amplify/auth";
 import * as Location from "expo-location";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
+    Animated,
     KeyboardAvoidingView,
     Platform,
     Pressable,
@@ -64,6 +65,38 @@ export default function LocationHomeScreen({ navigation }: Props) {
             intervalMs: recordIntervalMs,
             distanceMeters: recordDistanceMeters,
         });
+
+    const recordingBlinkAnim = useRef(new Animated.Value(1)).current;
+
+    useEffect(() => {
+        if (!isRecording) {
+            recordingBlinkAnim.stopAnimation();
+            recordingBlinkAnim.setValue(1);
+            return;
+        }
+
+        // 点滅アニメーションの開始
+        const animation = Animated.loop(
+            Animated.sequence([
+                Animated.timing(recordingBlinkAnim, {
+                    toValue: 0.2,
+                    duration: 500,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(recordingBlinkAnim, {
+                    toValue: 1,
+                    duration: 500,
+                    useNativeDriver: true,
+                }),
+            ]),
+        );
+
+        animation.start();
+
+        return () => {
+            animation.stop();
+        };
+    }, [isRecording, recordingBlinkAnim]);
 
     // 位置情報を取得する処理
     const handleGetLocation = async () => {
@@ -208,9 +241,30 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 <View style={styles.autoRecordBox}>
                     <Text style={styles.autoRecordTitle}>自動記録</Text>
 
-                    <Text style={styles.autoRecordStatus}>
-                        状態: {isRecording ? "記録中" : "停止中"}
-                    </Text>
+                    <View style={styles.recordingStatusArea}>
+                        {isRecording ? (
+                            <Animated.View
+                                style={[
+                                    styles.recordingBadge,
+                                    {
+                                        opacity: recordingBlinkAnim,
+                                    },
+                                ]}
+                            >
+                                <View style={styles.recordingDot} />
+                                <Text style={styles.recordingBadgeText}>
+                                    記録中
+                                </Text>
+                            </Animated.View>
+                        ) : (
+                            <View style={styles.stoppedBadge}>
+                                <View style={styles.stoppedDot} />
+                                <Text style={styles.stoppedBadgeText}>
+                                    停止中
+                                </Text>
+                            </View>
+                        )}
+                    </View>
 
                     {lastRecordedAtText && (
                         <Text style={styles.autoRecordStatus}>
@@ -497,5 +551,54 @@ const styles = StyleSheet.create({
     },
     optionButtonTextSelected: {
         color: "#fff",
+    },
+    recordingStatusArea: {
+        marginTop: 6,
+        marginBottom: 8,
+        alignItems: "flex-start",
+    },
+    recordingBadge: {
+        flexDirection: "row",
+        alignItems: "center",
+        paddingVertical: 5,
+        paddingHorizontal: 10,
+        borderRadius: 999,
+        backgroundColor: "#ffecec",
+        borderWidth: 1,
+        borderColor: "#d9534f",
+    },
+    recordingDot: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: "#d9534f",
+        marginRight: 6,
+    },
+    recordingBadgeText: {
+        color: "#d9534f",
+        fontSize: 13,
+        fontWeight: "bold",
+    },
+    stoppedBadge: {
+        flexDirection: "row",
+        alignItems: "center",
+        paddingVertical: 5,
+        paddingHorizontal: 10,
+        borderRadius: 999,
+        backgroundColor: "#f0f0f0",
+        borderWidth: 1,
+        borderColor: "#ccc",
+    },
+    stoppedDot: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: "#999",
+        marginRight: 6,
+    },
+    stoppedBadgeText: {
+        color: "#666",
+        fontSize: 13,
+        fontWeight: "bold",
     },
 });

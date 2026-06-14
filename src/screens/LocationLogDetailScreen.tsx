@@ -6,10 +6,10 @@ import {
     Button,
     ScrollView,
     StyleSheet,
-    Text,
     TextInput,
     View,
 } from "react-native";
+import { Text } from "react-native-paper";
 import { client } from "../lib/client";
 
 import type { RootStackParamList } from "../navigation/RootNavigator";
@@ -32,7 +32,7 @@ export default function LocationLogDetailScreen({ route, navigation }: Props) {
     const [memo, setMemo] = useState("");
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
-    const [locationLog, setLocationLog] = useState<any | null>(null);
+    //const [locationLog, setLocationLog] = useState<any | null>(null);
 
     const loadLog = useCallback(async () => {
         try {
@@ -46,13 +46,23 @@ export default function LocationLogDetailScreen({ route, navigation }: Props) {
                 },
             });
 
+            if (result.errors) {
+                console.error("LocationLog get errors:", result.errors);
+                Alert.alert("取得エラー", "位置履歴を取得できませんでした。");
+                return;
+            }
+
             const log = result.data[0];
 
             if (!log) {
+                Alert.alert("データなし", "位置履歴が見つかりませんでした。");
+                navigation.goBack();
                 console.log("LocationLog not found");
                 return;
             }
 
+            {
+                /*
             setLocationLog({
                 id: log.id,
                 latitude: log.latitude,
@@ -60,6 +70,8 @@ export default function LocationLogDetailScreen({ route, navigation }: Props) {
                 memo: log.memo,
                 createdAt: log.createdAt,
             });
+            */
+            }
 
             if (result.errors) {
                 console.error("LocationLog get errors:", result.errors);
@@ -74,12 +86,12 @@ export default function LocationLogDetailScreen({ route, navigation }: Props) {
             }
 
             const item: LocationLogDetail = {
-                id: result.data.id,
-                latitude: Number(result.data.latitude),
-                longitude: Number(result.data.longitude),
-                accuracy: result.data.accuracy,
-                recordedAt: result.data.recordedAt,
-                memo: result.data.memo,
+                id: log.id,
+                latitude: Number(log.latitude),
+                longitude: Number(log.longitude),
+                accuracy: log.accuracy,
+                recordedAt: log.recordedAt,
+                memo: log.memo,
             };
 
             setLog(item);

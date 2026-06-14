@@ -33,24 +33,18 @@ export default function LocationLogScreen({ navigation }: Props) {
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [searchText, setSearchText] = useState("");
 
-    const loadLogs = async () => {
+    const loadLogs = useCallback(async () => {
         try {
             setLoading(true);
 
-            const result = await client.models.LocationLog.list({
-                filter: {
-                    memo: {
-                        contains: searchText,
-                    },
-                },
-            });
+            const result = await client.models.LocationLog.list({});
 
             if (result.errors) {
                 console.error("LocationLog list errors:", result.errors);
                 return;
             }
 
-            const items = result.data
+            const items = (result.data ?? [])
                 .map((item) => ({
                     id: item.id,
                     latitude: Number(item.latitude),
@@ -77,6 +71,10 @@ export default function LocationLogScreen({ navigation }: Props) {
         } finally {
             setLoading(false);
         }
+    }, []);
+
+    const clearSearchText = () => {
+        setSearchText("");
     };
 
     const filteredLogs = useMemo(() => {
@@ -143,20 +141,10 @@ export default function LocationLogScreen({ navigation }: Props) {
         }
     };
 
-    const result = await client.models.
-
-const result = await client.models.LocationLog.get({
-        id: locationLogId,
-    };
-
-    setLocationLog({
-  id: result.data.id,
-});
-
     useFocusEffect(
         useCallback(() => {
             loadLogs();
-        }, []),
+        }, [loadLogs]),
     );
 
     return (
@@ -205,7 +193,7 @@ const result = await client.models.LocationLog.get({
                                 : "まだ位置履歴がありません。"}
                         </Text>
                     }
-                    renderItem={({ item, index }) => {
+                    renderItem={({ item }) => {
                         const isDeleting = deletingId === item.id;
                         const isLatest =
                             logs.length > 0 && item.id === logs[0].id;
@@ -219,17 +207,7 @@ const result = await client.models.LocationLog.get({
                                             {formatDateTime(item.recordedAt)}
                                         </Text>
                                     </View>
-                                    {/* <Text style={styles.tapHint}>
-                                    <Text>緯度: {item.latitude}</Text>
-                                    <Text>経度: {item.longitude}</Text>
-                                    <Text>
-                                        精度:{" "}
-                                        {item.accuracy !== null &&
-                                        item.accuracy !== undefined
-                                            ? `${item.accuracy}m`
-                                            : "不明"}
-                                    </Text>
-                                    </Text> */}
+
                                     {item.memo ? (
                                         <Text style={styles.memoText}>
                                             メモ: {item.memo}
@@ -348,9 +326,6 @@ const styles = StyleSheet.create({
         padding: 14,
         gap: 4,
     },
-    cardPressed: {
-        opacity: 0.7,
-    },
     row: {
         flexDirection: "row",
         alignItems: "center",
@@ -368,22 +343,10 @@ const styles = StyleSheet.create({
         marginTop: 4,
         color: "#999",
     },
-    tapHint: {
-        marginTop: 6,
-        color: "#4b6f8f",
-        fontSize: 13,
-        fontWeight: "bold",
-    },
     emptyText: {
         textAlign: "center",
         marginTop: 40,
         color: "#666",
-    },
-    deleteButtonArea: {
-        paddingHorizontal: 14,
-        paddingBottom: 12,
-        alignSelf: "flex-end",
-        minWidth: 100,
     },
     deleteButton: {
         minWidth: 90,

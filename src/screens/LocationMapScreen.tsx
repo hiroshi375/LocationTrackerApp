@@ -8,7 +8,12 @@ import {
     Text,
     View,
 } from "react-native";
-import MapView, { Circle, Marker, PROVIDER_GOOGLE } from "react-native-maps";
+import MapView, {
+    Circle,
+    Marker,
+    Polyline,
+    PROVIDER_GOOGLE,
+} from "react-native-maps";
 
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
@@ -30,6 +35,7 @@ export default function LocationMapScreen({ route }: Props) {
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [hasLoaded, setHasLoaded] = useState(false);
+    const [showRouteLine, setShowRouteLine] = useState(false);
 
     const selectedLocation = route.params?.selectedLocation ?? null;
 
@@ -140,6 +146,35 @@ export default function LocationMapScreen({ route }: Props) {
         moveToLocation(displayLocation);
     };
 
+    const routeCoordinates = logs
+        .filter(
+            (log) =>
+                Number.isFinite(log.latitude) && Number.isFinite(log.longitude),
+        )
+        .slice(0, 100)
+        .sort((a, b) => {
+            return (
+                new Date(a.recordedAt).getTime() -
+                new Date(b.recordedAt).getTime()
+            );
+        })
+        .map((log) => ({
+            latitude: log.latitude,
+            longitude: log.longitude,
+        }))
+        .filter((coordinate, index, array) => {
+            if (index === 0) {
+                return true;
+            }
+
+            const previous = array[index - 1];
+
+            return (
+                Math.abs(previous.latitude - coordinate.latitude) > 0.000001 ||
+                Math.abs(previous.longitude - coordinate.longitude) > 0.000001
+            );
+        });
+
     return (
         <View style={styles.container}>
             <MapView
@@ -154,6 +189,14 @@ export default function LocationMapScreen({ route }: Props) {
                     longitudeDelta: 0.01,
                 }}
             >
+                {showRouteLine && routeCoordinates.length >= 2 && (
+                    <Polyline
+                        coordinates={routeCoordinates}
+                        strokeColor="rgba(75,111,143,0.7)"
+                        strokeWidth={4}
+                    />
+                )}
+
                 {logs.map((log) => {
                     const isSelected = selectedLocation?.id === log.id;
 
@@ -231,6 +274,15 @@ export default function LocationMapScreen({ route }: Props) {
                 <Text style={styles.infoText}>
                     メモ: {displayLocation.memo ? displayLocation.memo : "なし"}
                 </Text>
+
+                <Pressable
+                    style={styles.routeToggleButton}
+                    onPress={() => setShowRouteLine((current) => !current)}
+                >
+                    <Text style={styles.routeToggleButtonText}>
+                        ルート線表示: {showRouteLine ? "ON" : "OFF"}
+                    </Text>
+                </Pressable>
 
                 <View style={styles.buttonRow}>
                     <Pressable
@@ -366,5 +418,19 @@ const styles = StyleSheet.create({
         backgroundColor: "#4b6f8f",
         borderWidth: 2,
         borderColor: "#fff",
+    },
+    routeToggleButton: {
+        marginTop: 10,
+        paddingVertical: 9,
+        borderRadius: 8,
+        backgroundColor: "#eef3f7",
+        alignItems: "center",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+    },
+    routeToggleButtonText: {
+        color: "#2f4f66",
+        fontWeight: "bold",
+        fontSize: 13,
     },
 });

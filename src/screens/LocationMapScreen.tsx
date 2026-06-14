@@ -1,6 +1,6 @@
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Pressable,
@@ -30,9 +30,8 @@ export default function LocationMapScreen({ route }: Props) {
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [hasLoaded, setHasLoaded] = useState(false);
-    const [locationLogs, setLocationLogs] = useState<any[]>([]);
 
-    const selectedLocation = route.params?.selectedLocation;
+    const selectedLocation = route.params?.selectedLocation ?? null;
 
     const loadLogs = async () => {
         try {
@@ -81,10 +80,6 @@ export default function LocationMapScreen({ route }: Props) {
         }, []),
     );
 
-    useEffect(() => {
-        loadLocationLogs();
-    }, []);
-
     if (!hasLoaded || loading) {
         return (
             <View style={styles.center}>
@@ -115,7 +110,14 @@ export default function LocationMapScreen({ route }: Props) {
     const isSelectedMode = selectedLocation !== undefined;
 
     const moveToLocation = (location: LocationLogItem) => {
-        mapRef.current?.animateToRegion(
+        if (
+            !Number.isFinite(location.latitude) ||
+            !Number.isFinite(location.longitude)
+        ) {
+            return;
+        }
+
+        mapRef.current?.animateToRegion?.(
             {
                 latitude: location.latitude,
                 longitude: location.longitude,
@@ -136,20 +138,6 @@ export default function LocationMapScreen({ route }: Props) {
 
     const moveToDisplayLocation = () => {
         moveToLocation(displayLocation);
-    };
-
-    const loadLocationLogs = async () => {
-        try {
-            const result = await client.models.LocationLog.list({});
-
-            const logs = (result.data ?? []).filter(
-                (log) => log.latitude != null && log.longitude != null,
-            );
-
-            setLocationLogs(logs);
-        } catch (error) {
-            console.error("LocationLog list error:", error);
-        }
     };
 
     return (

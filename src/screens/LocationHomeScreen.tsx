@@ -5,9 +5,9 @@ import { useState } from "react";
 import {
     ActivityIndicator,
     Alert,
-    Button,
     KeyboardAvoidingView,
     Platform,
+    Pressable,
     ScrollView,
     StyleSheet,
     Text,
@@ -25,6 +25,12 @@ type CurrentLocation = {
     longitude: number;
     accuracy: number | null;
     recordedAt: string;
+};
+
+type AppButtonProps = {
+    title: string;
+    onPress: () => void;
+    disabled?: boolean;
 };
 
 // 現在地の記録と保存を行うホーム画面コンポーネント
@@ -119,7 +125,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
             >
                 <Text style={styles.title}>現在地を手動記録</Text>
 
-                <Button title="現在地を取得" onPress={handleGetLocation} />
+                <AppButton title="現在地を取得" onPress={handleGetLocation} />
 
                 {loading && <ActivityIndicator style={styles.loading} />}
 
@@ -154,7 +160,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 </View>
 
                 <View style={styles.buttonSpace}>
-                    <Button
+                    <AppButton
                         title={saving ? "保存中..." : "この位置を保存"}
                         onPress={handleSaveLocation}
                         disabled={saving}
@@ -162,14 +168,14 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 </View>
 
                 <View style={styles.buttonSpace}>
-                    <Button
+                    <AppButton
                         title="位置履歴を見る"
                         onPress={() => navigation.navigate("LocationLog")}
                     />
                 </View>
 
                 <View style={styles.buttonSpace}>
-                    <Button
+                    <AppButton
                         title="地図で見る"
                         onPress={() => navigation.navigate("LocationMap")}
                     />
@@ -189,6 +195,22 @@ function formatDateTime(value: string) {
     const mi = String(date.getMinutes()).padStart(2, "0");
 
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+function AppButton({ title, onPress, disabled = false }: AppButtonProps) {
+    return (
+        <Pressable
+            style={({ pressed }) => [
+                styles.appButton,
+                pressed && !disabled && styles.appButtonPressed,
+                disabled && styles.appButtonDisabled,
+            ]}
+            onPress={onPress}
+            disabled={disabled}
+        >
+            <Text style={styles.appButtonText}>{title}</Text>
+        </Pressable>
+    );
 }
 
 const styles = StyleSheet.create({
@@ -236,5 +258,25 @@ const styles = StyleSheet.create({
     },
     buttonSpace: {
         marginTop: 12,
+    },
+    appButton: {
+        backgroundColor: "#4b6f8f",
+        borderRadius: 8,
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+        alignItems: "center",
+        justifyContent: "center",
+        marginTop: 10,
+    },
+    appButtonPressed: {
+        opacity: 0.75,
+    },
+    appButtonDisabled: {
+        opacity: 0.5,
+    },
+    appButtonText: {
+        color: "#fff",
+        fontSize: 16,
+        fontWeight: "bold",
     },
 });

@@ -1,15 +1,15 @@
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
-    Button,
     FlatList,
     Pressable,
     RefreshControl,
     StyleSheet,
     Text,
+    TextInput,
     View,
 } from "react-native";
 
@@ -31,6 +31,7 @@ export default function LocationLogScreen({ navigation }: Props) {
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
     const [loading, setLoading] = useState(false);
     const [deletingId, setDeletingId] = useState<string | null>(null);
+    const [searchText, setSearchText] = useState("");
 
     const loadLogs = async () => {
         try {
@@ -50,7 +51,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                     longitude: Number(item.longitude),
                     accuracy: item.accuracy,
                     recordedAt: item.recordedAt,
-                    memo: item.memo ?? null,
+                    memo: item.memo,
                 }))
                 .filter(
                     (item) =>
@@ -71,6 +72,19 @@ export default function LocationLogScreen({ navigation }: Props) {
             setLoading(false);
         }
     };
+
+    const filteredLogs = useMemo(() => {
+        const keyword = searchText.trim().toLowerCase();
+
+        if (!keyword) {
+            return logs;
+        }
+
+        return logs.filter((log) => {
+            const memo = log.memo?.toLowerCase() ?? "";
+            return memo.includes(keyword);
+        });
+    }, [logs, searchText]);
 
     const handleOpenDetail = (log: LocationLogItem) => {
         navigation.navigate("LocationLogDetail", {
@@ -123,6 +137,10 @@ export default function LocationLogScreen({ navigation }: Props) {
         }
     };
 
+    const clearSearchText = () => {
+        setSearchText("");
+    };
+
     useFocusEffect(
         useCallback(() => {
             loadLogs();
@@ -131,11 +149,36 @@ export default function LocationLogScreen({ navigation }: Props) {
 
     return (
         <View style={styles.container}>
+            <View style={styles.searchBox}>
+                <Text style={styles.searchLabel}>メモ検索</Text>
+
+                <TextInput
+                    style={styles.searchInput}
+                    value={searchText}
+                    onChangeText={setSearchText}
+                    placeholder="メモで検索"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                />
+
+                <View style={styles.searchInfoRow}>
+                    <Text style={styles.searchInfoText}>
+                        表示件数: {filteredLogs.length} / {logs.length}
+                    </Text>
+
+                    {searchText.trim().length > 0 && (
+                        <Pressable onPress={clearSearchText}>
+                            <Text style={styles.clearText}>クリア</Text>
+                        </Pressable>
+                    )}
+                </View>
+            </View>
+
             {loading && logs.length === 0 ? (
                 <ActivityIndicator />
             ) : (
                 <FlatList
-                    data={logs}
+                    data={filteredLogs}
                     keyExtractor={(item) => item.id}
                     refreshControl={
                         <RefreshControl
@@ -145,28 +188,26 @@ export default function LocationLogScreen({ navigation }: Props) {
                     }
                     ListEmptyComponent={
                         <Text style={styles.emptyText}>
-                            まだ位置履歴がありません。
+                            {searchText.trim().length > 0
+                                ? "検索条件に一致する位置履歴がありません。"
+                                : "まだ位置履歴がありません。"}
                         </Text>
                     }
                     renderItem={({ item, index }) => {
                         const isDeleting = deletingId === item.id;
+                        const isLatest =
+                            logs.length > 0 && item.id === logs[0].id;
 
                         return (
                             <View style={styles.card}>
-                                <Pressable
-                                    style={({ pressed }) => [
-                                        styles.cardContent,
-                                        pressed && styles.cardPressed,
-                                    ]}
-                                    onPress={() => handleOpenDetail(item)}
-                                >
+                                <View style={styles.cardContent}>
                                     <View style={styles.row}>
                                         <Text style={styles.dateText}>
-                                            {index === 0 ? "最新 " : ""}
+                                            {isLatest ? "最新 " : ""}
                                             {formatDateTime(item.recordedAt)}
                                         </Text>
                                     </View>
-
+                                    {/* <Text style={styles.tapHint}>
                                     <Text>緯度: {item.latitude}</Text>
                                     <Text>経度: {item.longitude}</Text>
                                     <Text>
@@ -176,6 +217,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                                             ? `${item.accuracy}m`
                                             : "不明"}
                                     </Text>
+                                </Text> */}
                                     {item.memo ? (
                                         <Text style={styles.memoText}>
                                             メモ: {item.memo}
@@ -185,20 +227,38 @@ export default function LocationLogScreen({ navigation }: Props) {
                                             メモなし
                                         </Text>
                                     )}
-                                    <Text style={styles.tapHint}>
-                                        タップして詳細を表示
-                                    </Text>
-                                </Pressable>
+                                </View>
 
-                                <View style={styles.deleteButtonArea}>
-                                    <Button
-                                        title={
-                                            isDeleting ? "削除中..." : "削除"
-                                        }
-                                        color="#b00020"
+                                <View style={styles.actionRow}>
+                                    <Pressable
+                                        style={({ pressed }) => [
+                                            styles.detailButton,
+                                            pressed &&
+                                                styles.detailButtonPressed,
+                                        ]}
+                                        onPress={() => handleOpenDetail(item)}
+                                    >
+                                        <Text style={styles.detailButtonText}>
+                                            タップして詳細を表示
+                                        </Text>
+                                    </Pressable>
+
+                                    <Pressable
+                                        style={({ pressed }) => [
+                                            styles.deleteButton,
+                                            pressed &&
+                                                !isDeleting &&
+                                                styles.deleteButtonPressed,
+                                            isDeleting &&
+                                                styles.deleteButtonDisabled,
+                                        ]}
                                         disabled={isDeleting}
                                         onPress={() => handleDeleteLog(item)}
-                                    />
+                                    >
+                                        <Text style={styles.deleteButtonText}>
+                                            {isDeleting ? "削除中..." : "削除"}
+                                        </Text>
+                                    </Pressable>
                                 </View>
                             </View>
                         );
@@ -227,6 +287,43 @@ const styles = StyleSheet.create({
         padding: 16,
         backgroundColor: "#f7f7f7",
     },
+    searchBox: {
+        padding: 12,
+        borderWidth: 1,
+        borderColor: "#ddd",
+        borderRadius: 10,
+        backgroundColor: "#fff",
+        marginBottom: 12,
+    },
+    searchLabel: {
+        fontSize: 15,
+        fontWeight: "bold",
+        marginBottom: 6,
+    },
+    searchInput: {
+        height: 44,
+        borderWidth: 1,
+        borderColor: "#ccc",
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        fontSize: 16,
+        backgroundColor: "#fff",
+    },
+    searchInfoRow: {
+        marginTop: 8,
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+    },
+    searchInfoText: {
+        fontSize: 13,
+        color: "#666",
+    },
+    clearText: {
+        fontSize: 13,
+        color: "#4b6f8f",
+        fontWeight: "bold",
+    },
     card: {
         borderWidth: 1,
         borderColor: "#ddd",
@@ -251,6 +348,14 @@ const styles = StyleSheet.create({
         fontWeight: "bold",
         marginBottom: 4,
     },
+    memoText: {
+        marginTop: 4,
+        color: "#333",
+    },
+    noMemoText: {
+        marginTop: 4,
+        color: "#999",
+    },
     tapHint: {
         marginTop: 6,
         color: "#4b6f8f",
@@ -268,12 +373,49 @@ const styles = StyleSheet.create({
         alignSelf: "flex-end",
         minWidth: 100,
     },
-    memoText: {
-        marginTop: 4,
-        color: "#333",
+    deleteButton: {
+        minWidth: 90,
+        paddingVertical: 10,
+        paddingHorizontal: 18,
+        borderRadius: 8,
+        backgroundColor: "#4b6f8f",
+        alignItems: "center",
+        justifyContent: "center",
     },
-    noMemoText: {
-        marginTop: 4,
-        color: "#999",
+    deleteButtonPressed: {
+        opacity: 0.75,
+    },
+    deleteButtonDisabled: {
+        opacity: 0.5,
+    },
+    deleteButtonText: {
+        color: "#fff",
+        fontSize: 14,
+        fontWeight: "bold",
+    },
+    actionRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+        paddingHorizontal: 14,
+        paddingBottom: 12,
+    },
+    detailButton: {
+        flex: 1,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderRadius: 8,
+        backgroundColor: "#e6edf3",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    detailButtonPressed: {
+        opacity: 0.75,
+    },
+    detailButtonText: {
+        color: "#2f4f66",
+        fontSize: 13,
+        fontWeight: "bold",
     },
 });

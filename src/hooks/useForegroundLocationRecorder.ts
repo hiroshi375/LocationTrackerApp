@@ -11,9 +11,6 @@ type SavedLocation = {
     recordedAt: number;
 };
 
-const MIN_DISTANCE_METERS = 20;
-const MIN_INTERVAL_MS = 5 * 60 * 1000;
-
 type RecorderOptions = {
     intervalMs: number;
     distanceMeters: number;

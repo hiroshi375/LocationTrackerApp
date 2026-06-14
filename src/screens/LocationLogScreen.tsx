@@ -217,7 +217,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                                             ? `${item.accuracy}m`
                                             : "不明"}
                                     </Text>
-                                </Text> */}
+                                    </Text> */}
                                     {item.memo ? (
                                         <Text style={styles.memoText}>
                                             メモ: {item.memo}

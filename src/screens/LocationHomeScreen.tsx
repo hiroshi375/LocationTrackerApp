@@ -15,6 +15,7 @@ import {
     View,
 } from "react-native";
 
+import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRecorder";
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 
@@ -41,6 +42,30 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
 
+    const RECORD_INTERVAL_OPTIONS = [
+        { label: "30秒", value: 30 * 1000 },
+        { label: "1分", value: 60 * 1000 },
+        { label: "3分", value: 3 * 60 * 1000 },
+        { label: "5分", value: 5 * 60 * 1000 },
+    ];
+
+    const DISTANCE_OPTIONS = [
+        { label: "10m", value: 10 },
+        { label: "20m", value: 20 },
+        { label: "50m", value: 50 },
+        { label: "100m", value: 100 },
+    ];
+
+    const [recordIntervalMs, setRecordIntervalMs] = useState(30 * 1000);
+    const [recordDistanceMeters, setRecordDistanceMeters] = useState(20);
+
+    const { isRecording, lastRecordedAtText, startRecording, stopRecording } =
+        useForegroundLocationRecorder({
+            intervalMs: recordIntervalMs,
+            distanceMeters: recordDistanceMeters,
+        });
+
+    // 位置情報を取得する処理
     const handleGetLocation = async () => {
         try {
             setLoading(true);
@@ -180,6 +205,124 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         onPress={() => navigation.navigate("LocationMap")}
                     />
                 </View>
+                <View style={styles.autoRecordBox}>
+                    <Text style={styles.autoRecordTitle}>自動記録</Text>
+
+                    <Text style={styles.autoRecordStatus}>
+                        状態: {isRecording ? "記録中" : "停止中"}
+                    </Text>
+
+                    {lastRecordedAtText && (
+                        <Text style={styles.autoRecordStatus}>
+                            最終記録: {lastRecordedAtText}
+                        </Text>
+                    )}
+
+                    <View style={styles.settingBlock}>
+                        <Text style={styles.settingTitle}>記録頻度</Text>
+
+                        <View style={styles.optionRow}>
+                            {RECORD_INTERVAL_OPTIONS.map((option) => {
+                                const selected =
+                                    recordIntervalMs === option.value;
+
+                                return (
+                                    <Pressable
+                                        key={option.value}
+                                        disabled={isRecording}
+                                        style={[
+                                            styles.optionButton,
+                                            selected &&
+                                                styles.optionButtonSelected,
+                                            isRecording &&
+                                                styles.optionButtonDisabled,
+                                        ]}
+                                        onPress={() =>
+                                            setRecordIntervalMs(option.value)
+                                        }
+                                    >
+                                        <Text
+                                            style={[
+                                                styles.optionButtonText,
+                                                selected &&
+                                                    styles.optionButtonTextSelected,
+                                            ]}
+                                        >
+                                            {option.label}
+                                        </Text>
+                                    </Pressable>
+                                );
+                            })}
+                        </View>
+                    </View>
+
+                    <View style={styles.settingBlock}>
+                        <Text style={styles.settingTitle}>
+                            記録する移動距離
+                        </Text>
+
+                        <View style={styles.optionRow}>
+                            {DISTANCE_OPTIONS.map((option) => {
+                                const selected =
+                                    recordDistanceMeters === option.value;
+
+                                return (
+                                    <Pressable
+                                        key={option.value}
+                                        disabled={isRecording}
+                                        style={[
+                                            styles.optionButton,
+                                            selected &&
+                                                styles.optionButtonSelected,
+                                            isRecording &&
+                                                styles.optionButtonDisabled,
+                                        ]}
+                                        onPress={() =>
+                                            setRecordDistanceMeters(
+                                                option.value,
+                                            )
+                                        }
+                                    >
+                                        <Text
+                                            style={[
+                                                styles.optionButtonText,
+                                                selected &&
+                                                    styles.optionButtonTextSelected,
+                                            ]}
+                                        >
+                                            {option.label}
+                                        </Text>
+                                    </Pressable>
+                                );
+                            })}
+                        </View>
+                    </View>
+                    {isRecording ? (
+                        <Pressable
+                            style={({ pressed }) => [
+                                styles.autoRecordStopButton,
+                                pressed && styles.buttonPressed,
+                            ]}
+                            onPress={stopRecording}
+                        >
+                            <Text style={styles.autoRecordButtonText}>
+                                自動記録停止
+                            </Text>
+                        </Pressable>
+                    ) : (
+                        <Pressable
+                            style={({ pressed }) => [
+                                styles.autoRecordStartButton,
+                                pressed && styles.buttonPressed,
+                            ]}
+                            onPress={startRecording}
+                        >
+                            <Text style={styles.autoRecordButtonText}>
+                                自動記録開始
+                            </Text>
+                        </Pressable>
+                    )}
+                </View>
             </ScrollView>
         </KeyboardAvoidingView>
     );
@@ -278,5 +421,81 @@ const styles = StyleSheet.create({
         color: "#fff",
         fontSize: 16,
         fontWeight: "bold",
+    },
+    autoRecordBox: {
+        marginTop: 16,
+        padding: 14,
+        borderWidth: 1,
+        borderColor: "#ddd",
+        borderRadius: 10,
+        backgroundColor: "#fff",
+    },
+    autoRecordTitle: {
+        fontSize: 16,
+        fontWeight: "bold",
+        marginBottom: 8,
+    },
+    autoRecordStatus: {
+        fontSize: 13,
+        color: "#555",
+        marginBottom: 6,
+    },
+    autoRecordStartButton: {
+        marginTop: 10,
+        backgroundColor: "#4b6f8f",
+        borderRadius: 8,
+        paddingVertical: 10,
+        alignItems: "center",
+    },
+    autoRecordStopButton: {
+        marginTop: 10,
+        backgroundColor: "#8f4b4b",
+        borderRadius: 8,
+        paddingVertical: 10,
+        alignItems: "center",
+    },
+    autoRecordButtonText: {
+        color: "#fff",
+        fontSize: 15,
+        fontWeight: "bold",
+    },
+    buttonPressed: {
+        opacity: 0.75,
+    },
+    settingBlock: {
+        marginTop: 12,
+    },
+    settingTitle: {
+        fontSize: 13,
+        fontWeight: "bold",
+        color: "#444",
+        marginBottom: 6,
+    },
+    optionRow: {
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: 8,
+    },
+    optionButton: {
+        paddingVertical: 7,
+        paddingHorizontal: 12,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: "#4b6f8f",
+        backgroundColor: "#fff",
+    },
+    optionButtonSelected: {
+        backgroundColor: "#4b6f8f",
+    },
+    optionButtonDisabled: {
+        opacity: 0.5,
+    },
+    optionButtonText: {
+        color: "#4b6f8f",
+        fontSize: 13,
+        fontWeight: "bold",
+    },
+    optionButtonTextSelected: {
+        color: "#fff",
     },
 });

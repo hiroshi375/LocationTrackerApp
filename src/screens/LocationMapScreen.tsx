@@ -8,7 +8,7 @@ import {
     Text,
     View,
 } from "react-native";
-import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
+import MapView, { Circle, Marker, PROVIDER_GOOGLE } from "react-native-maps";
 
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
@@ -154,25 +154,35 @@ export default function LocationMapScreen({ route }: Props) {
                     longitudeDelta: 0.01,
                 }}
             >
-                {logs.map((log, index) => {
-                    const isLatest = index === 0;
+                {logs.map((log) => {
                     const isSelected = selectedLocation?.id === log.id;
 
+                    if (isSelected) {
+                        return (
+                            <Marker
+                                key={log.id}
+                                coordinate={{
+                                    latitude: log.latitude,
+                                    longitude: log.longitude,
+                                }}
+                                title="選択した位置"
+                                description={buildMarkerDescription(log)}
+                                pinColor="#4b6f8f"
+                            />
+                        );
+                    }
+
                     return (
-                        <Marker
+                        <Circle
                             key={log.id}
-                            coordinate={{
+                            center={{
                                 latitude: log.latitude,
                                 longitude: log.longitude,
                             }}
-                            title={
-                                isSelected
-                                    ? "選択した位置"
-                                    : isLatest
-                                      ? "最新位置"
-                                      : "位置履歴"
-                            }
-                            description={buildMarkerDescription(log)}
+                            radius={12}
+                            fillColor="rgba(75,111,143,0.85)"
+                            strokeColor="#ffffff"
+                            strokeWidth={3}
                         />
                     );
                 })}
@@ -188,6 +198,7 @@ export default function LocationMapScreen({ route }: Props) {
                             description={buildMarkerDescription(
                                 selectedLocation,
                             )}
+                            pinColor="#4b6f8f"
                         />
                     )}
             </MapView>
@@ -331,5 +342,29 @@ const styles = StyleSheet.create({
         color: "#2f4f66",
         fontWeight: "bold",
         fontSize: 13,
+    },
+    historyMarker: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: "#4b6f8f",
+        borderWidth: 1,
+        borderColor: "#fff",
+    },
+    currentMarkerOuter: {
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        backgroundColor: "rgba(75,111,143,0.25)",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    currentMarkerInner: {
+        width: 12,
+        height: 12,
+        borderRadius: 6,
+        backgroundColor: "#4b6f8f",
+        borderWidth: 2,
+        borderColor: "#fff",
     },
 });

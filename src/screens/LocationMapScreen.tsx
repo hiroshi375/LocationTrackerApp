@@ -1,6 +1,6 @@
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Pressable,
@@ -30,6 +30,7 @@ export default function LocationMapScreen({ route }: Props) {
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [hasLoaded, setHasLoaded] = useState(false);
+    const [locationLogs, setLocationLogs] = useState<any[]>([]);
 
     const selectedLocation = route.params?.selectedLocation;
 
@@ -37,7 +38,7 @@ export default function LocationMapScreen({ route }: Props) {
         try {
             setLoading(true);
 
-            const result = await client.models.LocationLog.list();
+            const result = await client.models.LocationLog.list({});
 
             if (result.errors) {
                 console.error("LocationLog list errors:", result.errors);
@@ -79,6 +80,10 @@ export default function LocationMapScreen({ route }: Props) {
             loadLogs();
         }, []),
     );
+
+    useEffect(() => {
+        loadLocationLogs();
+    }, []);
 
     if (!hasLoaded || loading) {
         return (
@@ -131,6 +136,20 @@ export default function LocationMapScreen({ route }: Props) {
 
     const moveToDisplayLocation = () => {
         moveToLocation(displayLocation);
+    };
+
+    const loadLocationLogs = async () => {
+        try {
+            const result = await client.models.LocationLog.list({});
+
+            const logs = (result.data ?? []).filter(
+                (log) => log.latitude != null && log.longitude != null,
+            );
+
+            setLocationLogs(logs);
+        } catch (error) {
+            console.error("LocationLog list error:", error);
+        }
     };
 
     return (

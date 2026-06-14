@@ -37,7 +37,13 @@ export default function LocationLogScreen({ navigation }: Props) {
         try {
             setLoading(true);
 
-            const result = await client.models.LocationLog.list();
+            const result = await client.models.LocationLog.list({
+                filter: {
+                    memo: {
+                        contains: searchText,
+                    },
+                },
+            });
 
             if (result.errors) {
                 console.error("LocationLog list errors:", result.errors);
@@ -137,9 +143,15 @@ export default function LocationLogScreen({ navigation }: Props) {
         }
     };
 
-    const clearSearchText = () => {
-        setSearchText("");
+    const result = await client.models.
+
+const result = await client.models.LocationLog.get({
+        id: locationLogId,
     };
+
+    setLocationLog({
+  id: result.data.id,
+});
 
     useFocusEffect(
         useCallback(() => {

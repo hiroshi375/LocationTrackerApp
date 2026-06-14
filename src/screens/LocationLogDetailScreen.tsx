@@ -10,8 +10,8 @@ import {
     TextInput,
     View,
 } from "react-native";
-
 import { client } from "../lib/client";
+
 import type { RootStackParamList } from "../navigation/RootNavigator";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationLogDetail">;
@@ -32,13 +32,33 @@ export default function LocationLogDetailScreen({ route, navigation }: Props) {
     const [memo, setMemo] = useState("");
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [locationLog, setLocationLog] = useState<any | null>(null);
 
     const loadLog = useCallback(async () => {
         try {
             setLoading(true);
 
-            const result = await client.models.LocationLog.get({
-                id: locationLogId,
+            const result = await client.models.LocationLog.list({
+                filter: {
+                    id: {
+                        eq: locationLogId,
+                    },
+                },
+            });
+
+            const log = result.data[0];
+
+            if (!log) {
+                console.log("LocationLog not found");
+                return;
+            }
+
+            setLocationLog({
+                id: log.id,
+                latitude: log.latitude,
+                longitude: log.longitude,
+                memo: log.memo,
+                createdAt: log.createdAt,
             });
 
             if (result.errors) {

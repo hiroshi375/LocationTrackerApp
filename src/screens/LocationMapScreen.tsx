@@ -28,7 +28,8 @@ export default function LocationMapScreen({ route }: Props) {
     const mapRef = useRef<MapView | null>(null);
 
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
-    const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [hasLoaded, setHasLoaded] = useState(false);
 
     const selectedLocation = route.params?.selectedLocation;
 
@@ -69,6 +70,7 @@ export default function LocationMapScreen({ route }: Props) {
             console.error("Map loadLogs error:", error);
         } finally {
             setLoading(false);
+            setHasLoaded(true);
         }
     };
 
@@ -78,7 +80,7 @@ export default function LocationMapScreen({ route }: Props) {
         }, []),
     );
 
-    if (loading && logs.length === 0) {
+    if (!hasLoaded || loading) {
         return (
             <View style={styles.center}>
                 <ActivityIndicator />
@@ -94,9 +96,16 @@ export default function LocationMapScreen({ route }: Props) {
         );
     }
 
-    const latest = logs[0];
+    const latest = logs[0] ?? null;
+    const displayLocation = selectedLocation ?? latest;
 
-    const displayLocation: LocationLogItem = selectedLocation ?? latest;
+    if (!displayLocation) {
+        return (
+            <View style={styles.center}>
+                <Text>表示できる位置情報がありません。</Text>
+            </View>
+        );
+    }
 
     const isSelectedMode = selectedLocation !== undefined;
 
@@ -169,8 +178,8 @@ export default function LocationMapScreen({ route }: Props) {
                                 longitude: selectedLocation.longitude,
                             }}
                             title="選択した位置"
-                            description={formatDateTime(
-                                selectedLocation.recordedAt,
+                            description={buildMarkerDescription(
+                                selectedLocation,
                             )}
                         />
                     )}

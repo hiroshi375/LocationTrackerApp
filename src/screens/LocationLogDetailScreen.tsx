@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -33,7 +33,7 @@ export default function LocationLogDetailScreen({ route, navigation }: Props) {
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
 
-    const loadLog = async () => {
+    const loadLog = useCallback(async () => {
         try {
             setLoading(true);
 
@@ -70,7 +70,7 @@ export default function LocationLogDetailScreen({ route, navigation }: Props) {
         } finally {
             setLoading(false);
         }
-    };
+    }, [locationLogId, navigation]);
 
     const handleSaveMemo = async () => {
         if (!log) {
@@ -126,7 +126,7 @@ export default function LocationLogDetailScreen({ route, navigation }: Props) {
 
     useEffect(() => {
         loadLog();
-    }, [locationLogId]);
+    }, [loadLog]);
 
     if (loading && !log) {
         return (

@@ -1,62 +1,62 @@
 {
-  "expo": {
-    "name": "LocationTrackerApp",
-    "slug": "LocationTrackerApp",
-    "version": "1.0.0",
-    "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
-    "scheme": "locationtrackerapp",
-    "userInterfaceStyle": "automatic",
-    "ios": {
-      "supportsTablet": true,
-      "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "現在地を記録するために位置情報を使用します。"
-      }
-    },
-    "android": {
-      "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
-      },
-      "permissions": [
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
-      ],
-      "predictiveBackGestureEnabled": false,
-      "package": "com.hiroshisato.locationtrackerapp",
-      "config": {
-        "googleMaps": {
-          "apiKey": "AIzaSyAc-wHT7TQubDTcGxOnmlJ527xLIR9a3nw"
+    "expo": {
+        "name": "LocationTrackerApp",
+        "slug": "LocationTrackerApp",
+        "version": "1.0.0",
+        "orientation": "portrait",
+        "icon": "./assets/images/icon.png",
+        "scheme": "locationtrackerapp",
+        "userInterfaceStyle": "automatic",
+        "ios": {
+            "supportsTablet": true,
+            "infoPlist": {
+                "NSLocationWhenInUseUsageDescription": "現在地を記録するために位置情報を使用します。"
+            }
+        },
+        "android": {
+            "adaptiveIcon": {
+                "backgroundColor": "#E6F4FE",
+                "foregroundImage": "./assets/images/adaptive-icon.png",
+                "backgroundImage": "./assets/images/android-icon-background.png",
+                "monochromeImage": "./assets/images/android-icon-monochrome.png"
+            },
+            "permissions": [
+                "ACCESS_FINE_LOCATION",
+                "ACCESS_COARSE_LOCATION",
+                "ACCESS_FINE_LOCATION",
+                "ACCESS_COARSE_LOCATION"
+            ],
+            "predictiveBackGestureEnabled": false,
+            "package": "com.hiroshisato.locationtrackerapp",
+            "config": {
+                "googleMaps": {
+                    "apiKey": "AIzaSyAc-wHT7TQubDTcGxOnmlJ527xLIR9a3nw"
+                }
+            }
+        },
+        "web": {
+            "output": "static",
+            "favicon": "./assets/images/favicon.png"
+        },
+        "plugins": [
+            [
+                "expo-splash-screen",
+                {
+                    "image": "./assets/images/splash-icon.png",
+                    "imageWidth": 200,
+                    "resizeMode": "contain",
+                    "backgroundColor": "#ffffff",
+                    "dark": {
+                        "backgroundColor": "#000000"
+                    }
+                }
+            ],
+            "expo-asset"
+        ],
+        "extra": {
+            "eas": {
+                "projectId": "f2148044-38b4-4da0-bc10-82d3b87398b3"
+            }
         }
-      }
-    },
-    "web": {
-      "output": "static",
-      "favicon": "./assets/images/favicon.png"
-    },
-    "plugins": [
-      [
-        "expo-splash-screen",
-        {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
-          "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
-          "dark": {
-            "backgroundColor": "#000000"
-          }
-        }
-      ],
-      "expo-asset"
-    ],
-    "extra": {
-      "eas": {
-        "projectId": "f2148044-38b4-4da0-bc10-82d3b87398b3"
-      }
     }
-  }
 }

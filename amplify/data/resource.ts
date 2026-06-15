@@ -17,8 +17,24 @@ const schema = a.schema({
             memo: a.string(),
             recordingSessionId: a.string(),
             recordingSessionName: a.string(),
+            sharedOwners: a.string().array(),
         })
-        .authorization((allow) => [allow.owner()]),
+        .authorization((allow) => [
+            allow.owner(),
+            allow.ownersDefinedIn("sharedOwners").to(["read"]),
+        ]),
+    UserProfile: a
+        .model({
+            userId: a.string().required(),
+            email: a.email(),
+            displayName: a.string(),
+            ownerValue: a.string(),
+            searchText: a.string(),
+        })
+        .authorization((allow) => [
+            allow.owner(),
+            allow.authenticated().to(["read"]),
+        ]),
 });
 
 export type Schema = ClientSchema<typeof schema>;

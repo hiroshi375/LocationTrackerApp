@@ -49,6 +49,7 @@ export default function LocationMapScreen({ route }: Props) {
             }
 
             const result = await client.models.LocationLog.list({});
+            console.log("LocationLog sample:", result.data?.[0]);
 
             if (result.errors) {
                 console.error("LocationLog list errors:", result.errors);

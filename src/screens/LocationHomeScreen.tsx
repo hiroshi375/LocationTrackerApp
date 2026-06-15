@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { getCurrentUser } from "aws-amplify/auth";
+import { getCurrentUser, signOut } from "aws-amplify/auth";
 import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -20,6 +20,7 @@ import {
 import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRecorder";
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
+import { ensureUserProfile } from "../services/userProfileService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationHome">;
 
@@ -208,6 +209,16 @@ export default function LocationHomeScreen({ navigation }: Props) {
         }
     };
 
+    //
+    const handleSignOut = async () => {
+        try {
+            await signOut();
+        } catch (error) {
+            console.error("Sign out error:", error);
+            Alert.alert("サインアウトエラー", "サインアウトできませんでした。");
+        }
+    };
+
     // セッションIDを生成する関数
     const saveSessionName = async (name: string) => {
         if (!pendingSessionId) {
@@ -294,6 +305,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
         setSessionNameModalVisible(true);
     };
 
+    useEffect(() => {
+        void ensureUserProfile();
+    }, []);
+
     return (
         <KeyboardAvoidingView
             style={styles.keyboardAvoiding}
@@ -303,7 +318,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 contentContainerStyle={styles.container}
                 keyboardShouldPersistTaps="handled"
             >
-                <Text style={styles.title}>現在地を手動記録</Text>
+                {/* <Text style={styles.title}>現在地を手動記録</Text> */}
 
                 <AppButton title="現在地を取得" onPress={handleGetLocation} />
 
@@ -511,6 +526,21 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         </Pressable>
                     )}
                 </View>
+
+                <View style={styles.signOutButtonSpace}>
+                    <Pressable
+                        style={({ pressed }) => [
+                            styles.signOutButton,
+                            pressed && styles.appButtonPressed,
+                        ]}
+                        onPress={handleSignOut}
+                    >
+                        <Text style={styles.signOutButtonText}>
+                            サインアウト
+                        </Text>
+                    </Pressable>
+                </View>
+
                 <Modal
                     visible={sessionNameModalVisible}
                     transparent
@@ -671,7 +701,7 @@ const styles = StyleSheet.create({
         backgroundColor: "#fff",
     },
     buttonSpace: {
-        marginTop: 12,
+        marginTop: 4,
     },
     appButton: {
         backgroundColor: "#4b6f8f",
@@ -886,5 +916,25 @@ const styles = StyleSheet.create({
         color: "#2f4f66",
         fontSize: 14,
         fontWeight: "bold",
+    },
+    signOutButton: {
+        backgroundColor: "#e6edf3",
+        borderRadius: 8,
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+        alignItems: "center",
+        justifyContent: "center",
+        marginTop: 10,
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+    },
+    signOutButtonText: {
+        color: "#2f4f66",
+        fontSize: 16,
+        fontWeight: "bold",
+    },
+    signOutButtonSpace: {
+        marginTop: 12,
+        marginBottom: 36,
     },
 });

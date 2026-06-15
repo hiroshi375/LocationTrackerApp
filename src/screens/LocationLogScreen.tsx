@@ -5,8 +5,10 @@ import {
     ActivityIndicator,
     Alert,
     FlatList,
+    Modal,
     Pressable,
     RefreshControl,
+    ScrollView,
     StyleSheet,
     Text,
     TextInput,
@@ -26,6 +28,8 @@ type LocationLogItem = {
     recordedAt: string;
     memo?: string | null;
     recordingSessionId?: string | null;
+    recordingSessionName?: string | null;
+    sharedOwners?: string[] | null;
 };
 
 type LocationLogSingleDisplayItem = LocationLogItem & {
@@ -37,6 +41,7 @@ type LocationLogSessionDisplayItem = {
     kind: "session";
     id: string;
     recordingSessionId: string;
+    recordingSessionName: string;
     logs: LocationLogItem[];
     startLog: LocationLogItem;
     endLog: LocationLogItem;
@@ -50,11 +55,30 @@ type LocationLogDisplayItem =
     | LocationLogSingleDisplayItem
     | LocationLogSessionDisplayItem;
 
+type UserProfileItem = {
+    id: string;
+    userId: string;
+    email?: string | null;
+    displayName?: string | null;
+    ownerValue?: string | null;
+    searchText?: string | null;
+};
+
 export default function LocationLogScreen({ navigation }: Props) {
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
     const [loading, setLoading] = useState(false);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [searchText, setSearchText] = useState("");
+
+    const [shareModalVisible, setShareModalVisible] = useState(false);
+    const [shareSearchText, setShareSearchText] = useState("");
+    const [shareUsers, setShareUsers] = useState<UserProfileItem[]>([]);
+    const [selectedShareUser, setSelectedShareUser] =
+        useState<UserProfileItem | null>(null);
+    const [sharingSession, setSharingSession] =
+        useState<LocationLogSessionDisplayItem | null>(null);
+    const [shareSearching, setShareSearching] = useState(false);
+    const [sharing, setSharing] = useState(false);
 
     const loadLogs = useCallback(async () => {
         try {
@@ -76,6 +100,13 @@ export default function LocationLogScreen({ navigation }: Props) {
                     recordedAt: item.recordedAt,
                     memo: item.memo,
                     recordingSessionId: item.recordingSessionId ?? null,
+                    recordingSessionName: item.recordingSessionName ?? null,
+                    sharedOwners: Array.isArray(item.sharedOwners)
+                        ? item.sharedOwners.filter(
+                              (owner: unknown): owner is string =>
+                                  typeof owner === "string" && owner.length > 0,
+                          )
+                        : [],
                 }))
                 .filter(
                     (item) =>
@@ -118,6 +149,7 @@ export default function LocationLogScreen({ navigation }: Props) {
             }
 
             return (
+                item.recordingSessionName.toLowerCase().includes(keyword) ||
                 "自動記録セッション".toLowerCase().includes(keyword) ||
                 item.recordingSessionId.toLowerCase().includes(keyword) ||
                 item.logs.some((log) =>
@@ -142,9 +174,9 @@ export default function LocationLogScreen({ navigation }: Props) {
             recordedAt: item.endLog.recordedAt,
             memo: item.endLog.memo ?? null,
             recordingSessionId: item.recordingSessionId,
+            recordingSessionName: item.recordingSessionName,
+            sharedOwners: item.endLog.sharedOwners ?? [],
         };
-
-        console.log("Open session map:", selectedLocation);
 
         navigation.push("LocationMap", {
             selectedLocation,
@@ -165,28 +197,6 @@ export default function LocationLogScreen({ navigation }: Props) {
                     style: "destructive",
                     onPress: async () => {
                         await deleteLog(log.id);
-                    },
-                },
-            ],
-        );
-    };
-
-    const handleDeleteSession = (item: LocationLogSessionDisplayItem) => {
-        Alert.alert(
-            "自動記録セッションを削除",
-            `${formatDateTime(item.startAt)} 〜 ${formatDateTime(
-                item.endAt,
-            )} の自動記録セッションを削除しますか？\n\n記録ポイント ${item.pointCount}件が削除されます。`,
-            [
-                {
-                    text: "キャンセル",
-                    style: "cancel",
-                },
-                {
-                    text: "削除",
-                    style: "destructive",
-                    onPress: async () => {
-                        await deleteSession(item);
                     },
                 },
             ],
@@ -216,6 +226,28 @@ export default function LocationLogScreen({ navigation }: Props) {
         } finally {
             setDeletingId(null);
         }
+    };
+
+    const handleDeleteSession = (item: LocationLogSessionDisplayItem) => {
+        Alert.alert(
+            "自動記録セッションを削除",
+            `${formatDateTime(item.startAt)} 〜 ${formatDateTime(
+                item.endAt,
+            )} の自動記録セッションを削除しますか？\n\n記録ポイント ${item.pointCount}件が削除されます。`,
+            [
+                {
+                    text: "キャンセル",
+                    style: "cancel",
+                },
+                {
+                    text: "削除",
+                    style: "destructive",
+                    onPress: async () => {
+                        await deleteSession(item);
+                    },
+                },
+            ],
+        );
     };
 
     const deleteSession = async (item: LocationLogSessionDisplayItem) => {
@@ -254,6 +286,147 @@ export default function LocationLogScreen({ navigation }: Props) {
             );
         } finally {
             setDeletingId(null);
+        }
+    };
+
+    const openShareModal = (item: LocationLogSessionDisplayItem) => {
+        setSharingSession(item);
+        setShareSearchText("");
+        setShareUsers([]);
+        setSelectedShareUser(null);
+        setShareModalVisible(true);
+    };
+
+    const closeShareModal = () => {
+        if (sharing) {
+            return;
+        }
+
+        setShareModalVisible(false);
+        setSharingSession(null);
+        setShareSearchText("");
+        setShareUsers([]);
+        setSelectedShareUser(null);
+    };
+
+    const searchShareUsers = async () => {
+        const keyword = shareSearchText.trim().toLowerCase();
+
+        if (!keyword) {
+            Alert.alert(
+                "検索条件なし",
+                "共有先ユーザー名またはメールを入力してください。",
+            );
+            return;
+        }
+
+        try {
+            setShareSearching(true);
+
+            const result = await client.models.UserProfile.list({
+                filter: {
+                    searchText: {
+                        contains: keyword,
+                    },
+                },
+                limit: 20,
+            });
+
+            if (result.errors) {
+                console.error("UserProfile search errors:", result.errors);
+                Alert.alert(
+                    "検索エラー",
+                    "共有先ユーザーを検索できませんでした。",
+                );
+                return;
+            }
+
+            const users: UserProfileItem[] = (result.data ?? [])
+                .map((user) => ({
+                    id: user.id,
+                    userId: user.userId,
+                    email: user.email,
+                    displayName: user.displayName,
+                    ownerValue: user.ownerValue,
+                    searchText: user.searchText,
+                }))
+                .filter((user) => Boolean(user.ownerValue));
+
+            setShareUsers(users);
+            setSelectedShareUser(null);
+        } catch (error) {
+            console.error("UserProfile search error:", error);
+            Alert.alert("検索エラー", "共有先ユーザーの検索に失敗しました。");
+        } finally {
+            setShareSearching(false);
+        }
+    };
+
+    const shareSessionWithSelectedUser = async () => {
+        if (!sharingSession) {
+            return;
+        }
+
+        if (!selectedShareUser?.ownerValue) {
+            Alert.alert("共有先未選択", "共有するユーザーを選択してください。");
+            return;
+        }
+
+        try {
+            setSharing(true);
+
+            const sharedOwner = selectedShareUser.ownerValue;
+
+            const updateResults = await Promise.all(
+                sharingSession.logs.map((log) => {
+                    const currentSharedOwners = log.sharedOwners ?? [];
+
+                    const nextSharedOwners = Array.from(
+                        new Set([...currentSharedOwners, sharedOwner]),
+                    );
+
+                    return client.models.LocationLog.update({
+                        id: log.id,
+                        sharedOwners: nextSharedOwners,
+                    });
+                }),
+            );
+
+            const hasErrors = updateResults.some((result) => result.errors);
+
+            if (hasErrors) {
+                console.error("Share session errors:", updateResults);
+                Alert.alert("共有エラー", "位置情報の共有に失敗しました。");
+                return;
+            }
+
+            setLogs((currentLogs) =>
+                currentLogs.map((log) => {
+                    if (
+                        log.recordingSessionId !==
+                        sharingSession.recordingSessionId
+                    ) {
+                        return log;
+                    }
+
+                    const currentSharedOwners = log.sharedOwners ?? [];
+
+                    return {
+                        ...log,
+                        sharedOwners: Array.from(
+                            new Set([...currentSharedOwners, sharedOwner]),
+                        ),
+                    };
+                }),
+            );
+
+            Alert.alert("共有完了", "選択したユーザーに共有しました。");
+            closeShareModal();
+        } catch (error) {
+            console.error("Share session error:", error);
+            Alert.alert("共有エラー", "位置情報の共有に失敗しました。");
+        } finally {
+            setSharing(false);
         }
     };
 
@@ -318,7 +491,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                                     <View style={styles.cardContent}>
                                         <View style={styles.row}>
                                             <Text style={styles.dateText}>
-                                                自動記録セッション
+                                                {item.recordingSessionName}
                                             </Text>
                                         </View>
 
@@ -333,19 +506,6 @@ export default function LocationLogScreen({ navigation }: Props) {
                                         <Text style={styles.memoText}>
                                             記録ポイント: {item.pointCount}件
                                         </Text>
-
-                                        {/* セッション内のメモがある場合は先頭のメモを表示、なければ緯度経度を表示 * *
-                                        <Text style={styles.noMemoText}>
-                                            開始地点:{" "}
-                                            {item.startLog.latitude.toFixed(6)},{" "}
-                                            {item.startLog.longitude.toFixed(6)}
-                                        </Text>
-
-                                        <Text style={styles.noMemoText}>
-                                            終了地点:{" "}
-                                            {item.endLog.latitude.toFixed(6)},{" "}
-                                            {item.endLog.longitude.toFixed(6)}
-                                        </Text> */}
                                     </View>
 
                                     <View style={styles.actionRow}>
@@ -389,6 +549,19 @@ export default function LocationLogScreen({ navigation }: Props) {
                                             </Text>
                                         </Pressable>
                                     </View>
+
+                                    <Pressable
+                                        style={({ pressed }) => [
+                                            styles.shareButton,
+                                            pressed &&
+                                                styles.detailButtonPressed,
+                                        ]}
+                                        onPress={() => openShareModal(item)}
+                                    >
+                                        <Text style={styles.shareButtonText}>
+                                            共有
+                                        </Text>
+                                    </Pressable>
                                 </View>
                             );
                         }
@@ -453,6 +626,108 @@ export default function LocationLogScreen({ navigation }: Props) {
                     }}
                 />
             )}
+
+            <Modal
+                visible={shareModalVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={closeShareModal}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>
+                            共有先ユーザーを検索
+                        </Text>
+
+                        <TextInput
+                            style={styles.shareSearchInput}
+                            value={shareSearchText}
+                            onChangeText={setShareSearchText}
+                            placeholder="ユーザー名またはメール"
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            editable={!sharing}
+                        />
+
+                        <Pressable
+                            style={[
+                                styles.searchButton,
+                                shareSearching && styles.deleteButtonDisabled,
+                            ]}
+                            onPress={searchShareUsers}
+                            disabled={shareSearching || sharing}
+                        >
+                            <Text style={styles.searchButtonText}>
+                                {shareSearching ? "検索中..." : "検索"}
+                            </Text>
+                        </Pressable>
+
+                        <ScrollView
+                            style={styles.shareUserList}
+                            keyboardShouldPersistTaps="handled"
+                        >
+                            {shareUsers.length === 0 ? (
+                                <Text style={styles.shareEmptyText}>
+                                    共有先ユーザーを検索してください。
+                                </Text>
+                            ) : (
+                                shareUsers.map((user) => {
+                                    const selected =
+                                        selectedShareUser?.id === user.id;
+
+                                    return (
+                                        <Pressable
+                                            key={user.id}
+                                            style={[
+                                                styles.shareUserItem,
+                                                selected &&
+                                                    styles.shareUserItemSelected,
+                                            ]}
+                                            onPress={() =>
+                                                setSelectedShareUser(user)
+                                            }
+                                            disabled={sharing}
+                                        >
+                                            <Text style={styles.shareUserName}>
+                                                {user.displayName ||
+                                                    "名前未設定"}
+                                            </Text>
+                                            <Text style={styles.shareUserEmail}>
+                                                {user.email || "メールなし"}
+                                            </Text>
+                                        </Pressable>
+                                    );
+                                })
+                            )}
+                        </ScrollView>
+
+                        <View style={styles.modalButtonRow}>
+                            <Pressable
+                                style={styles.modalSecondaryButton}
+                                onPress={closeShareModal}
+                                disabled={sharing}
+                            >
+                                <Text style={styles.modalSecondaryButtonText}>
+                                    キャンセル
+                                </Text>
+                            </Pressable>
+
+                            <Pressable
+                                style={[
+                                    styles.modalPrimaryButton,
+                                    sharing && styles.deleteButtonDisabled,
+                                ]}
+                                onPress={shareSessionWithSelectedUser}
+                                disabled={sharing}
+                            >
+                                <Text style={styles.modalPrimaryButtonText}>
+                                    {sharing ? "共有中..." : "共有する"}
+                                </Text>
+                            </Pressable>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
         </View>
     );
 }
@@ -503,10 +778,16 @@ function buildDisplayItems(logs: LocationLogItem[]): LocationLogDisplayItem[] {
             return;
         }
 
+        const recordingSessionName =
+            sortedLogs
+                .find((log) => log.recordingSessionName?.trim())
+                ?.recordingSessionName?.trim() ?? "自動記録セッション";
+
         displayItems.push({
             kind: "session",
             id: `session-${recordingSessionId}`,
             recordingSessionId,
+            recordingSessionName,
             logs: sortedLogs,
             startLog,
             endLog,
@@ -599,26 +880,6 @@ const styles = StyleSheet.create({
         marginTop: 40,
         color: "#666",
     },
-    deleteButton: {
-        minWidth: 90,
-        paddingVertical: 10,
-        paddingHorizontal: 18,
-        borderRadius: 8,
-        backgroundColor: "#4b6f8f",
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    deleteButtonPressed: {
-        opacity: 0.75,
-    },
-    deleteButtonDisabled: {
-        opacity: 0.5,
-    },
-    deleteButtonText: {
-        color: "#fff",
-        fontSize: 14,
-        fontWeight: "bold",
-    },
     actionRow: {
         flexDirection: "row",
         alignItems: "center",
@@ -642,6 +903,144 @@ const styles = StyleSheet.create({
     detailButtonText: {
         color: "#2f4f66",
         fontSize: 13,
+        fontWeight: "bold",
+    },
+    deleteButton: {
+        minWidth: 90,
+        paddingVertical: 10,
+        paddingHorizontal: 18,
+        borderRadius: 8,
+        backgroundColor: "#4b6f8f",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    deleteButtonPressed: {
+        opacity: 0.75,
+    },
+    deleteButtonDisabled: {
+        opacity: 0.5,
+    },
+    deleteButtonText: {
+        color: "#fff",
+        fontSize: 14,
+        fontWeight: "bold",
+    },
+    shareButton: {
+        marginHorizontal: 14,
+        marginBottom: 12,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderRadius: 8,
+        backgroundColor: "#eef3f7",
+        alignItems: "center",
+        justifyContent: "center",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+    },
+    shareButtonText: {
+        color: "#2f4f66",
+        fontSize: 13,
+        fontWeight: "bold",
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: "rgba(0,0,0,0.35)",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+    },
+    modalContent: {
+        width: "100%",
+        maxHeight: "80%",
+        borderRadius: 12,
+        padding: 18,
+        backgroundColor: "#fff",
+    },
+    modalTitle: {
+        fontSize: 18,
+        fontWeight: "bold",
+        marginBottom: 12,
+    },
+    shareSearchInput: {
+        height: 44,
+        borderWidth: 1,
+        borderColor: "#ccc",
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 0,
+        fontSize: 16,
+        backgroundColor: "#fff",
+        marginBottom: 10,
+    },
+    searchButton: {
+        backgroundColor: "#4b6f8f",
+        borderRadius: 8,
+        paddingVertical: 10,
+        alignItems: "center",
+    },
+    searchButtonText: {
+        color: "#fff",
+        fontSize: 14,
+        fontWeight: "bold",
+    },
+    shareUserList: {
+        marginTop: 10,
+        maxHeight: 260,
+    },
+    shareEmptyText: {
+        textAlign: "center",
+        color: "#777",
+        paddingVertical: 20,
+    },
+    shareUserItem: {
+        padding: 10,
+        borderWidth: 1,
+        borderColor: "#ddd",
+        borderRadius: 8,
+        marginBottom: 8,
+        backgroundColor: "#fff",
+    },
+    shareUserItemSelected: {
+        borderColor: "#4b6f8f",
+        backgroundColor: "#eef3f7",
+    },
+    shareUserName: {
+        fontSize: 15,
+        fontWeight: "bold",
+        color: "#333",
+    },
+    shareUserEmail: {
+        marginTop: 2,
+        fontSize: 12,
+        color: "#666",
+    },
+    modalButtonRow: {
+        flexDirection: "row",
+        gap: 8,
+        marginTop: 16,
+    },
+    modalPrimaryButton: {
+        flex: 1,
+        backgroundColor: "#4b6f8f",
+        borderRadius: 8,
+        paddingVertical: 10,
+        alignItems: "center",
+    },
+    modalPrimaryButtonText: {
+        color: "#fff",
+        fontSize: 14,
+        fontWeight: "bold",
+    },
+    modalSecondaryButton: {
+        flex: 1,
+        backgroundColor: "#e6edf3",
+        borderRadius: 8,
+        paddingVertical: 10,
+        alignItems: "center",
+    },
+    modalSecondaryButtonText: {
+        color: "#2f4f66",
+        fontSize: 14,
         fontWeight: "bold",
     },
 });

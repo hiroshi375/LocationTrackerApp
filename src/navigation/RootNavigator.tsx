@@ -21,6 +21,7 @@ export type RootStackParamList = {
                   memo?: string | null;
                   recordingSessionId?: string | null;
                   recordingSessionName?: string | null;
+                  sharedOwners?: string[] | null;
               };
           }
         | undefined;

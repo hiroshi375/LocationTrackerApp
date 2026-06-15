@@ -1,8 +1,10 @@
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { useCallback, useRef, useState } from "react";
+import * as Location from "expo-location";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
+    Animated,
     Pressable,
     StyleSheet,
     Text,
@@ -14,7 +16,6 @@ import MapView, {
     Polyline,
     PROVIDER_GOOGLE,
 } from "react-native-maps";
-
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 
@@ -37,10 +38,20 @@ export default function LocationMapScreen({ route }: Props) {
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [hasLoaded, setHasLoaded] = useState(false);
-    const [showRouteLine, setShowRouteLine] = useState(false);
+    const [showPoints, setShowPoints] = useState(true);
 
     const selectedLocation = route.params?.selectedLocation ?? null;
     const routeRecordingSessionId = route.params?.recordingSessionId ?? null;
+
+    const activeSessionId =
+        selectedLocation?.recordingSessionId ?? routeRecordingSessionId ?? null;
+
+    const [currentLocation, setCurrentLocation] = useState<{
+        latitude: number;
+        longitude: number;
+    } | null>(null);
+
+    const currentLocationOpacity = useRef(new Animated.Value(1)).current;
 
     const loadLogs = useCallback(async (showLoading: boolean = true) => {
         try {
@@ -69,6 +80,90 @@ export default function LocationMapScreen({ route }: Props) {
         }
     }, []);
 
+    useEffect(() => {
+        if (!activeSessionId) {
+            setCurrentLocation(null);
+            return;
+        }
+
+        let subscription: Location.LocationSubscription | null = null;
+        let cancelled = false;
+
+        const startWatchingCurrentLocation = async () => {
+            try {
+                const permission =
+                    await Location.requestForegroundPermissionsAsync();
+
+                if (permission.status !== "granted") {
+                    console.log("Location permission not granted");
+                    return;
+                }
+
+                const firstLocation = await Location.getCurrentPositionAsync({
+                    accuracy: Location.Accuracy.Balanced,
+                });
+
+                if (!cancelled) {
+                    setCurrentLocation({
+                        latitude: firstLocation.coords.latitude,
+                        longitude: firstLocation.coords.longitude,
+                    });
+                }
+
+                subscription = await Location.watchPositionAsync(
+                    {
+                        accuracy: Location.Accuracy.Balanced,
+                        timeInterval: 2000,
+                        distanceInterval: 1,
+                    },
+                    (location) => {
+                        setCurrentLocation({
+                            latitude: location.coords.latitude,
+                            longitude: location.coords.longitude,
+                        });
+                    },
+                );
+            } catch (error) {
+                console.error("Watch current location error:", error);
+            }
+        };
+
+        void startWatchingCurrentLocation();
+
+        return () => {
+            cancelled = true;
+            subscription?.remove();
+        };
+    }, [activeSessionId]);
+
+    useEffect(() => {
+        if (!activeSessionId || !currentLocation) {
+            currentLocationOpacity.setValue(1);
+            return;
+        }
+
+        const animation = Animated.loop(
+            Animated.sequence([
+                Animated.timing(currentLocationOpacity, {
+                    toValue: 0.25,
+                    duration: 600,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(currentLocationOpacity, {
+                    toValue: 1,
+                    duration: 600,
+                    useNativeDriver: true,
+                }),
+            ]),
+        );
+
+        animation.start();
+
+        return () => {
+            animation.stop();
+        };
+    }, [activeSessionId, currentLocation, currentLocationOpacity]);
+
     useFocusEffect(
         useCallback(() => {
             void loadLogs(true);
@@ -91,14 +186,22 @@ export default function LocationMapScreen({ route }: Props) {
         );
     }
 
-    const activeSessionId =
-        selectedLocation?.recordingSessionId ?? routeRecordingSessionId ?? null;
-
     const visibleLogs = activeSessionId
         ? logs.filter((log) => log.recordingSessionId === activeSessionId)
         : logs;
 
-    const shouldShowRouteLine = showRouteLine || Boolean(activeSessionId);
+    const latestRecordedLog = visibleLogs.length > 0 ? visibleLogs[0] : null;
+
+    const currentLocationLineCoordinates =
+        activeSessionId && latestRecordedLog && currentLocation
+            ? [
+                  {
+                      latitude: latestRecordedLog.latitude,
+                      longitude: latestRecordedLog.longitude,
+                  },
+                  currentLocation,
+              ]
+            : [];
 
     if (visibleLogs.length === 0 && !selectedLocation) {
         return (
@@ -194,48 +297,78 @@ export default function LocationMapScreen({ route }: Props) {
                     longitudeDelta: 0.01,
                 }}
             >
-                {shouldShowRouteLine && routeCoordinates.length >= 2 && (
+                {routeCoordinates.length >= 2 && (
                     <Polyline
                         coordinates={routeCoordinates}
-                        strokeColor="rgba(75,111,143,0.7)"
+                        strokeColor="rgba(74, 117, 87, 0.8)"
                         strokeWidth={4}
                     />
                 )}
 
-                {visibleLogs.map((log) => {
-                    const isSelected = selectedLocation?.id === log.id;
+                {currentLocationLineCoordinates.length === 2 && (
+                    <Polyline
+                        coordinates={currentLocationLineCoordinates}
+                        strokeColor="rgba(74, 117, 87, 0.85)"
+                        strokeWidth={4}
+                        lineDashPattern={[8, 6]}
+                    />
+                )}
 
-                    if (isSelected) {
+                {showPoints && activeSessionId && currentLocation && (
+                    <Marker
+                        coordinate={currentLocation}
+                        anchor={{ x: 0.5, y: 0.5 }}
+                        tracksViewChanges
+                    >
+                        <Animated.View
+                            style={[
+                                styles.currentLocationMarkerOuter,
+                                {
+                                    opacity: currentLocationOpacity,
+                                },
+                            ]}
+                        >
+                            <View style={styles.currentLocationMarkerInner} />
+                        </Animated.View>
+                    </Marker>
+                )}
+
+                {showPoints &&
+                    visibleLogs.map((log) => {
+                        const isSelected = selectedLocation?.id === log.id;
+
+                        if (isSelected) {
+                            return (
+                                <Marker
+                                    key={log.id}
+                                    coordinate={{
+                                        latitude: log.latitude,
+                                        longitude: log.longitude,
+                                    }}
+                                    title="選択した位置"
+                                    description={buildMarkerDescription(log)}
+                                    pinColor="#4b6f8f"
+                                />
+                            );
+                        }
+
                         return (
-                            <Marker
+                            <Circle
                                 key={log.id}
-                                coordinate={{
+                                center={{
                                     latitude: log.latitude,
                                     longitude: log.longitude,
                                 }}
-                                title="選択した位置"
-                                description={buildMarkerDescription(log)}
-                                pinColor="#4b6f8f"
+                                radius={12}
+                                fillColor="rgba(75,111,143,0.85)"
+                                strokeColor="#ffffff"
+                                strokeWidth={3}
                             />
                         );
-                    }
+                    })}
 
-                    return (
-                        <Circle
-                            key={log.id}
-                            center={{
-                                latitude: log.latitude,
-                                longitude: log.longitude,
-                            }}
-                            radius={12}
-                            fillColor="rgba(75,111,143,0.85)"
-                            strokeColor="#ffffff"
-                            strokeWidth={3}
-                        />
-                    );
-                })}
-
-                {selectedLocation &&
+                {showPoints &&
+                    selectedLocation &&
                     !visibleLogs.some(
                         (log) => log.id === selectedLocation.id,
                     ) && (
@@ -284,10 +417,10 @@ export default function LocationMapScreen({ route }: Props) {
 
                 <Pressable
                     style={styles.routeToggleButton}
-                    onPress={() => setShowRouteLine((current) => !current)}
+                    onPress={() => setShowPoints((current) => !current)}
                 >
                     <Text style={styles.routeToggleButtonText}>
-                        ルート線表示: {showRouteLine ? "OFF" : "ON"}
+                        ポイント表示: {showPoints ? "OFF" : "ON"}
                     </Text>
                 </Pressable>
 
@@ -464,5 +597,21 @@ const styles = StyleSheet.create({
         color: "#2f4f66",
         fontWeight: "bold",
         fontSize: 13,
+    },
+    currentLocationMarkerOuter: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        backgroundColor: "rgba(0, 122, 255, 0.25)",
+        alignItems: "center",
+        justifyContent: "center",
+        borderWidth: 2,
+        borderColor: "rgba(0, 122, 255, 0.9)",
+    },
+    currentLocationMarkerInner: {
+        width: 12,
+        height: 12,
+        borderRadius: 6,
+        backgroundColor: "rgba(0, 122, 255, 1)",
     },
 });

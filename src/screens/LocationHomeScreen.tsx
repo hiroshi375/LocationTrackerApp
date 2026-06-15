@@ -61,11 +61,16 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [recordIntervalMs, setRecordIntervalMs] = useState(30 * 1000);
     const [recordDistanceMeters, setRecordDistanceMeters] = useState(20);
 
-    const { isRecording, recordingStartedAt, startRecording, stopRecording } =
-        useForegroundLocationRecorder({
-            intervalMs: recordIntervalMs,
-            distanceMeters: recordDistanceMeters,
-        });
+    const {
+        isRecording,
+        recordingStartedAt,
+        activeRecordingSessionId,
+        startRecording,
+        stopRecording,
+    } = useForegroundLocationRecorder({
+        intervalMs: recordIntervalMs,
+        distanceMeters: recordDistanceMeters,
+    });
 
     const recordingBlinkAnim = useRef(new Animated.Value(1)).current;
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -351,7 +356,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 <View style={styles.buttonSpace}>
                     <AppButton
                         title="地図で見る"
-                        onPress={() => navigation.navigate("LocationMap")}
+                        onPress={() =>
+                            navigation.navigate("LocationMap", {
+                                recordingSessionId:
+                                    activeRecordingSessionId ?? undefined,
+                            })
+                        }
                     />
                 </View>
                 <View style={styles.autoRecordBox}>

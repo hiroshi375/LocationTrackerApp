@@ -28,6 +28,7 @@ type LocationLogItem = {
     recordedAt: string;
     memo?: string | null;
     recordingSessionId?: string | null;
+    recordingSessionName?: string | null;
 };
 
 export default function LocationMapScreen({ route }: Props) {
@@ -39,10 +40,13 @@ export default function LocationMapScreen({ route }: Props) {
     const [showRouteLine, setShowRouteLine] = useState(false);
 
     const selectedLocation = route.params?.selectedLocation ?? null;
+    const routeRecordingSessionId = route.params?.recordingSessionId ?? null;
 
-    const loadLogs = async () => {
+    const loadLogs = useCallback(async (showLoading: boolean = true) => {
         try {
-            setLoading(true);
+            if (showLoading) {
+                setLoading(true);
+            }
 
             const result = await client.models.LocationLog.list({});
 
@@ -51,41 +55,31 @@ export default function LocationMapScreen({ route }: Props) {
                 return;
             }
 
-            const items = result.data
-                .map((item) => ({
-                    id: item.id,
-                    latitude: Number(item.latitude),
-                    longitude: Number(item.longitude),
-                    accuracy: item.accuracy,
-                    recordedAt: item.recordedAt,
-                    memo: item.memo,
-                    recordingSessionId: item.recordingSessionId,
-                }))
-                .filter(
-                    (item) =>
-                        Number.isFinite(item.latitude) &&
-                        Number.isFinite(item.longitude),
-                )
-                .sort((a, b) => {
-                    return (
-                        new Date(b.recordedAt).getTime() -
-                        new Date(a.recordedAt).getTime()
-                    );
-                });
-
+            const items = normalizeLocationLogs(result.data ?? []);
             setLogs(items);
         } catch (error) {
             console.error("Map loadLogs error:", error);
         } finally {
-            setLoading(false);
+            if (showLoading) {
+                setLoading(false);
+            }
+
             setHasLoaded(true);
         }
-    };
+    }, []);
 
     useFocusEffect(
         useCallback(() => {
-            loadLogs();
-        }, []),
+            void loadLogs(true);
+
+            const timerId = setInterval(() => {
+                void loadLogs(false);
+            }, 5000);
+
+            return () => {
+                clearInterval(timerId);
+            };
+        }, [loadLogs]),
     );
 
     if (!hasLoaded || loading) {
@@ -96,11 +90,14 @@ export default function LocationMapScreen({ route }: Props) {
         );
     }
 
-    const activeSessionId = selectedLocation?.recordingSessionId ?? null;
+    const activeSessionId =
+        selectedLocation?.recordingSessionId ?? routeRecordingSessionId ?? null;
 
     const visibleLogs = activeSessionId
         ? logs.filter((log) => log.recordingSessionId === activeSessionId)
         : logs;
+
+    const shouldShowRouteLine = showRouteLine || Boolean(activeSessionId);
 
     if (visibleLogs.length === 0 && !selectedLocation) {
         return (
@@ -121,7 +118,7 @@ export default function LocationMapScreen({ route }: Props) {
         );
     }
 
-    const isSelectedMode = selectedLocation !== undefined;
+    const isSelectedMode = selectedLocation !== null;
 
     const moveToLocation = (location: LocationLogItem) => {
         if (
@@ -196,7 +193,7 @@ export default function LocationMapScreen({ route }: Props) {
                     longitudeDelta: 0.01,
                 }}
             >
-                {showRouteLine && routeCoordinates.length >= 2 && (
+                {shouldShowRouteLine && routeCoordinates.length >= 2 && (
                     <Polyline
                         coordinates={routeCoordinates}
                         strokeColor="rgba(75,111,143,0.7)"
@@ -289,7 +286,7 @@ export default function LocationMapScreen({ route }: Props) {
                     onPress={() => setShowRouteLine((current) => !current)}
                 >
                     <Text style={styles.routeToggleButtonText}>
-                        ルート線表示: {showRouteLine ? "ON" : "OFF"}
+                        ルート線表示: {showRouteLine ? "OFF" : "ON"}
                     </Text>
                 </Pressable>
 
@@ -339,6 +336,31 @@ function buildMarkerDescription(log: LocationLogItem) {
     }
 
     return `${dateText} / ${log.memo}`;
+}
+
+function normalizeLocationLogs(data: any[]): LocationLogItem[] {
+    return (data ?? [])
+        .map((item) => ({
+            id: item.id,
+            latitude: Number(item.latitude),
+            longitude: Number(item.longitude),
+            accuracy: item.accuracy,
+            recordedAt: item.recordedAt,
+            memo: item.memo,
+            recordingSessionId: item.recordingSessionId ?? null,
+            recordingSessionName: item.recordingSessionName ?? null,
+        }))
+        .filter(
+            (item) =>
+                Number.isFinite(item.latitude) &&
+                Number.isFinite(item.longitude),
+        )
+        .sort((a, b) => {
+            return (
+                new Date(b.recordedAt).getTime() -
+                new Date(a.recordedAt).getTime()
+            );
+        });
 }
 
 const styles = StyleSheet.create({

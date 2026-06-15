@@ -32,6 +32,10 @@ export function useForegroundLocationRecorder({
     const lastSavedLocationRef = useRef<SavedLocation | null>(null);
     const recordingSessionIdRef = useRef<string | null>(null);
 
+    const [activeRecordingSessionId, setActiveRecordingSessionId] = useState<
+        string | null
+    >(null);
+
     // 位置を保存すべきか判定する関数
     const shouldSaveLocation = useCallback(
         (latitude: number, longitude: number) => {
@@ -132,7 +136,10 @@ export function useForegroundLocationRecorder({
             return;
         }
 
-        recordingSessionIdRef.current = createRecordingSessionId();
+        const newSessionId = createRecordingSessionId();
+
+        recordingSessionIdRef.current = newSessionId;
+        setActiveRecordingSessionId(newSessionId);
         lastSavedLocationRef.current = null;
 
         const startedAt = new Date().toISOString();
@@ -179,7 +186,7 @@ export function useForegroundLocationRecorder({
         }
 
         recordingSessionIdRef.current = null;
-        //recordingSessionNameRef.current = null;
+        setActiveRecordingSessionId(null);
         setRecordingStartedAt(null);
         setIsRecording(false);
 
@@ -195,8 +202,9 @@ export function useForegroundLocationRecorder({
 
     return {
         isRecording,
-        lastRecordedAtText,
+        //lastRecordedAtText,
         recordingStartedAt,
+        activeRecordingSessionId,
         startRecording,
         stopRecording,
     };

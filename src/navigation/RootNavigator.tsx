@@ -11,6 +11,7 @@ export type RootStackParamList = {
     LocationLog: undefined;
     LocationMap:
         | {
+              recordingSessionId?: string | null;
               selectedLocation?: {
                   id: string;
                   latitude: number;
@@ -19,6 +20,7 @@ export type RootStackParamList = {
                   recordedAt: string;
                   memo?: string | null;
                   recordingSessionId?: string | null;
+                  recordingSessionName?: string | null;
               };
           }
         | undefined;

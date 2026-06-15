@@ -18,6 +18,7 @@ export type RootStackParamList = {
                   accuracy?: number | null;
                   recordedAt: string;
                   memo?: string | null;
+                  recordingSessionId?: string | null;
               };
           }
         | undefined;

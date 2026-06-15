@@ -25,7 +25,30 @@ type LocationLogItem = {
     accuracy?: number | null;
     recordedAt: string;
     memo?: string | null;
+    recordingSessionId?: string | null;
 };
+
+type LocationLogSingleDisplayItem = LocationLogItem & {
+    kind: "single";
+    sortAt: string;
+};
+
+type LocationLogSessionDisplayItem = {
+    kind: "session";
+    id: string;
+    recordingSessionId: string;
+    logs: LocationLogItem[];
+    startLog: LocationLogItem;
+    endLog: LocationLogItem;
+    startAt: string;
+    endAt: string;
+    pointCount: number;
+    sortAt: string;
+};
+
+type LocationLogDisplayItem =
+    | LocationLogSingleDisplayItem
+    | LocationLogSessionDisplayItem;
 
 export default function LocationLogScreen({ navigation }: Props) {
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
@@ -52,6 +75,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                     accuracy: item.accuracy,
                     recordedAt: item.recordedAt,
                     memo: item.memo,
+                    recordingSessionId: item.recordingSessionId ?? null,
                 }))
                 .filter(
                     (item) =>
@@ -77,22 +101,53 @@ export default function LocationLogScreen({ navigation }: Props) {
         setSearchText("");
     };
 
-    const filteredLogs = useMemo(() => {
+    const displayItems = useMemo(() => {
+        return buildDisplayItems(logs);
+    }, [logs]);
+
+    const filteredItems = useMemo(() => {
         const keyword = searchText.trim().toLowerCase();
 
         if (!keyword) {
-            return logs;
+            return displayItems;
         }
 
-        return logs.filter((log) => {
-            const memo = log.memo?.toLowerCase() ?? "";
-            return memo.includes(keyword);
+        return displayItems.filter((item) => {
+            if (item.kind === "single") {
+                return (item.memo ?? "").toLowerCase().includes(keyword);
+            }
+
+            return (
+                "自動記録セッション".toLowerCase().includes(keyword) ||
+                item.recordingSessionId.toLowerCase().includes(keyword) ||
+                item.logs.some((log) =>
+                    (log.memo ?? "").toLowerCase().includes(keyword),
+                )
+            );
         });
-    }, [logs, searchText]);
+    }, [displayItems, searchText]);
 
     const handleOpenDetail = (log: LocationLogItem) => {
         navigation.navigate("LocationLogDetail", {
             locationLogId: log.id,
+        });
+    };
+
+    const handleOpenSessionMap = (item: LocationLogSessionDisplayItem) => {
+        const selectedLocation: LocationLogItem = {
+            id: item.endLog.id,
+            latitude: item.endLog.latitude,
+            longitude: item.endLog.longitude,
+            accuracy: item.endLog.accuracy ?? null,
+            recordedAt: item.endLog.recordedAt,
+            memo: item.endLog.memo ?? null,
+            recordingSessionId: item.recordingSessionId,
+        };
+
+        console.log("Open session map:", selectedLocation);
+
+        navigation.push("LocationMap", {
+            selectedLocation,
         });
     };
 
@@ -110,6 +165,28 @@ export default function LocationLogScreen({ navigation }: Props) {
                     style: "destructive",
                     onPress: async () => {
                         await deleteLog(log.id);
+                    },
+                },
+            ],
+        );
+    };
+
+    const handleDeleteSession = (item: LocationLogSessionDisplayItem) => {
+        Alert.alert(
+            "自動記録セッションを削除",
+            `${formatDateTime(item.startAt)} 〜 ${formatDateTime(
+                item.endAt,
+            )} の自動記録セッションを削除しますか？\n\n記録ポイント ${item.pointCount}件が削除されます。`,
+            [
+                {
+                    text: "キャンセル",
+                    style: "cancel",
+                },
+                {
+                    text: "削除",
+                    style: "destructive",
+                    onPress: async () => {
+                        await deleteSession(item);
                     },
                 },
             ],
@@ -141,6 +218,45 @@ export default function LocationLogScreen({ navigation }: Props) {
         }
     };
 
+    const deleteSession = async (item: LocationLogSessionDisplayItem) => {
+        try {
+            setDeletingId(item.id);
+
+            const results = await Promise.all(
+                item.logs.map((log) =>
+                    client.models.LocationLog.delete({
+                        id: log.id,
+                    }),
+                ),
+            );
+
+            const hasErrors = results.some((result) => result.errors);
+
+            if (hasErrors) {
+                console.error("LocationLog session delete errors:", results);
+                Alert.alert(
+                    "削除エラー",
+                    "自動記録セッションを削除できませんでした。",
+                );
+                return;
+            }
+
+            setLogs((currentLogs) =>
+                currentLogs.filter(
+                    (log) => log.recordingSessionId !== item.recordingSessionId,
+                ),
+            );
+        } catch (error) {
+            console.error("LocationLog session delete error:", error);
+            Alert.alert(
+                "削除エラー",
+                "自動記録セッションの削除に失敗しました。",
+            );
+        } finally {
+            setDeletingId(null);
+        }
+    };
+
     useFocusEffect(
         useCallback(() => {
             loadLogs();
@@ -163,7 +279,7 @@ export default function LocationLogScreen({ navigation }: Props) {
 
                 <View style={styles.searchInfoRow}>
                     <Text style={styles.searchInfoText}>
-                        表示件数: {filteredLogs.length} / {logs.length}
+                        表示件数: {filteredItems.length} / {displayItems.length}
                     </Text>
 
                     {searchText.trim().length > 0 && (
@@ -178,7 +294,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                 <ActivityIndicator />
             ) : (
                 <FlatList
-                    data={filteredLogs}
+                    data={filteredItems}
                     keyExtractor={(item) => item.id}
                     refreshControl={
                         <RefreshControl
@@ -195,6 +311,88 @@ export default function LocationLogScreen({ navigation }: Props) {
                     }
                     renderItem={({ item }) => {
                         const isDeleting = deletingId === item.id;
+
+                        if (item.kind === "session") {
+                            return (
+                                <View style={styles.card}>
+                                    <View style={styles.cardContent}>
+                                        <View style={styles.row}>
+                                            <Text style={styles.dateText}>
+                                                自動記録セッション
+                                            </Text>
+                                        </View>
+
+                                        <Text style={styles.memoText}>
+                                            開始: {formatDateTime(item.startAt)}
+                                        </Text>
+
+                                        <Text style={styles.memoText}>
+                                            終了: {formatDateTime(item.endAt)}
+                                        </Text>
+
+                                        <Text style={styles.memoText}>
+                                            記録ポイント: {item.pointCount}件
+                                        </Text>
+
+                                        {/* セッション内のメモがある場合は先頭のメモを表示、なければ緯度経度を表示 * *
+                                        <Text style={styles.noMemoText}>
+                                            開始地点:{" "}
+                                            {item.startLog.latitude.toFixed(6)},{" "}
+                                            {item.startLog.longitude.toFixed(6)}
+                                        </Text>
+
+                                        <Text style={styles.noMemoText}>
+                                            終了地点:{" "}
+                                            {item.endLog.latitude.toFixed(6)},{" "}
+                                            {item.endLog.longitude.toFixed(6)}
+                                        </Text> */}
+                                    </View>
+
+                                    <View style={styles.actionRow}>
+                                        <Pressable
+                                            style={({ pressed }) => [
+                                                styles.detailButton,
+                                                pressed &&
+                                                    styles.detailButtonPressed,
+                                            ]}
+                                            onPress={() =>
+                                                handleOpenSessionMap(item)
+                                            }
+                                        >
+                                            <Text
+                                                style={styles.detailButtonText}
+                                            >
+                                                地図で表示
+                                            </Text>
+                                        </Pressable>
+
+                                        <Pressable
+                                            style={({ pressed }) => [
+                                                styles.deleteButton,
+                                                pressed &&
+                                                    !isDeleting &&
+                                                    styles.deleteButtonPressed,
+                                                isDeleting &&
+                                                    styles.deleteButtonDisabled,
+                                            ]}
+                                            disabled={isDeleting}
+                                            onPress={() =>
+                                                handleDeleteSession(item)
+                                            }
+                                        >
+                                            <Text
+                                                style={styles.deleteButtonText}
+                                            >
+                                                {isDeleting
+                                                    ? "削除中..."
+                                                    : "削除"}
+                                            </Text>
+                                        </Pressable>
+                                    </View>
+                                </View>
+                            );
+                        }
+
                         const isLatest =
                             logs.length > 0 && item.id === logs[0].id;
 
@@ -269,6 +467,59 @@ function formatDateTime(value: string) {
     const mi = String(date.getMinutes()).padStart(2, "0");
 
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+function buildDisplayItems(logs: LocationLogItem[]): LocationLogDisplayItem[] {
+    const sessionMap = new Map<string, LocationLogItem[]>();
+    const displayItems: LocationLogDisplayItem[] = [];
+
+    logs.forEach((log) => {
+        if (log.recordingSessionId) {
+            const current = sessionMap.get(log.recordingSessionId) ?? [];
+            current.push(log);
+            sessionMap.set(log.recordingSessionId, current);
+            return;
+        }
+
+        displayItems.push({
+            ...log,
+            kind: "single",
+            sortAt: log.recordedAt,
+        });
+    });
+
+    sessionMap.forEach((sessionLogs, recordingSessionId) => {
+        const sortedLogs = sessionLogs.slice().sort((a, b) => {
+            return (
+                new Date(a.recordedAt).getTime() -
+                new Date(b.recordedAt).getTime()
+            );
+        });
+
+        const startLog = sortedLogs[0];
+        const endLog = sortedLogs[sortedLogs.length - 1];
+
+        if (!startLog || !endLog) {
+            return;
+        }
+
+        displayItems.push({
+            kind: "session",
+            id: `session-${recordingSessionId}`,
+            recordingSessionId,
+            logs: sortedLogs,
+            startLog,
+            endLog,
+            startAt: startLog.recordedAt,
+            endAt: endLog.recordedAt,
+            pointCount: sortedLogs.length,
+            sortAt: endLog.recordedAt,
+        });
+    });
+
+    return displayItems.sort((a, b) => {
+        return new Date(b.sortAt).getTime() - new Date(a.sortAt).getTime();
+    });
 }
 
 const styles = StyleSheet.create({

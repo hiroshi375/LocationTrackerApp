@@ -23,6 +23,7 @@ type LocationLogDetail = {
     accuracy?: number | null;
     recordedAt: string;
     memo?: string | null;
+    recordingSessionId: string | null;
 };
 
 export default function LocationLogDetailScreen({ route, navigation }: Props) {
@@ -92,6 +93,7 @@ export default function LocationLogDetailScreen({ route, navigation }: Props) {
                 accuracy: log.accuracy,
                 recordedAt: log.recordedAt,
                 memo: log.memo,
+                recordingSessionId: log.recordingSessionId ?? null,
             };
 
             setLog(item);
@@ -152,6 +154,7 @@ export default function LocationLogDetailScreen({ route, navigation }: Props) {
                 accuracy: log.accuracy,
                 recordedAt: log.recordedAt,
                 memo: memo.trim() || null,
+                recordingSessionId: log.recordingSessionId ?? null,
             },
         });
     };

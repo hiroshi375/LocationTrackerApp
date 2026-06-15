@@ -7,6 +7,7 @@ import {
     Alert,
     Animated,
     KeyboardAvoidingView,
+    Modal,
     Platform,
     Pressable,
     ScrollView,
@@ -60,13 +61,22 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [recordIntervalMs, setRecordIntervalMs] = useState(30 * 1000);
     const [recordDistanceMeters, setRecordDistanceMeters] = useState(20);
 
-    const { isRecording, lastRecordedAtText, startRecording, stopRecording } =
+    const { isRecording, recordingStartedAt, startRecording, stopRecording } =
         useForegroundLocationRecorder({
             intervalMs: recordIntervalMs,
             distanceMeters: recordDistanceMeters,
         });
 
     const recordingBlinkAnim = useRef(new Animated.Value(1)).current;
+    const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+    const [sessionNameModalVisible, setSessionNameModalVisible] =
+        useState(false);
+    const [sessionNameInput, setSessionNameInput] = useState("");
+    const [pendingSessionId, setPendingSessionId] = useState<string | null>(
+        null,
+    );
+    const [savingSessionName, setSavingSessionName] = useState(false);
 
     useEffect(() => {
         if (!isRecording) {
@@ -97,6 +107,27 @@ export default function LocationHomeScreen({ navigation }: Props) {
             animation.stop();
         };
     }, [isRecording, recordingBlinkAnim]);
+
+    useEffect(() => {
+        if (!isRecording || !recordingStartedAt) {
+            setElapsedSeconds(0);
+            return;
+        }
+
+        const updateElapsedSeconds = () => {
+            const startedAtTime = new Date(recordingStartedAt).getTime();
+            const seconds = Math.floor((Date.now() - startedAtTime) / 1000);
+            setElapsedSeconds(seconds);
+        };
+
+        updateElapsedSeconds();
+
+        const timerId = setInterval(updateElapsedSeconds, 1000);
+
+        return () => {
+            clearInterval(timerId);
+        };
+    }, [isRecording, recordingStartedAt]);
 
     // 位置情報を取得する処理
     const handleGetLocation = async () => {
@@ -172,6 +203,92 @@ export default function LocationHomeScreen({ navigation }: Props) {
         }
     };
 
+    // セッションIDを生成する関数
+    const saveSessionName = async (name: string) => {
+        if (!pendingSessionId) {
+            return;
+        }
+
+        const trimmedName = name.trim();
+        const sessionName =
+            trimmedName ||
+            `自動記録 ${formatDateTime(new Date().toISOString())}`;
+
+        try {
+            setSavingSessionName(true);
+
+            const result = await client.models.LocationLog.list({
+                filter: {
+                    recordingSessionId: {
+                        eq: pendingSessionId,
+                    },
+                },
+                limit: 1000,
+            });
+
+            if (result.errors) {
+                console.error(
+                    "LocationLog session list errors:",
+                    result.errors,
+                );
+                Alert.alert(
+                    "保存エラー",
+                    "セッション名を保存できませんでした。",
+                );
+                return;
+            }
+
+            const sessionLogs = result.data ?? [];
+
+            const updateResults = await Promise.all(
+                sessionLogs.map((log) =>
+                    client.models.LocationLog.update({
+                        id: log.id,
+                        recordingSessionName: sessionName,
+                    }),
+                ),
+            );
+
+            const hasErrors = updateResults.some((updateResult) => {
+                return updateResult.errors;
+            });
+
+            if (hasErrors) {
+                console.error(
+                    "LocationLog session name update errors:",
+                    updateResults,
+                );
+                Alert.alert(
+                    "保存エラー",
+                    "セッション名を保存できませんでした。",
+                );
+                return;
+            }
+
+            setSessionNameModalVisible(false);
+            setSessionNameInput("");
+            setPendingSessionId(null);
+        } catch (error) {
+            console.error("Save session name error:", error);
+            Alert.alert("保存エラー", "セッション名の保存に失敗しました。");
+        } finally {
+            setSavingSessionName(false);
+        }
+    };
+
+    // セッションIDに紐づくLocationLogを全件取得してセッション名を更新する
+    const handleStopRecording = async () => {
+        const finishedSessionId = await stopRecording();
+
+        if (!finishedSessionId) {
+            return;
+        }
+
+        setPendingSessionId(finishedSessionId);
+        setSessionNameInput("");
+        setSessionNameModalVisible(true);
+    };
+
     return (
         <KeyboardAvoidingView
             style={styles.keyboardAvoiding}
@@ -211,9 +328,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         value={memo}
                         onChangeText={setMemo}
                         placeholder="例：東京駅で打ち合わせ"
-                        multiline
-                        numberOfLines={3}
-                        textAlignVertical="top"
+                        multiline={false}
+                        textAlignVertical="center"
                     />
                 </View>
 
@@ -239,37 +355,45 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     />
                 </View>
                 <View style={styles.autoRecordBox}>
-                    <Text style={styles.autoRecordTitle}>自動記録</Text>
+                    <View style={styles.autoRecordHeader}>
+                        <Text style={styles.autoRecordTitle}>自動記録</Text>
 
-                    <View style={styles.recordingStatusArea}>
-                        {isRecording ? (
-                            <Animated.View
-                                style={[
-                                    styles.recordingBadge,
-                                    {
-                                        opacity: recordingBlinkAnim,
-                                    },
-                                ]}
-                            >
-                                <View style={styles.recordingDot} />
-                                <Text style={styles.recordingBadgeText}>
-                                    記録中
-                                </Text>
-                            </Animated.View>
-                        ) : (
-                            <View style={styles.stoppedBadge}>
-                                <View style={styles.stoppedDot} />
-                                <Text style={styles.stoppedBadgeText}>
-                                    停止中
-                                </Text>
-                            </View>
-                        )}
+                        <View style={styles.recordingStatusArea}>
+                            {isRecording ? (
+                                <Animated.View
+                                    style={[
+                                        styles.recordingBadge,
+                                        {
+                                            opacity: recordingBlinkAnim,
+                                        },
+                                    ]}
+                                >
+                                    <View style={styles.recordingDot} />
+                                    <Text style={styles.recordingBadgeText}>
+                                        記録中
+                                    </Text>
+                                </Animated.View>
+                            ) : (
+                                <View style={styles.stoppedBadge}>
+                                    <View style={styles.stoppedDot} />
+                                    <Text style={styles.stoppedBadgeText}>
+                                        停止中
+                                    </Text>
+                                </View>
+                            )}
+                        </View>
                     </View>
 
-                    {lastRecordedAtText && (
-                        <Text style={styles.autoRecordStatus}>
-                            最終記録: {lastRecordedAtText}
-                        </Text>
+                    {recordingStartedAt && (
+                        <View style={styles.recordingTimeBox}>
+                            <Text style={styles.autoRecordStatus}>
+                                開始時刻: {formatDateTime(recordingStartedAt)}
+                            </Text>
+
+                            <Text style={styles.autoRecordStatus}>
+                                経過時間: {formatElapsedTime(elapsedSeconds)}
+                            </Text>
+                        </View>
                     )}
 
                     <View style={styles.settingBlock}>
@@ -357,7 +481,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 styles.autoRecordStopButton,
                                 pressed && styles.buttonPressed,
                             ]}
-                            onPress={stopRecording}
+                            onPress={handleStopRecording}
                         >
                             <Text style={styles.autoRecordButtonText}>
                                 自動記録停止
@@ -377,6 +501,73 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         </Pressable>
                     )}
                 </View>
+                <Modal
+                    visible={sessionNameModalVisible}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={() => {
+                        if (!savingSessionName) {
+                            void saveSessionName("");
+                        }
+                    }}
+                >
+                    <View style={styles.modalOverlay}>
+                        <View style={styles.modalContent}>
+                            <Text style={styles.modalTitle}>
+                                セッション名を入力
+                            </Text>
+
+                            <Text style={styles.modalDescription}>
+                                この自動記録セッションの名前を入力してください。
+                            </Text>
+
+                            <TextInput
+                                style={styles.sessionNameModalInput}
+                                value={sessionNameInput}
+                                onChangeText={setSessionNameInput}
+                                placeholder="例：朝の散歩"
+                                editable={!savingSessionName}
+                                autoFocus
+                            />
+
+                            <View style={styles.modalButtonRow}>
+                                <Pressable
+                                    style={[
+                                        styles.modalSecondaryButton,
+                                        savingSessionName &&
+                                            styles.appButtonDisabled,
+                                    ]}
+                                    disabled={savingSessionName}
+                                    onPress={() => saveSessionName("")}
+                                >
+                                    <Text
+                                        style={styles.modalSecondaryButtonText}
+                                    >
+                                        名前なしで保存
+                                    </Text>
+                                </Pressable>
+
+                                <Pressable
+                                    style={[
+                                        styles.modalPrimaryButton,
+                                        savingSessionName &&
+                                            styles.appButtonDisabled,
+                                    ]}
+                                    disabled={savingSessionName}
+                                    onPress={() =>
+                                        saveSessionName(sessionNameInput)
+                                    }
+                                >
+                                    <Text style={styles.modalPrimaryButtonText}>
+                                        {savingSessionName
+                                            ? "保存中..."
+                                            : "保存"}
+                                    </Text>
+                                </Pressable>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
             </ScrollView>
         </KeyboardAvoidingView>
     );
@@ -392,6 +583,18 @@ function formatDateTime(value: string) {
     const mi = String(date.getMinutes()).padStart(2, "0");
 
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+function formatElapsedTime(totalSeconds: number) {
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    const hh = String(hours).padStart(2, "0");
+    const mm = String(minutes).padStart(2, "0");
+    const ss = String(seconds).padStart(2, "0");
+
+    return `${hh}:${mm}:${ss}`;
 }
 
 function AppButton({ title, onPress, disabled = false }: AppButtonProps) {
@@ -421,7 +624,7 @@ const styles = StyleSheet.create({
         gap: 12,
     },
     title: {
-        fontSize: 22,
+        fontSize: 16,
         fontWeight: "bold",
         marginBottom: 12,
     },
@@ -445,12 +648,16 @@ const styles = StyleSheet.create({
         marginBottom: 6,
     },
     memoInput: {
-        minHeight: 90,
+        height: 44,
+        minHeight: 44,
+        maxHeight: 44,
         borderWidth: 1,
         borderColor: "#ccc",
         borderRadius: 8,
-        padding: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 0,
         fontSize: 16,
+        lineHeight: 20,
         backgroundColor: "#fff",
     },
     buttonSpace: {
@@ -487,7 +694,6 @@ const styles = StyleSheet.create({
     autoRecordTitle: {
         fontSize: 16,
         fontWeight: "bold",
-        marginBottom: 8,
     },
     autoRecordStatus: {
         fontSize: 13,
@@ -553,9 +759,7 @@ const styles = StyleSheet.create({
         color: "#fff",
     },
     recordingStatusArea: {
-        marginTop: 6,
-        marginBottom: 8,
-        alignItems: "flex-start",
+        alignItems: "flex-end",
     },
     recordingBadge: {
         flexDirection: "row",
@@ -599,6 +803,78 @@ const styles = StyleSheet.create({
     stoppedBadgeText: {
         color: "#666",
         fontSize: 13,
+        fontWeight: "bold",
+    },
+    autoRecordHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        marginBottom: 8,
+    },
+    recordingTimeBox: {
+        marginTop: 4,
+        marginBottom: 6,
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: "rgba(0,0,0,0.35)",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+    },
+    modalContent: {
+        width: "100%",
+        borderRadius: 12,
+        padding: 18,
+        backgroundColor: "#fff",
+    },
+    modalTitle: {
+        fontSize: 18,
+        fontWeight: "bold",
+        marginBottom: 8,
+    },
+    modalDescription: {
+        fontSize: 13,
+        color: "#555",
+        marginBottom: 12,
+    },
+    sessionNameModalInput: {
+        height: 44,
+        borderWidth: 1,
+        borderColor: "#ccc",
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 0,
+        fontSize: 16,
+        backgroundColor: "#fff",
+    },
+    modalButtonRow: {
+        flexDirection: "row",
+        gap: 8,
+        marginTop: 16,
+    },
+    modalPrimaryButton: {
+        flex: 1,
+        backgroundColor: "#4b6f8f",
+        borderRadius: 8,
+        paddingVertical: 10,
+        alignItems: "center",
+    },
+    modalPrimaryButtonText: {
+        color: "#fff",
+        fontSize: 14,
+        fontWeight: "bold",
+    },
+    modalSecondaryButton: {
+        flex: 1,
+        backgroundColor: "#e6edf3",
+        borderRadius: 8,
+        paddingVertical: 10,
+        alignItems: "center",
+    },
+    modalSecondaryButtonText: {
+        color: "#2f4f66",
+        fontSize: 14,
         fontWeight: "bold",
     },
 });

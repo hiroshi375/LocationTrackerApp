@@ -21,13 +21,18 @@ export function useForegroundLocationRecorder({
     distanceMeters,
 }: RecorderOptions) {
     const [isRecording, setIsRecording] = useState(false);
+    const [recordingStartedAt, setRecordingStartedAt] = useState<string | null>(
+        null,
+    );
     const [lastRecordedAtText, setLastRecordedAtText] = useState<string | null>(
         null,
     );
 
     const subscriptionRef = useRef<Location.LocationSubscription | null>(null);
     const lastSavedLocationRef = useRef<SavedLocation | null>(null);
+    const recordingSessionIdRef = useRef<string | null>(null);
 
+    // 位置を保存すべきか判定する関数
     const shouldSaveLocation = useCallback(
         (latitude: number, longitude: number) => {
             const last = lastSavedLocationRef.current;
@@ -50,8 +55,12 @@ export function useForegroundLocationRecorder({
         [distanceMeters, intervalMs],
     );
 
+    // 位置を保存する関数
     const saveLocationLog = useCallback(
-        async (location: Location.LocationObject) => {
+        async (
+            location: Location.LocationObject,
+            forceSave: boolean = false,
+        ) => {
             const latitude = location.coords.latitude;
             const longitude = location.coords.longitude;
 
@@ -59,7 +68,7 @@ export function useForegroundLocationRecorder({
                 return;
             }
 
-            if (!shouldSaveLocation(latitude, longitude)) {
+            if (!forceSave && !shouldSaveLocation(latitude, longitude)) {
                 return;
             }
 
@@ -75,6 +84,7 @@ export function useForegroundLocationRecorder({
                     accuracy: location.coords.accuracy ?? null,
                     recordedAt,
                     memo: "自動記録",
+                    recordingSessionId: recordingSessionIdRef.current,
                 });
 
                 if (result.errors) {
@@ -105,6 +115,7 @@ export function useForegroundLocationRecorder({
         [shouldSaveLocation],
     );
 
+    // 記録開始関数
     const startRecording = useCallback(async () => {
         if (subscriptionRef.current) {
             return;
@@ -121,6 +132,18 @@ export function useForegroundLocationRecorder({
             return;
         }
 
+        recordingSessionIdRef.current = createRecordingSessionId();
+        lastSavedLocationRef.current = null;
+
+        const startedAt = new Date().toISOString();
+        setRecordingStartedAt(startedAt);
+
+        const currentLocation = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+        });
+
+        await saveLocationLog(currentLocation, true);
+
         const subscription = await Location.watchPositionAsync(
             {
                 accuracy: Location.Accuracy.Balanced,
@@ -136,11 +159,32 @@ export function useForegroundLocationRecorder({
         setIsRecording(true);
     }, [distanceMeters, intervalMs, saveLocationLog]);
 
-    const stopRecording = useCallback(() => {
+    // 記録停止関数
+    const stopRecording = useCallback(async (): Promise<string | null> => {
+        const finishedSessionId = recordingSessionIdRef.current;
+
         subscriptionRef.current?.remove();
         subscriptionRef.current = null;
+
+        if (recordingSessionIdRef.current) {
+            try {
+                const currentLocation = await Location.getCurrentPositionAsync({
+                    accuracy: Location.Accuracy.Balanced,
+                });
+
+                await saveLocationLog(currentLocation, true);
+            } catch (error) {
+                console.error("Save stop location error:", error);
+            }
+        }
+
+        recordingSessionIdRef.current = null;
+        //recordingSessionNameRef.current = null;
+        setRecordingStartedAt(null);
         setIsRecording(false);
-    }, []);
+
+        return finishedSessionId;
+    }, [saveLocationLog]);
 
     useEffect(() => {
         return () => {
@@ -152,6 +196,7 @@ export function useForegroundLocationRecorder({
     return {
         isRecording,
         lastRecordedAtText,
+        recordingStartedAt,
         startRecording,
         stopRecording,
     };
@@ -194,4 +239,8 @@ function formatDateTime(value: string) {
     const mi = String(date.getMinutes()).padStart(2, "0");
 
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+function createRecordingSessionId() {
+    return `session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }

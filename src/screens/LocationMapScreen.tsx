@@ -27,6 +27,7 @@ type LocationLogItem = {
     accuracy?: number | null;
     recordedAt: string;
     memo?: string | null;
+    recordingSessionId?: string | null;
 };
 
 export default function LocationMapScreen({ route }: Props) {
@@ -58,6 +59,7 @@ export default function LocationMapScreen({ route }: Props) {
                     accuracy: item.accuracy,
                     recordedAt: item.recordedAt,
                     memo: item.memo,
+                    recordingSessionId: item.recordingSessionId,
                 }))
                 .filter(
                     (item) =>
@@ -94,7 +96,13 @@ export default function LocationMapScreen({ route }: Props) {
         );
     }
 
-    if (logs.length === 0 && !selectedLocation) {
+    const activeSessionId = selectedLocation?.recordingSessionId ?? null;
+
+    const visibleLogs = activeSessionId
+        ? logs.filter((log) => log.recordingSessionId === activeSessionId)
+        : logs;
+
+    if (visibleLogs.length === 0 && !selectedLocation) {
         return (
             <View style={styles.center}>
                 <Text>表示できる位置履歴がありません。</Text>
@@ -102,7 +110,7 @@ export default function LocationMapScreen({ route }: Props) {
         );
     }
 
-    const latest = logs[0] ?? null;
+    const latest = visibleLogs[0] ?? null;
     const displayLocation = selectedLocation ?? latest;
 
     if (!displayLocation) {
@@ -146,12 +154,20 @@ export default function LocationMapScreen({ route }: Props) {
         moveToLocation(displayLocation);
     };
 
-    const routeCoordinates = logs
+    const activeRouteSessionId =
+        selectedLocation?.recordingSessionId ??
+        latest?.recordingSessionId ??
+        null;
+
+    const routeLogs = activeRouteSessionId
+        ? logs.filter((log) => log.recordingSessionId === activeRouteSessionId)
+        : [];
+
+    const routeCoordinates = visibleLogs
         .filter(
             (log) =>
                 Number.isFinite(log.latitude) && Number.isFinite(log.longitude),
         )
-        .slice(0, 100)
         .sort((a, b) => {
             return (
                 new Date(a.recordedAt).getTime() -
@@ -197,7 +213,7 @@ export default function LocationMapScreen({ route }: Props) {
                     />
                 )}
 
-                {logs.map((log) => {
+                {visibleLogs.map((log) => {
                     const isSelected = selectedLocation?.id === log.id;
 
                     if (isSelected) {
@@ -231,7 +247,9 @@ export default function LocationMapScreen({ route }: Props) {
                 })}
 
                 {selectedLocation &&
-                    !logs.some((log) => log.id === selectedLocation.id) && (
+                    !visibleLogs.some(
+                        (log) => log.id === selectedLocation.id,
+                    ) && (
                         <Marker
                             coordinate={{
                                 latitude: selectedLocation.latitude,

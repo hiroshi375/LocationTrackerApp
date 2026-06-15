@@ -15,6 +15,8 @@ const schema = a.schema({
             accuracy: a.float(),
             recordedAt: a.datetime().required(),
             memo: a.string(),
+            recordingSessionId: a.string(),
+            recordingSessionName: a.string(),
         })
         .authorization((allow) => [allow.owner()]),
 });

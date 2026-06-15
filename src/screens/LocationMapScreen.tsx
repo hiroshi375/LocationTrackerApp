@@ -10,12 +10,7 @@ import {
     Text,
     View,
 } from "react-native";
-import MapView, {
-    Circle,
-    Marker,
-    Polyline,
-    PROVIDER_GOOGLE,
-} from "react-native-maps";
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 
@@ -39,12 +34,27 @@ export default function LocationMapScreen({ route }: Props) {
     const [loading, setLoading] = useState(true);
     const [hasLoaded, setHasLoaded] = useState(false);
     const [showPoints, setShowPoints] = useState(true);
+    const [mapReady, setMapReady] = useState(false);
 
     const selectedLocation = route.params?.selectedLocation ?? null;
     const routeRecordingSessionId = route.params?.recordingSessionId ?? null;
 
     const activeSessionId =
         selectedLocation?.recordingSessionId ?? routeRecordingSessionId ?? null;
+
+    const recordingIntervalMs = route.params?.recordingIntervalMs ?? null;
+    const recordingDistanceMeters =
+        route.params?.recordingDistanceMeters ?? null;
+
+    const recordingIntervalSeconds =
+        typeof recordingIntervalMs === "number"
+            ? Math.round(recordingIntervalMs / 1000)
+            : null;
+
+    const shouldShowRecordingSettings =
+        Boolean(activeSessionId) &&
+        recordingIntervalSeconds !== null &&
+        typeof recordingDistanceMeters === "number";
 
     const [currentLocation, setCurrentLocation] = useState<{
         latitude: number;
@@ -164,6 +174,30 @@ export default function LocationMapScreen({ route }: Props) {
         };
     }, [activeSessionId, currentLocation, currentLocationOpacity]);
 
+    useEffect(() => {
+        if (!mapReady) {
+            return;
+        }
+
+        if (!activeSessionId) {
+            return;
+        }
+
+        if (!currentLocation) {
+            return;
+        }
+
+        mapRef.current?.animateToRegion(
+            {
+                latitude: currentLocation.latitude,
+                longitude: currentLocation.longitude,
+                latitudeDelta: 0.005,
+                longitudeDelta: 0.005,
+            },
+            500,
+        );
+    }, [mapReady, activeSessionId, currentLocation]);
+
     useFocusEffect(
         useCallback(() => {
             void loadLogs(true);
@@ -244,6 +278,19 @@ export default function LocationMapScreen({ route }: Props) {
     };
 
     const moveToLatestLocation = () => {
+        if (activeSessionId && currentLocation) {
+            mapRef.current?.animateToRegion(
+                {
+                    latitude: currentLocation.latitude,
+                    longitude: currentLocation.longitude,
+                    latitudeDelta: 0.005,
+                    longitudeDelta: 0.005,
+                },
+                500,
+            );
+            return;
+        }
+
         if (!latest) {
             return;
         }
@@ -255,7 +302,7 @@ export default function LocationMapScreen({ route }: Props) {
         moveToLocation(displayLocation);
     };
 
-    const routeCoordinates = visibleLogs
+    const routeLogs = visibleLogs
         .filter(
             (log) =>
                 Number.isFinite(log.latitude) && Number.isFinite(log.longitude),
@@ -266,11 +313,7 @@ export default function LocationMapScreen({ route }: Props) {
                 new Date(b.recordedAt).getTime()
             );
         })
-        .map((log) => ({
-            latitude: log.latitude,
-            longitude: log.longitude,
-        }))
-        .filter((coordinate, index, array) => {
+        .filter((log, index, array) => {
             if (index === 0) {
                 return true;
             }
@@ -278,10 +321,23 @@ export default function LocationMapScreen({ route }: Props) {
             const previous = array[index - 1];
 
             return (
-                Math.abs(previous.latitude - coordinate.latitude) > 0.000001 ||
-                Math.abs(previous.longitude - coordinate.longitude) > 0.000001
+                Math.abs(previous.latitude - log.latitude) > 0.000001 ||
+                Math.abs(previous.longitude - log.longitude) > 0.000001
             );
         });
+
+    const routeCoordinates = routeLogs.map((log) => ({
+        latitude: log.latitude,
+        longitude: log.longitude,
+    }));
+
+    const startLog =
+        activeSessionId && routeLogs.length > 0 ? routeLogs[0] : null;
+
+    const endLog =
+        activeSessionId && routeLogs.length > 1
+            ? routeLogs[routeLogs.length - 1]
+            : null;
 
     return (
         <View style={styles.container}>
@@ -290,6 +346,7 @@ export default function LocationMapScreen({ route }: Props) {
                 provider={PROVIDER_GOOGLE}
                 style={styles.map}
                 mapType="standard"
+                onMapReady={() => setMapReady(true)}
                 initialRegion={{
                     latitude: displayLocation.latitude,
                     longitude: displayLocation.longitude,
@@ -300,16 +357,16 @@ export default function LocationMapScreen({ route }: Props) {
                 {routeCoordinates.length >= 2 && (
                     <Polyline
                         coordinates={routeCoordinates}
-                        strokeColor="rgba(74, 117, 87, 0.8)"
-                        strokeWidth={4}
+                        strokeColor="rgba(22, 91, 112, 0.85)"
+                        strokeWidth={6}
                     />
                 )}
 
                 {currentLocationLineCoordinates.length === 2 && (
                     <Polyline
                         coordinates={currentLocationLineCoordinates}
-                        strokeColor="rgba(74, 117, 87, 0.85)"
-                        strokeWidth={4}
+                        strokeColor="rgba(22, 91, 112, 0.85)"
+                        strokeWidth={6}
                         lineDashPattern={[8, 6]}
                     />
                 )}
@@ -334,38 +391,96 @@ export default function LocationMapScreen({ route }: Props) {
                 )}
 
                 {showPoints &&
-                    visibleLogs.map((log) => {
+                    routeLogs.map((log) => {
                         const isSelected = selectedLocation?.id === log.id;
+                        const isStartOrEnd =
+                            log.id === startLog?.id || log.id === endLog?.id;
 
-                        if (isSelected) {
-                            return (
-                                <Marker
-                                    key={log.id}
-                                    coordinate={{
-                                        latitude: log.latitude,
-                                        longitude: log.longitude,
-                                    }}
-                                    title="選択した位置"
-                                    description={buildMarkerDescription(log)}
-                                    pinColor="#4b6f8f"
-                                />
-                            );
+                        if (isStartOrEnd) {
+                            return null;
                         }
 
                         return (
-                            <Circle
+                            <Marker
                                 key={log.id}
-                                center={{
+                                coordinate={{
                                     latitude: log.latitude,
                                     longitude: log.longitude,
                                 }}
-                                radius={12}
-                                fillColor="rgba(75,111,143,0.85)"
-                                strokeColor="#ffffff"
-                                strokeWidth={3}
-                            />
+                                title={isSelected ? "選択した位置" : "記録地点"}
+                                description={buildMarkerDescription(log)}
+                                anchor={{ x: 0.5, y: 0.5 }}
+                                centerOffset={{ x: 0, y: 0 }}
+                                tracksViewChanges
+                            >
+                                <View
+                                    collapsable={false}
+                                    style={styles.pointMarkerContainer}
+                                >
+                                    <View
+                                        collapsable={false}
+                                        style={
+                                            isSelected
+                                                ? styles.selectedPointMarker
+                                                : styles.logPointMarker
+                                        }
+                                    />
+                                </View>
+                            </Marker>
                         );
                     })}
+
+                {showPoints && startLog && (
+                    <Marker
+                        coordinate={{
+                            latitude: startLog.latitude,
+                            longitude: startLog.longitude,
+                        }}
+                        title="開始位置"
+                        description={buildMarkerDescription(startLog)}
+                        anchor={{ x: 0.5, y: 0.5 }}
+                        centerOffset={{ x: 0, y: 0 }}
+                        tracksViewChanges
+                    >
+                        <View
+                            collapsable={false}
+                            style={styles.endpointMarkerContainer}
+                        >
+                            <View
+                                collapsable={false}
+                                style={styles.startPointMarker}
+                            >
+                                <Text style={styles.endpointMarkerText}>S</Text>
+                            </View>
+                        </View>
+                    </Marker>
+                )}
+
+                {showPoints && endLog && (
+                    <Marker
+                        coordinate={{
+                            latitude: endLog.latitude,
+                            longitude: endLog.longitude,
+                        }}
+                        title="終了位置"
+                        description={buildMarkerDescription(endLog)}
+                        anchor={{ x: 0.5, y: 0.5 }}
+                        centerOffset={{ x: 0, y: 0 }}
+                        tracksViewChanges
+                    >
+                        <View
+                            collapsable={false}
+                            style={styles.endpointMarkerContainer}
+                        >
+                            <View
+                                collapsable={false}
+                                style={styles.endPointMarker}
+                            >
+                                <Text style={styles.endpointMarkerText}>G</Text>
+                            </View>
+                        </View>
+                    </Marker>
+                )}
 
                 {showPoints &&
                     selectedLocation &&
@@ -381,8 +496,11 @@ export default function LocationMapScreen({ route }: Props) {
                             description={buildMarkerDescription(
                                 selectedLocation,
                             )}
-                            pinColor="#4b6f8f"
-                        />
+                            anchor={{ x: 0.5, y: 0.5 }}
+                            tracksViewChanges={false}
+                        >
+                            <View style={styles.selectedPointMarker} />
+                        </Marker>
                     )}
             </MapView>
 
@@ -411,9 +529,21 @@ export default function LocationMapScreen({ route }: Props) {
                         : "不明"}
                 </Text>
 
-                <Text style={styles.infoText}>
-                    メモ: {displayLocation.memo ? displayLocation.memo : "なし"}
-                </Text>
+                <View style={styles.memoRow}>
+                    <Text style={[styles.infoText, styles.memoTextInRow]}>
+                        メモ:{" "}
+                        {displayLocation.memo ? displayLocation.memo : "なし"}
+                    </Text>
+
+                    {shouldShowRecordingSettings && (
+                        <View style={styles.recordingSettingBadge}>
+                            <Text style={styles.recordingSettingBadgeText}>
+                                頻度: {recordingIntervalSeconds}秒 / 距離:{" "}
+                                {recordingDistanceMeters}m
+                            </Text>
+                        </View>
+                    )}
+                </View>
 
                 <Pressable
                     style={styles.routeToggleButton}
@@ -613,5 +743,81 @@ const styles = StyleSheet.create({
         height: 12,
         borderRadius: 6,
         backgroundColor: "rgba(0, 122, 255, 1)",
+    },
+    logPointMarker: {
+        width: 12,
+        height: 12,
+        borderRadius: 6,
+        backgroundColor: "rgba(75,111,143,0.9)",
+        borderWidth: 2,
+        borderColor: "#ffffff",
+    },
+    selectedPointMarker: {
+        width: 18,
+        height: 18,
+        borderRadius: 9,
+        backgroundColor: "rgba(0, 122, 255, 0.95)",
+        borderWidth: 3,
+        borderColor: "#ffffff",
+    },
+    pointMarkerContainer: {
+        width: 28,
+        height: 28,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    endpointMarkerContainer: {
+        width: 36,
+        height: 36,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    startPointMarker: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        backgroundColor: "rgba(31, 92, 90, 0.95)",
+        borderWidth: 3,
+        borderColor: "#ffffff",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    endPointMarker: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        backgroundColor: "rgba(22, 91, 112, 0.95)",
+        borderWidth: 3,
+        borderColor: "#ffffff",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    endpointMarkerText: {
+        color: "#ffffff",
+        fontSize: 13,
+        fontWeight: "bold",
+    },
+    memoRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 6,
+        marginTop: 2,
+    },
+    memoTextInRow: {
+        flexShrink: 1,
+    },
+    recordingSettingBadge: {
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 999,
+        backgroundColor: "#eef3f7",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+    },
+    recordingSettingBadgeText: {
+        color: "#2f4f66",
+        fontSize: 12,
+        fontWeight: "bold",
     },
 });

@@ -5,13 +5,15 @@ import LocationHomeScreen from "../screens/LocationHomeScreen";
 import LocationLogDetailScreen from "../screens/LocationLogDetailScreen";
 import LocationLogScreen from "../screens/LocationLogScreen";
 import LocationMapScreen from "../screens/LocationMapScreen";
-
+import ProfileScreen from "../screens/ProfileScreen";
 export type RootStackParamList = {
     LocationHome: undefined;
     LocationLog: undefined;
     LocationMap:
         | {
               recordingSessionId?: string | null;
+              recordingIntervalMs?: number | null;
+              recordingDistanceMeters?: number | null;
               selectedLocation?: {
                   id: string;
                   latitude: number;
@@ -28,6 +30,7 @@ export type RootStackParamList = {
     LocationLogDetail: {
         locationLogId: string;
     };
+    Profile: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -55,6 +58,11 @@ export default function RootNavigator() {
                     name="LocationMap"
                     component={LocationMapScreen}
                     options={{ title: "地図表示" }}
+                />
+                <Stack.Screen
+                    name="Profile"
+                    component={ProfileScreen}
+                    options={{ title: "プロフィール" }}
                 />
             </Stack.Navigator>
         </NavigationContainer>

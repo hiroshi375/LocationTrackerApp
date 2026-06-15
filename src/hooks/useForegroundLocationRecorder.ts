@@ -33,6 +33,15 @@ export function useForegroundLocationRecorder({
         string | null
     >(null);
 
+    const startLocationRef = useRef<{
+        latitude: number;
+        longitude: number;
+    } | null>(null);
+
+    const [distanceFromStartMeters, setDistanceFromStartMeters] = useState<
+        number | null
+    >(null);
+
     // 位置を保存すべきか判定する関数
     const shouldSaveLocation = useCallback(
         (latitude: number, longitude: number) => {
@@ -56,6 +65,32 @@ export function useForegroundLocationRecorder({
         [distanceMeters, intervalMs],
     );
 
+    //
+    const updateDistanceFromStart = useCallback(
+        (location: Location.LocationObject) => {
+            const startLocation = startLocationRef.current;
+
+            if (!startLocation) {
+                return;
+            }
+
+            const currentLocation = {
+                latitude: location.coords.latitude,
+                longitude: location.coords.longitude,
+            };
+
+            const distance = calculateDistanceMeters(
+                startLocation.latitude,
+                startLocation.longitude,
+                currentLocation.latitude,
+                currentLocation.longitude,
+            );
+
+            setDistanceFromStartMeters(distance);
+        },
+        [],
+    );
+
     // 位置を保存する関数
     const saveLocationLog = useCallback(
         async (
@@ -68,6 +103,8 @@ export function useForegroundLocationRecorder({
             if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
                 return;
             }
+
+            updateDistanceFromStart(location);
 
             if (!forceSave && !shouldSaveLocation(latitude, longitude)) {
                 return;
@@ -102,8 +139,6 @@ export function useForegroundLocationRecorder({
                     recordedAt: Date.now(),
                 };
 
-                //setLastRecordedAtText(formatDateTime(recordedAt));
-
                 console.log("Auto location saved:", {
                     latitude,
                     longitude,
@@ -113,7 +148,7 @@ export function useForegroundLocationRecorder({
                 console.error("Auto LocationLog create error:", error);
             }
         },
-        [shouldSaveLocation],
+        [shouldSaveLocation, updateDistanceFromStart],
     );
 
     // 記録開始関数
@@ -146,13 +181,20 @@ export function useForegroundLocationRecorder({
             accuracy: Location.Accuracy.Balanced,
         });
 
+        startLocationRef.current = {
+            latitude: currentLocation.coords.latitude,
+            longitude: currentLocation.coords.longitude,
+        };
+
+        setDistanceFromStartMeters(0);
+
         await saveLocationLog(currentLocation, true);
 
         const subscription = await Location.watchPositionAsync(
             {
                 accuracy: Location.Accuracy.Balanced,
-                timeInterval: intervalMs,
-                distanceInterval: distanceMeters,
+                timeInterval: 2000,
+                distanceInterval: 1,
             },
             async (location) => {
                 await saveLocationLog(location);
@@ -187,6 +229,10 @@ export function useForegroundLocationRecorder({
         setRecordingStartedAt(null);
         setIsRecording(false);
 
+        startLocationRef.current = null;
+        lastSavedLocationRef.current = null;
+        setDistanceFromStartMeters(null);
+
         return finishedSessionId;
     }, [saveLocationLog]);
 
@@ -202,6 +248,7 @@ export function useForegroundLocationRecorder({
         //lastRecordedAtText,
         recordingStartedAt,
         activeRecordingSessionId,
+        distanceFromStartMeters,
         startRecording,
         stopRecording,
     };

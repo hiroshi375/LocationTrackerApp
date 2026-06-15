@@ -46,6 +46,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [saving, setSaving] = useState(false);
 
     const RECORD_INTERVAL_OPTIONS = [
+        { label: "10秒", value: 10 * 1000 },
         { label: "30秒", value: 30 * 1000 },
         { label: "1分", value: 60 * 1000 },
         { label: "3分", value: 3 * 60 * 1000 },
@@ -375,6 +376,13 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             navigation.navigate("LocationMap", {
                                 recordingSessionId:
                                     activeRecordingSessionId ?? undefined,
+                                recordingIntervalMs: activeRecordingSessionId
+                                    ? recordIntervalMs
+                                    : undefined,
+                                recordingDistanceMeters:
+                                    activeRecordingSessionId
+                                        ? recordDistanceMeters
+                                        : undefined,
                             })
                         }
                     />
@@ -525,6 +533,13 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             </Text>
                         </Pressable>
                     )}
+                </View>
+
+                <View style={styles.buttonSpace}>
+                    <AppButton
+                        title="プロフィール"
+                        onPress={() => navigation.navigate("Profile")}
+                    />
                 </View>
 
                 <View style={styles.signOutButtonSpace}>

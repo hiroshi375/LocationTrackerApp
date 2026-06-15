@@ -24,9 +24,6 @@ export function useForegroundLocationRecorder({
     const [recordingStartedAt, setRecordingStartedAt] = useState<string | null>(
         null,
     );
-    const [lastRecordedAtText, setLastRecordedAtText] = useState<string | null>(
-        null,
-    );
 
     const subscriptionRef = useRef<Location.LocationSubscription | null>(null);
     const lastSavedLocationRef = useRef<SavedLocation | null>(null);
@@ -105,7 +102,7 @@ export function useForegroundLocationRecorder({
                     recordedAt: Date.now(),
                 };
 
-                setLastRecordedAtText(formatDateTime(recordedAt));
+                //setLastRecordedAtText(formatDateTime(recordedAt));
 
                 console.log("Auto location saved:", {
                     latitude,
@@ -235,18 +232,6 @@ function calculateDistanceMeters(
 
 function toRadians(value: number) {
     return (value * Math.PI) / 180;
-}
-
-function formatDateTime(value: string) {
-    const date = new Date(value);
-
-    const yyyy = date.getFullYear();
-    const mm = String(date.getMonth() + 1).padStart(2, "0");
-    const dd = String(date.getDate()).padStart(2, "0");
-    const hh = String(date.getHours()).padStart(2, "0");
-    const mi = String(date.getMinutes()).padStart(2, "0");
-
-    return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
 }
 
 function createRecordingSessionId() {

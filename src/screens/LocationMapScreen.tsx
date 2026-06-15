@@ -154,15 +154,6 @@ export default function LocationMapScreen({ route }: Props) {
         moveToLocation(displayLocation);
     };
 
-    const activeRouteSessionId =
-        selectedLocation?.recordingSessionId ??
-        latest?.recordingSessionId ??
-        null;
-
-    const routeLogs = activeRouteSessionId
-        ? logs.filter((log) => log.recordingSessionId === activeRouteSessionId)
-        : [];
-
     const routeCoordinates = visibleLogs
         .filter(
             (log) =>

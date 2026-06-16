@@ -33,7 +33,7 @@ export default function LocationMapScreen({ route }: Props) {
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [hasLoaded, setHasLoaded] = useState(false);
-    const [showPoints, setShowPoints] = useState(true);
+    const [showPoints, setShowPoints] = useState(false);
     const [mapReady, setMapReady] = useState(false);
 
     const selectedLocation = route.params?.selectedLocation ?? null;
@@ -109,15 +109,41 @@ export default function LocationMapScreen({ route }: Props) {
                     return;
                 }
 
-                const firstLocation = await Location.getCurrentPositionAsync({
-                    accuracy: Location.Accuracy.Balanced,
-                });
+                const servicesEnabled =
+                    await Location.hasServicesEnabledAsync();
 
-                if (!cancelled) {
-                    setCurrentLocation({
-                        latitude: firstLocation.coords.latitude,
-                        longitude: firstLocation.coords.longitude,
-                    });
+                if (!servicesEnabled) {
+                    console.log("Location services are disabled");
+                    return;
+                }
+
+                try {
+                    const firstLocation =
+                        await Location.getCurrentPositionAsync({
+                            accuracy: Location.Accuracy.Balanced,
+                        });
+
+                    if (!cancelled) {
+                        setCurrentLocation({
+                            latitude: firstLocation.coords.latitude,
+                            longitude: firstLocation.coords.longitude,
+                        });
+                    }
+                } catch (error) {
+                    console.log(
+                        "Initial current location unavailable. Trying last known location.",
+                        error,
+                    );
+
+                    const lastKnownLocation =
+                        await Location.getLastKnownPositionAsync();
+
+                    if (!cancelled && lastKnownLocation) {
+                        setCurrentLocation({
+                            latitude: lastKnownLocation.coords.latitude,
+                            longitude: lastKnownLocation.coords.longitude,
+                        });
+                    }
                 }
 
                 subscription = await Location.watchPositionAsync(

@@ -1,11 +1,13 @@
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
+import LiveLocationMapScreen from "../screens/LiveLocationMapScreen";
 import LocationHomeScreen from "../screens/LocationHomeScreen";
 import LocationLogDetailScreen from "../screens/LocationLogDetailScreen";
 import LocationLogScreen from "../screens/LocationLogScreen";
 import LocationMapScreen from "../screens/LocationMapScreen";
 import ProfileScreen from "../screens/ProfileScreen";
+
 export type RootStackParamList = {
     LocationHome: undefined;
     LocationLog: undefined;
@@ -31,6 +33,7 @@ export type RootStackParamList = {
         locationLogId: string;
     };
     Profile: undefined;
+    LiveLocationMap: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -63,6 +66,11 @@ export default function RootNavigator() {
                     name="Profile"
                     component={ProfileScreen}
                     options={{ title: "プロフィール" }}
+                />
+                <Stack.Screen
+                    name="LiveLocationMap"
+                    component={LiveLocationMapScreen}
+                    options={{ title: "共有中の現在地" }}
                 />
             </Stack.Navigator>
         </NavigationContainer>

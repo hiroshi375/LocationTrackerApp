@@ -14,11 +14,20 @@ type SavedLocation = {
 type RecorderOptions = {
     intervalMs: number;
     distanceMeters: number;
+    liveShareOwnerValue?: string | null;
+};
+
+type LiveLocationMutationResult = {
+    data?: {
+        id?: string | null;
+    } | null;
+    errors?: unknown;
 };
 
 export function useForegroundLocationRecorder({
     intervalMs,
     distanceMeters,
+    liveShareOwnerValue = null,
 }: RecorderOptions) {
     const [isRecording, setIsRecording] = useState(false);
     const [recordingStartedAt, setRecordingStartedAt] = useState<string | null>(
@@ -28,6 +37,7 @@ export function useForegroundLocationRecorder({
     const subscriptionRef = useRef<Location.LocationSubscription | null>(null);
     const lastSavedLocationRef = useRef<SavedLocation | null>(null);
     const recordingSessionIdRef = useRef<string | null>(null);
+    const liveLocationIdRef = useRef<string | null>(null);
 
     const [activeRecordingSessionId, setActiveRecordingSessionId] = useState<
         string | null
@@ -96,6 +106,76 @@ export function useForegroundLocationRecorder({
             setDistanceFromStartMeters(distance);
         },
         [],
+    );
+
+    //
+    const updateLiveLocation = useCallback(
+        async (location: Location.LocationObject) => {
+            if (!liveShareOwnerValue) {
+                return;
+            }
+
+            const recordingSessionId = recordingSessionIdRef.current;
+
+            if (!recordingSessionId) {
+                return;
+            }
+
+            const latitude = location.coords.latitude;
+            const longitude = location.coords.longitude;
+
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+                return;
+            }
+
+            try {
+                const liveLocationModel = client.models.LiveLocation as any;
+
+                const currentUser = await getCurrentUser();
+                const updatedAt = new Date().toISOString();
+
+                const payload = {
+                    userId: currentUser.userId,
+                    recordingSessionId,
+                    latitude,
+                    longitude,
+                    accuracy: location.coords.accuracy ?? null,
+                    updatedAt,
+                    isActive: true,
+                    sharedOwners: [liveShareOwnerValue],
+                };
+
+                if (liveLocationIdRef.current) {
+                    const result = (await liveLocationModel.update({
+                        id: liveLocationIdRef.current,
+                        ...payload,
+                    })) as LiveLocationMutationResult;
+
+                    if (result.errors) {
+                        console.error(
+                            "LiveLocation update errors:",
+                            result.errors,
+                        );
+                    }
+
+                    return;
+                }
+
+                const result = (await liveLocationModel.create(
+                    payload,
+                )) as LiveLocationMutationResult;
+
+                if (result.errors) {
+                    console.error("LiveLocation create errors:", result.errors);
+                    return;
+                }
+
+                liveLocationIdRef.current = result.data?.id ?? null;
+            } catch (error) {
+                console.error("LiveLocation update error:", error);
+            }
+        },
+        [liveShareOwnerValue],
     );
 
     // 位置を保存する関数
@@ -195,6 +275,7 @@ export function useForegroundLocationRecorder({
 
         setDistanceFromStartMeters(0);
 
+        await updateLiveLocation(currentLocation);
         await saveLocationLog(currentLocation, true);
 
         const subscription = await Location.watchPositionAsync(
@@ -204,13 +285,14 @@ export function useForegroundLocationRecorder({
                 distanceInterval: 1,
             },
             async (location) => {
+                await updateLiveLocation(location);
                 await saveLocationLog(location);
             },
         );
 
         subscriptionRef.current = subscription;
         setIsRecording(true);
-    }, [saveLocationLog]);
+    }, [saveLocationLog, updateLiveLocation]);
 
     // 記録停止関数
     const stopRecording = useCallback(async (): Promise<string | null> => {
@@ -225,12 +307,26 @@ export function useForegroundLocationRecorder({
                     accuracy: Location.Accuracy.Balanced,
                 });
 
+                await updateLiveLocation(currentLocation);
                 await saveLocationLog(currentLocation, true);
             } catch (error) {
                 console.error("Save stop location error:", error);
             }
         }
 
+        if (liveLocationIdRef.current) {
+            try {
+                await client.models.LiveLocation.update({
+                    id: liveLocationIdRef.current,
+                    isActive: false,
+                    updatedAt: new Date().toISOString(),
+                });
+            } catch (error) {
+                console.error("LiveLocation stop update error:", error);
+            }
+        }
+
+        liveLocationIdRef.current = null;
         recordingSessionIdRef.current = null;
         setActiveRecordingSessionId(null);
         setRecordingStartedAt(null);
@@ -241,7 +337,7 @@ export function useForegroundLocationRecorder({
         setDistanceFromStartMeters(null);
 
         return finishedSessionId;
-    }, [saveLocationLog]);
+    }, [saveLocationLog, updateLiveLocation]);
 
     useEffect(() => {
         return () => {

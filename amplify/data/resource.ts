@@ -35,6 +35,24 @@ const schema = a.schema({
             allow.owner(),
             allow.authenticated().to(["read"]),
         ]),
+    LiveLocation: a
+        .model({
+            userId: a.string().required(),
+            recordingSessionId: a.string().required(),
+
+            latitude: a.float().required(),
+            longitude: a.float().required(),
+            accuracy: a.float(),
+
+            updatedAt: a.datetime().required(),
+            isActive: a.boolean().required(),
+
+            sharedOwners: a.string().array(),
+        })
+        .authorization((allow) => [
+            allow.owner(),
+            allow.ownersDefinedIn("sharedOwners").to(["read"]),
+        ]),
 });
 
 export type Schema = ClientSchema<typeof schema>;

@@ -1,7 +1,7 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { getCurrentUser, signOut } from "aws-amplify/auth";
 import * as Location from "expo-location";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -41,6 +41,20 @@ type AppButtonProps = {
     disabled?: boolean;
 };
 
+type UserProfileItem = {
+    id: string;
+    userId: string;
+    email?: string | null;
+    displayName?: string | null;
+    ownerValue?: string | null;
+    searchText?: string | null;
+};
+
+type UserProfileListResult = {
+    data?: any[] | null;
+    errors?: unknown;
+};
+
 // 現在地の記録と保存を行うホーム画面コンポーネント
 export default function LocationHomeScreen({ navigation }: Props) {
     const [currentLocation, setCurrentLocation] =
@@ -68,15 +82,25 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [recordIntervalMs, setRecordIntervalMs] = useState(30 * 1000);
     const [recordDistanceMeters, setRecordDistanceMeters] = useState(20);
 
+    const [liveShareModalVisible, setLiveShareModalVisible] = useState(false);
+    const [liveShareSearchText, setLiveShareSearchText] = useState("");
+    const [liveShareUsers, setLiveShareUsers] = useState<UserProfileItem[]>([]);
+    const [selectedLiveShareUser, setSelectedLiveShareUser] =
+        useState<UserProfileItem | null>(null);
+    const [loadingLiveShareUsers, setLoadingLiveShareUsers] = useState(false);
+    const [liveShareStatusMessage, setLiveShareStatusMessage] = useState("");
+
     const {
         isRecording,
         recordingStartedAt,
         activeRecordingSessionId,
+        distanceFromStartMeters,
         startRecording,
         stopRecording,
     } = useForegroundLocationRecorder({
         intervalMs: recordIntervalMs,
         distanceMeters: recordDistanceMeters,
+        liveShareOwnerValue: selectedLiveShareUser?.ownerValue ?? null,
     });
 
     const recordingBlinkAnim = useRef(new Animated.Value(1)).current;
@@ -105,6 +129,112 @@ export default function LocationHomeScreen({ navigation }: Props) {
             setLoginUserName("ユーザー");
         }
     }, []);
+
+    const loadLiveShareUsers = useCallback(async () => {
+        try {
+            setLoadingLiveShareUsers(true);
+
+            const currentUser = await getCurrentUser();
+
+            const userProfileModel = client.models.UserProfile as any;
+
+            const result = (await userProfileModel.list({
+                limit: 1000,
+            })) as UserProfileListResult;
+
+            if (result.errors) {
+                console.error("UserProfile list errors:", result.errors);
+                Alert.alert(
+                    "取得エラー",
+                    "共有先ユーザーを取得できませんでした。",
+                );
+                return;
+            }
+
+            const users: UserProfileItem[] = (result.data ?? [])
+                .map((user) => ({
+                    id: user.id,
+                    userId: user.userId,
+                    email: user.email ?? null,
+                    displayName: user.displayName ?? null,
+                    ownerValue: user.ownerValue ?? null,
+                    searchText: user.searchText ?? null,
+                }))
+                .filter((user) => {
+                    if (!user.ownerValue) {
+                        return false;
+                    }
+
+                    // 自分自身は候補から除外
+                    return user.userId !== currentUser.userId;
+                })
+                .sort((a, b) => {
+                    const aName = a.displayName || a.email || "";
+                    const bName = b.displayName || b.email || "";
+                    return aName.localeCompare(bName);
+                });
+
+            setLiveShareUsers(users);
+        } catch (error) {
+            console.error("Load live share users error:", error);
+            Alert.alert("取得エラー", "共有先ユーザーの取得に失敗しました。");
+        } finally {
+            setLoadingLiveShareUsers(false);
+        }
+    }, []);
+
+    const filteredLiveShareUsers = useMemo(() => {
+        const keyword = liveShareSearchText.trim().toLowerCase();
+
+        if (!keyword) {
+            return liveShareUsers;
+        }
+
+        return liveShareUsers.filter((user) => {
+            return (
+                (user.displayName ?? "").toLowerCase().includes(keyword) ||
+                (user.email ?? "").toLowerCase().includes(keyword)
+            );
+        });
+    }, [liveShareUsers, liveShareSearchText]);
+
+    const openLiveShareModal = () => {
+        if (isRecording) {
+            Alert.alert(
+                "自動記録中",
+                "共有先ユーザーは自動記録開始前に選択してください。",
+            );
+            return;
+        }
+
+        setLiveShareSearchText("");
+        setLiveShareModalVisible(true);
+        void loadLiveShareUsers();
+    };
+
+    const clearLiveShareUser = () => {
+        if (isRecording) {
+            Alert.alert(
+                "自動記録中",
+                "共有先ユーザーは自動記録停止後に変更してください。",
+            );
+            return;
+        }
+
+        setSelectedLiveShareUser(null);
+        setLiveShareStatusMessage("");
+    };
+
+    const liveShareUserName =
+        selectedLiveShareUser?.displayName ||
+        selectedLiveShareUser?.email ||
+        "";
+
+    const handleStartRecording = async () => {
+        setLiveShareStatusMessage("");
+
+        await startRecording();
+    };
 
     useFocusEffect(
         useCallback(() => {
@@ -322,7 +452,17 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
     // セッションIDに紐づくLocationLogを全件取得してセッション名を更新する
     const handleStopRecording = async () => {
+        const stoppedShareUserName = liveShareUserName;
+
         const finishedSessionId = await stopRecording();
+
+        if (stoppedShareUserName) {
+            setLiveShareStatusMessage(
+                `現在地共有を停止しました: ${stoppedShareUserName}`,
+            );
+        } else {
+            setLiveShareStatusMessage("");
+        }
 
         if (!finishedSessionId) {
             return;
@@ -416,6 +556,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                         : undefined,
                             })
                         }
+                    />
+                </View>
+                <View style={styles.buttonSpace}>
+                    <AppButton
+                        title="共有中の現在地を見る"
+                        onPress={() => navigation.navigate("LiveLocationMap")}
                     />
                 </View>
                 <View style={styles.autoRecordBox}>
@@ -539,6 +685,70 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             })}
                         </View>
                     </View>
+
+                    <View style={styles.settingBlock}>
+                        <Text style={styles.settingTitle}>
+                            リアルタイム共有先
+                        </Text>
+
+                        <Pressable
+                            style={[
+                                styles.liveShareSelectButton,
+                                isRecording && styles.appButtonDisabled,
+                            ]}
+                            onPress={openLiveShareModal}
+                            disabled={isRecording}
+                        >
+                            <Text style={styles.liveShareSelectButtonText}>
+                                {selectedLiveShareUser
+                                    ? selectedLiveShareUser.displayName ||
+                                      selectedLiveShareUser.email ||
+                                      "名前未設定ユーザー"
+                                    : "共有先ユーザーを選択"}
+                            </Text>
+                        </Pressable>
+
+                        {selectedLiveShareUser?.email && (
+                            <Text style={styles.liveShareSelectedEmail}>
+                                {selectedLiveShareUser.email}
+                            </Text>
+                        )}
+
+                        {selectedLiveShareUser && !isRecording && (
+                            <Pressable
+                                style={styles.liveShareClearButton}
+                                onPress={clearLiveShareUser}
+                            >
+                                <Text style={styles.liveShareClearButtonText}>
+                                    共有先を解除
+                                </Text>
+                            </Pressable>
+                        )}
+
+                        {isRecording && selectedLiveShareUser && (
+                            <Text style={styles.liveShareActiveText}>
+                                現在地を共有中:{" "}
+                                {selectedLiveShareUser.displayName ||
+                                    selectedLiveShareUser.email ||
+                                    "名前未設定ユーザー"}
+                            </Text>
+                        )}
+                    </View>
+                    {isRecording && selectedLiveShareUser && (
+                        <View style={styles.liveShareStatusActiveBox}>
+                            <Text style={styles.liveShareStatusActiveText}>
+                                現在地を共有中: {liveShareUserName}
+                            </Text>
+                        </View>
+                    )}
+
+                    {!isRecording && liveShareStatusMessage.length > 0 && (
+                        <View style={styles.liveShareStatusStoppedBox}>
+                            <Text style={styles.liveShareStatusStoppedText}>
+                                {liveShareStatusMessage}
+                            </Text>
+                        </View>
+                    )}
                     {isRecording ? (
                         <Pressable
                             style={({ pressed }) => [
@@ -557,7 +767,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 styles.autoRecordStartButton,
                                 pressed && styles.buttonPressed,
                             ]}
-                            onPress={startRecording}
+                            onPress={handleStartRecording}
                         >
                             <Text style={styles.autoRecordButtonText}>
                                 自動記録開始
@@ -648,6 +858,115 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                         {savingSessionName
                                             ? "保存中..."
                                             : "保存"}
+                                    </Text>
+                                </Pressable>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
+
+                <Modal
+                    visible={liveShareModalVisible}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={() => setLiveShareModalVisible(false)}
+                >
+                    <View style={styles.modalOverlay}>
+                        <View style={styles.modalContent}>
+                            <Text style={styles.modalTitle}>
+                                リアルタイム共有先を選択
+                            </Text>
+
+                            <Text style={styles.modalDescription}>
+                                自動記録中の現在地を共有するユーザーを選択してください。
+                            </Text>
+
+                            <TextInput
+                                style={styles.liveShareSearchInput}
+                                value={liveShareSearchText}
+                                onChangeText={setLiveShareSearchText}
+                                placeholder="ユーザー名またはメールで絞り込み"
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                            />
+
+                            <ScrollView
+                                style={styles.liveShareUserList}
+                                contentContainerStyle={
+                                    styles.liveShareUserListContent
+                                }
+                                keyboardShouldPersistTaps="handled"
+                            >
+                                {loadingLiveShareUsers ? (
+                                    <ActivityIndicator
+                                        style={{ marginVertical: 20 }}
+                                    />
+                                ) : filteredLiveShareUsers.length === 0 ? (
+                                    <Text style={styles.liveShareEmptyText}>
+                                        共有先ユーザーが見つかりません。
+                                        {"\n"}
+                                        UserProfile
+                                        に他のユーザーが存在するか確認してください。
+                                    </Text>
+                                ) : (
+                                    filteredLiveShareUsers.map((user) => {
+                                        const selected =
+                                            selectedLiveShareUser?.id ===
+                                            user.id;
+
+                                        return (
+                                            <Pressable
+                                                key={user.id}
+                                                style={[
+                                                    styles.liveShareUserItem,
+                                                    selected &&
+                                                        styles.liveShareUserItemSelected,
+                                                ]}
+                                                onPress={() => {
+                                                    setSelectedLiveShareUser(
+                                                        user,
+                                                    );
+                                                    setLiveShareStatusMessage(
+                                                        "",
+                                                    );
+                                                    setLiveShareModalVisible(
+                                                        false,
+                                                    );
+                                                }}
+                                            >
+                                                <Text
+                                                    style={
+                                                        styles.liveShareUserName
+                                                    }
+                                                >
+                                                    {user.displayName ||
+                                                        "名前未設定"}
+                                                </Text>
+
+                                                <Text
+                                                    style={
+                                                        styles.liveShareUserEmail
+                                                    }
+                                                >
+                                                    {user.email || "メールなし"}
+                                                </Text>
+                                            </Pressable>
+                                        );
+                                    })
+                                )}
+                            </ScrollView>
+
+                            <View style={styles.modalButtonRow}>
+                                <Pressable
+                                    style={styles.modalSecondaryButton}
+                                    onPress={() =>
+                                        setLiveShareModalVisible(false)
+                                    }
+                                >
+                                    <Text
+                                        style={styles.modalSecondaryButtonText}
+                                    >
+                                        キャンセル
                                     </Text>
                                 </Pressable>
                             </View>
@@ -1003,5 +1322,122 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: "bold",
         color: "#2f4f66",
+    },
+    liveShareSelectButton: {
+        minHeight: 44,
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        justifyContent: "center",
+        backgroundColor: "#fff",
+    },
+    liveShareSelectButtonText: {
+        fontSize: 15,
+        color: "#2f4f66",
+        fontWeight: "bold",
+    },
+    liveShareSelectedEmail: {
+        marginTop: 4,
+        fontSize: 12,
+        color: "#666",
+    },
+    liveShareClearButton: {
+        marginTop: 8,
+        alignSelf: "flex-start",
+        paddingVertical: 6,
+        paddingHorizontal: 10,
+        borderRadius: 8,
+        backgroundColor: "#eef3f7",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+    },
+    liveShareClearButtonText: {
+        color: "#2f4f66",
+        fontSize: 12,
+        fontWeight: "bold",
+    },
+    liveShareActiveText: {
+        marginTop: 8,
+        fontSize: 12,
+        color: "#d9534f",
+        fontWeight: "bold",
+    },
+    liveShareSearchInput: {
+        height: 44,
+        borderWidth: 1,
+        borderColor: "#ccc",
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 0,
+        fontSize: 16,
+        backgroundColor: "#fff",
+        marginBottom: 10,
+    },
+    liveShareUserList: {
+        marginTop: 8,
+        minHeight: 160,
+        maxHeight: 260,
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+        borderRadius: 8,
+        backgroundColor: "#f9fbfd",
+    },
+    liveShareUserListContent: {
+        padding: 8,
+    },
+    liveShareEmptyText: {
+        textAlign: "center",
+        color: "#777",
+        paddingVertical: 20,
+        lineHeight: 20,
+    },
+    liveShareUserItem: {
+        padding: 10,
+        borderWidth: 1,
+        borderColor: "#ddd",
+        borderRadius: 8,
+        marginBottom: 8,
+        backgroundColor: "#fff",
+    },
+    liveShareUserItemSelected: {
+        borderColor: "#4b6f8f",
+        backgroundColor: "#eef3f7",
+    },
+    liveShareUserName: {
+        fontSize: 15,
+        fontWeight: "bold",
+        color: "#333",
+    },
+    liveShareUserEmail: {
+        marginTop: 2,
+        fontSize: 12,
+        color: "#666",
+    },
+    liveShareStatusActiveBox: {
+        marginTop: 10,
+        padding: 10,
+        borderRadius: 8,
+        backgroundColor: "#ffecec",
+        borderWidth: 1,
+        borderColor: "#d9534f",
+    },
+    liveShareStatusActiveText: {
+        color: "#d9534f",
+        fontSize: 13,
+        fontWeight: "bold",
+    },
+    liveShareStatusStoppedBox: {
+        marginTop: 10,
+        padding: 10,
+        borderRadius: 8,
+        backgroundColor: "#eef3f7",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+    },
+    liveShareStatusStoppedText: {
+        color: "#2f4f66",
+        fontSize: 13,
+        fontWeight: "bold",
     },
 });

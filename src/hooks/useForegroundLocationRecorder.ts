@@ -45,24 +45,31 @@ export function useForegroundLocationRecorder({
     // 位置を保存すべきか判定する関数
     const shouldSaveLocation = useCallback(
         (latitude: number, longitude: number) => {
-            const last = lastSavedLocationRef.current;
-
-            if (!last) {
+            if (!lastSavedLocationRef.current) {
                 return true;
             }
 
+            const elapsedMs =
+                Date.now() - lastSavedLocationRef.current.recordedAt;
+
             const distance = calculateDistanceMeters(
-                last.latitude,
-                last.longitude,
+                lastSavedLocationRef.current.latitude,
+                lastSavedLocationRef.current.longitude,
                 latitude,
                 longitude,
             );
 
-            const elapsedMs = Date.now() - last.recordedAt;
+            if (elapsedMs >= intervalMs) {
+                return true;
+            }
 
-            return distance >= distanceMeters || elapsedMs >= intervalMs;
+            if (distance >= distanceMeters) {
+                return true;
+            }
+
+            return false;
         },
-        [distanceMeters, intervalMs],
+        [intervalMs, distanceMeters],
     );
 
     //

@@ -1,7 +1,7 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { getCurrentUser, signOut } from "aws-amplify/auth";
 import * as Location from "expo-location";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -17,10 +17,14 @@ import {
     View,
 } from "react-native";
 
+import { useFocusEffect } from "@react-navigation/native";
 import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRecorder";
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
-import { ensureUserProfile } from "../services/userProfileService";
+import {
+    ensureUserProfile,
+    getCurrentUserProfile,
+} from "../services/userProfileService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationHome">;
 
@@ -44,6 +48,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [memo, setMemo] = useState("");
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [loginUserName, setLoginUserName] = useState("ユーザー");
 
     const RECORD_INTERVAL_OPTIONS = [
         { label: "10秒", value: 10 * 1000 },
@@ -84,6 +89,28 @@ export default function LocationHomeScreen({ navigation }: Props) {
         null,
     );
     const [savingSessionName, setSavingSessionName] = useState(false);
+
+    const loadLoginUserName = useCallback(async () => {
+        try {
+            const profile = await getCurrentUserProfile();
+
+            const name =
+                profile?.displayName?.trim() ||
+                profile?.email?.trim() ||
+                "ユーザー";
+
+            setLoginUserName(name);
+        } catch (error) {
+            console.error("Load login user name error:", error);
+            setLoginUserName("ユーザー");
+        }
+    }, []);
+
+    useFocusEffect(
+        useCallback(() => {
+            void loadLoginUserName();
+        }, [loadLoginUserName]),
+    );
 
     useEffect(() => {
         if (!isRecording) {
@@ -319,6 +346,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 contentContainerStyle={styles.container}
                 keyboardShouldPersistTaps="handled"
             >
+                <View style={styles.userInfoBox}>
+                    <Text style={styles.userInfoLabel}>ログインユーザー</Text>
+                    <Text style={styles.userInfoName}>{loginUserName}</Text>
+                </View>
                 {/* <Text style={styles.title}>現在地を手動記録</Text> */}
 
                 <AppButton title="現在地を取得" onPress={handleGetLocation} />
@@ -951,5 +982,23 @@ const styles = StyleSheet.create({
     signOutButtonSpace: {
         marginTop: 12,
         marginBottom: 36,
+    },
+    userInfoBox: {
+        padding: 12,
+        marginBottom: 12,
+        borderRadius: 10,
+        backgroundColor: "#eef3f7",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+    },
+    userInfoLabel: {
+        fontSize: 12,
+        color: "#4b6f8f",
+        marginBottom: 2,
+    },
+    userInfoName: {
+        fontSize: 16,
+        fontWeight: "bold",
+        color: "#2f4f66",
     },
 });

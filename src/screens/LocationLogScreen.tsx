@@ -1,5 +1,6 @@
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { getCurrentUser } from "aws-amplify/auth";
 import { useCallback, useMemo, useState } from "react";
 import {
     ActivityIndicator,
@@ -159,6 +160,21 @@ export default function LocationLogScreen({ navigation }: Props) {
         });
     }, [displayItems, searchText]);
 
+    const filteredShareUsers = useMemo(() => {
+        const keyword = shareSearchText.trim().toLowerCase();
+
+        if (!keyword) {
+            return shareUsers;
+        }
+
+        return shareUsers.filter((user) => {
+            return (
+                (user.displayName ?? "").toLowerCase().includes(keyword) ||
+                (user.email ?? "").toLowerCase().includes(keyword)
+            );
+        });
+    }, [shareUsers, shareSearchText]);
+
     const handleOpenDetail = (log: LocationLogItem) => {
         navigation.navigate("LocationLogDetail", {
             locationLogId: log.id,
@@ -295,6 +311,8 @@ export default function LocationLogScreen({ navigation }: Props) {
         setShareUsers([]);
         setSelectedShareUser(null);
         setShareModalVisible(true);
+
+        void loadShareUsers();
     };
 
     const closeShareModal = () => {
@@ -309,34 +327,21 @@ export default function LocationLogScreen({ navigation }: Props) {
         setSelectedShareUser(null);
     };
 
-    const searchShareUsers = async () => {
-        const keyword = shareSearchText.trim().toLowerCase();
-
-        if (!keyword) {
-            Alert.alert(
-                "検索条件なし",
-                "共有先ユーザー名またはメールを入力してください。",
-            );
-            return;
-        }
-
+    const loadShareUsers = useCallback(async () => {
         try {
             setShareSearching(true);
 
+            const currentUser = await getCurrentUser();
+
             const result = await client.models.UserProfile.list({
-                filter: {
-                    searchText: {
-                        contains: keyword,
-                    },
-                },
-                limit: 20,
+                limit: 1000,
             });
 
             if (result.errors) {
-                console.error("UserProfile search errors:", result.errors);
+                console.error("UserProfile list errors:", result.errors);
                 Alert.alert(
-                    "検索エラー",
-                    "共有先ユーザーを検索できませんでした。",
+                    "取得エラー",
+                    "共有先ユーザーを取得できませんでした。",
                 );
                 return;
             }
@@ -345,22 +350,35 @@ export default function LocationLogScreen({ navigation }: Props) {
                 .map((user) => ({
                     id: user.id,
                     userId: user.userId,
-                    email: user.email,
-                    displayName: user.displayName,
-                    ownerValue: user.ownerValue,
-                    searchText: user.searchText,
+                    email: user.email ?? null,
+                    displayName: user.displayName ?? null,
+                    ownerValue: user.ownerValue ?? null,
+                    searchText: user.searchText ?? null,
                 }))
-                .filter((user) => Boolean(user.ownerValue));
+                .filter((user) => {
+                    if (!user.ownerValue) {
+                        return false;
+                    }
+
+                    // 自分自身は共有先候補から除外
+                    return user.userId !== currentUser.userId;
+                })
+                .sort((a, b) => {
+                    const aName = a.displayName || a.email || "";
+                    const bName = b.displayName || b.email || "";
+
+                    return aName.localeCompare(bName);
+                });
 
             setShareUsers(users);
             setSelectedShareUser(null);
         } catch (error) {
-            console.error("UserProfile search error:", error);
-            Alert.alert("検索エラー", "共有先ユーザーの検索に失敗しました。");
+            console.error("UserProfile list error:", error);
+            Alert.alert("取得エラー", "共有先ユーザーの取得に失敗しました。");
         } finally {
             setShareSearching(false);
         }
-    };
+    }, []);
 
     const shareSessionWithSelectedUser = async () => {
         if (!sharingSession) {
@@ -636,42 +654,38 @@ export default function LocationLogScreen({ navigation }: Props) {
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
                         <Text style={styles.modalTitle}>
-                            共有先ユーザーを検索
+                            共有先ユーザーを選択
                         </Text>
 
+                        {/*
                         <TextInput
                             style={styles.shareSearchInput}
                             value={shareSearchText}
                             onChangeText={setShareSearchText}
-                            placeholder="ユーザー名またはメール"
+                            placeholder="ユーザー名またはメールで絞り込み"
                             autoCapitalize="none"
                             autoCorrect={false}
                             editable={!sharing}
-                        />
-
-                        <Pressable
-                            style={[
-                                styles.searchButton,
-                                shareSearching && styles.deleteButtonDisabled,
-                            ]}
-                            onPress={searchShareUsers}
-                            disabled={shareSearching || sharing}
-                        >
-                            <Text style={styles.searchButtonText}>
-                                {shareSearching ? "検索中..." : "検索"}
-                            </Text>
-                        </Pressable>
+                        /> */}
 
                         <ScrollView
                             style={styles.shareUserList}
+                            contentContainerStyle={styles.shareUserListContent}
                             keyboardShouldPersistTaps="handled"
                         >
-                            {shareUsers.length === 0 ? (
+                            {shareSearching ? (
+                                <ActivityIndicator
+                                    style={{ marginVertical: 20 }}
+                                />
+                            ) : filteredShareUsers.length === 0 ? (
                                 <Text style={styles.shareEmptyText}>
-                                    共有先ユーザーを検索してください。
+                                    共有先ユーザーが見つかりません。
+                                    {"\n"}
+                                    UserProfile
+                                    に他のユーザーが存在するか確認してください。
                                 </Text>
                             ) : (
-                                shareUsers.map((user) => {
+                                filteredShareUsers.map((user) => {
                                     const selected =
                                         selectedShareUser?.id === user.id;
 
@@ -985,7 +999,15 @@ const styles = StyleSheet.create({
     },
     shareUserList: {
         marginTop: 10,
+        minHeight: 160,
         maxHeight: 260,
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+        borderRadius: 8,
+        backgroundColor: "#f9fbfd",
+    },
+    shareUserListContent: {
+        padding: 8,
     },
     shareEmptyText: {
         textAlign: "center",

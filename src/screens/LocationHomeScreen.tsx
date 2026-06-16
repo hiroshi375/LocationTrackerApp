@@ -94,7 +94,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
         isRecording,
         recordingStartedAt,
         activeRecordingSessionId,
-        distanceFromStartMeters,
         startRecording,
         stopRecording,
     } = useForegroundLocationRecorder({

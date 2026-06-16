@@ -203,7 +203,7 @@ export function useForegroundLocationRecorder({
 
         subscriptionRef.current = subscription;
         setIsRecording(true);
-    }, [distanceMeters, intervalMs, saveLocationLog]);
+    }, [saveLocationLog]);
 
     // 記録停止関数
     const stopRecording = useCallback(async (): Promise<string | null> => {

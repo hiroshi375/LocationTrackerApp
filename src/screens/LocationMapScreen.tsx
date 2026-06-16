@@ -371,7 +371,7 @@ export default function LocationMapScreen({ route }: Props) {
                     />
                 )}
 
-                {showPoints && activeSessionId && currentLocation && (
+                {activeSessionId && currentLocation && (
                     <Marker
                         coordinate={currentLocation}
                         anchor={{ x: 0.5, y: 0.5 }}
@@ -430,7 +430,7 @@ export default function LocationMapScreen({ route }: Props) {
                         );
                     })}
 
-                {showPoints && startLog && (
+                {startLog && (
                     <Marker
                         coordinate={{
                             latitude: startLog.latitude,
@@ -456,7 +456,7 @@ export default function LocationMapScreen({ route }: Props) {
                     </Marker>
                 )}
 
-                {showPoints && endLog && (
+                {endLog && (
                     <Marker
                         coordinate={{
                             latitude: endLog.latitude,

@@ -347,7 +347,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 keyboardShouldPersistTaps="handled"
             >
                 <View style={styles.userInfoBox}>
-                    <Text style={styles.userInfoLabel}>ログインユーザー</Text>
+                    <Text style={styles.userInfoLabel}>ログインユーザー：</Text>
                     <Text style={styles.userInfoName}>{loginUserName}</Text>
                 </View>
                 {/* <Text style={styles.title}>現在地を手動記録</Text> */}
@@ -395,7 +395,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
                 <View style={styles.buttonSpace}>
                     <AppButton
-                        title="位置履歴を見る"
+                        title="位置・セッション履歴を見る"
                         onPress={() => navigation.navigate("LocationLog")}
                     />
                 </View>
@@ -990,11 +990,14 @@ const styles = StyleSheet.create({
         backgroundColor: "#eef3f7",
         borderWidth: 1,
         borderColor: "#c8d6e0",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
     },
     userInfoLabel: {
-        fontSize: 12,
+        fontSize: 14,
         color: "#4b6f8f",
-        marginBottom: 2,
+        fontWeight: "bold",
     },
     userInfoName: {
         fontSize: 16,

@@ -29,6 +29,7 @@ type LocationLogItem = {
 
 export default function LocationMapScreen({ route }: Props) {
     const mapRef = useRef<MapView | null>(null);
+    const hasFittedInitialRouteRef = useRef(false);
 
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
     const [loading, setLoading] = useState(true);
@@ -41,6 +42,8 @@ export default function LocationMapScreen({ route }: Props) {
 
     const activeSessionId =
         selectedLocation?.recordingSessionId ?? routeRecordingSessionId ?? null;
+
+    const isLiveRecordingMap = Boolean(routeRecordingSessionId);
 
     const recordingIntervalMs = route.params?.recordingIntervalMs ?? null;
     const recordingDistanceMeters =
@@ -70,7 +73,7 @@ export default function LocationMapScreen({ route }: Props) {
             }
 
             const result = await client.models.LocationLog.list({});
-            console.log("LocationLog sample:", result.data?.[0]);
+            //console.log("LocationLog sample:", result.data?.[0]);
 
             if (result.errors) {
                 console.error("LocationLog list errors:", result.errors);
@@ -91,7 +94,7 @@ export default function LocationMapScreen({ route }: Props) {
     }, []);
 
     useEffect(() => {
-        if (!activeSessionId) {
+        if (!isLiveRecordingMap) {
             setCurrentLocation(null);
             return;
         }
@@ -170,7 +173,7 @@ export default function LocationMapScreen({ route }: Props) {
             cancelled = true;
             subscription?.remove();
         };
-    }, [activeSessionId]);
+    }, [isLiveRecordingMap]);
 
     useEffect(() => {
         if (!activeSessionId || !currentLocation) {
@@ -205,7 +208,7 @@ export default function LocationMapScreen({ route }: Props) {
             return;
         }
 
-        if (!activeSessionId) {
+        if (!isLiveRecordingMap) {
             return;
         }
 
@@ -213,16 +216,117 @@ export default function LocationMapScreen({ route }: Props) {
             return;
         }
 
-        mapRef.current?.animateToRegion(
+        mapRef.current?.animateCamera(
             {
-                latitude: currentLocation.latitude,
-                longitude: currentLocation.longitude,
-                latitudeDelta: 0.005,
-                longitudeDelta: 0.005,
+                center: {
+                    latitude: currentLocation.latitude,
+                    longitude: currentLocation.longitude,
+                },
             },
-            500,
+            {
+                duration: 500,
+            },
         );
-    }, [mapReady, activeSessionId, currentLocation]);
+    }, [mapReady, isLiveRecordingMap, currentLocation]);
+
+    useEffect(() => {
+        hasFittedInitialRouteRef.current = false;
+    }, [activeSessionId, isLiveRecordingMap]);
+
+    useEffect(() => {
+        if (!mapReady) {
+            return;
+        }
+
+        if (!hasLoaded || loading) {
+            return;
+        }
+
+        if (!activeSessionId) {
+            return;
+        }
+
+        // 自動記録中は対象外
+        if (isLiveRecordingMap) {
+            return;
+        }
+
+        if (hasFittedInitialRouteRef.current) {
+            return;
+        }
+
+        const sessionRouteLogs = logs
+            .filter((log) => log.recordingSessionId === activeSessionId)
+            .filter(
+                (log) =>
+                    Number.isFinite(log.latitude) &&
+                    Number.isFinite(log.longitude),
+            )
+            .sort((a, b) => {
+                return (
+                    new Date(a.recordedAt).getTime() -
+                    new Date(b.recordedAt).getTime()
+                );
+            })
+            .filter((log, index, array) => {
+                if (index === 0) {
+                    return true;
+                }
+
+                const previous = array[index - 1];
+
+                return (
+                    Math.abs(previous.latitude - log.latitude) > 0.000001 ||
+                    Math.abs(previous.longitude - log.longitude) > 0.000001
+                );
+            });
+
+        const coordinates = sessionRouteLogs.map((log) => ({
+            latitude: log.latitude,
+            longitude: log.longitude,
+        }));
+
+        if (coordinates.length === 0) {
+            return;
+        }
+
+        hasFittedInitialRouteRef.current = true;
+
+        const timerId = setTimeout(() => {
+            if (coordinates.length === 1) {
+                mapRef.current?.animateCamera(
+                    {
+                        center: coordinates[0],
+                    },
+                    {
+                        duration: 500,
+                    },
+                );
+                return;
+            }
+
+            mapRef.current?.fitToCoordinates(coordinates, {
+                edgePadding: {
+                    top: 80,
+                    right: 40,
+                    bottom: 260,
+                    left: 40,
+                },
+                animated: true,
+            });
+        }, 300);
+
+        return () => {
+            clearTimeout(timerId);
+        };
+    }, [
+        mapReady,
+        hasLoaded,
+        loading,
+        activeSessionId,
+        isLiveRecordingMap,
+        logs,
+    ]);
 
     useFocusEffect(
         useCallback(() => {
@@ -253,7 +357,7 @@ export default function LocationMapScreen({ route }: Props) {
     const latestRecordedLog = visibleLogs.length > 0 ? visibleLogs[0] : null;
 
     const currentLocationLineCoordinates =
-        activeSessionId && latestRecordedLog && currentLocation
+        isLiveRecordingMap && latestRecordedLog && currentLocation
             ? [
                   {
                       latitude: latestRecordedLog.latitude,
@@ -305,14 +409,16 @@ export default function LocationMapScreen({ route }: Props) {
 
     const moveToLatestLocation = () => {
         if (activeSessionId && currentLocation) {
-            mapRef.current?.animateToRegion(
+            mapRef.current?.animateCamera(
                 {
-                    latitude: currentLocation.latitude,
-                    longitude: currentLocation.longitude,
-                    latitudeDelta: 0.005,
-                    longitudeDelta: 0.005,
+                    center: {
+                        latitude: currentLocation.latitude,
+                        longitude: currentLocation.longitude,
+                    },
                 },
-                500,
+                {
+                    duration: 500,
+                },
             );
             return;
         }
@@ -322,6 +428,34 @@ export default function LocationMapScreen({ route }: Props) {
         }
 
         moveToLocation(latest);
+    };
+
+    const fitToRoute = () => {
+        if (routeCoordinates.length === 0) {
+            return;
+        }
+
+        if (routeCoordinates.length === 1) {
+            mapRef.current?.animateCamera(
+                {
+                    center: routeCoordinates[0],
+                },
+                {
+                    duration: 500,
+                },
+            );
+            return;
+        }
+
+        mapRef.current?.fitToCoordinates(routeCoordinates, {
+            edgePadding: {
+                top: 80,
+                right: 40,
+                bottom: 260,
+                left: 40,
+            },
+            animated: true,
+        });
     };
 
     const moveToDisplayLocation = () => {
@@ -361,9 +495,26 @@ export default function LocationMapScreen({ route }: Props) {
         activeSessionId && routeLogs.length > 0 ? routeLogs[0] : null;
 
     const endLog =
-        activeSessionId && routeLogs.length > 1
+        activeSessionId && !isLiveRecordingMap && routeLogs.length > 1
             ? routeLogs[routeLogs.length - 1]
             : null;
+
+    const sessionStartAt =
+        activeSessionId && routeLogs.length > 0
+            ? routeLogs[0].recordedAt
+            : null;
+
+    const sessionEndAt =
+        activeSessionId && routeLogs.length > 0
+            ? routeLogs[routeLogs.length - 1].recordedAt
+            : null;
+
+    const shouldShowSessionPeriod =
+        isSelectedMode &&
+        Boolean(activeSessionId) &&
+        !isLiveRecordingMap &&
+        Boolean(sessionStartAt) &&
+        Boolean(sessionEndAt);
 
     return (
         <View style={styles.container}>
@@ -536,9 +687,12 @@ export default function LocationMapScreen({ route }: Props) {
                 </Text>
 
                 <Text style={styles.infoText}>
-                    日時: {formatDateTime(displayLocation.recordedAt)}
+                    {shouldShowSessionPeriod ? "期間: " : "日時: "}
+                    {shouldShowSessionPeriod && sessionStartAt && sessionEndAt
+                        ? `${formatDateTime(sessionStartAt)} - ${formatDateTime(sessionEndAt)}`
+                        : formatDateTime(displayLocation.recordedAt)}
                 </Text>
-
+                {/*
                 <Text style={styles.infoText}>
                     緯度: {displayLocation.latitude.toFixed(6)}
                 </Text>
@@ -554,7 +708,7 @@ export default function LocationMapScreen({ route }: Props) {
                         ? `${Math.round(displayLocation.accuracy)}m`
                         : "不明"}
                 </Text>
-
+                */}
                 <View style={styles.memoRow}>
                     <Text style={[styles.infoText, styles.memoTextInRow]}>
                         メモ:{" "}
@@ -580,6 +734,12 @@ export default function LocationMapScreen({ route }: Props) {
                     </Text>
                 </Pressable>
 
+                <Pressable style={styles.routeFitButton} onPress={fitToRoute}>
+                    <Text style={styles.routeFitButtonText}>
+                        ルート全体を表示
+                    </Text>
+                </Pressable>
+
                 <View style={styles.buttonRow}>
                     <Pressable
                         style={styles.secondaryButton}
@@ -596,7 +756,9 @@ export default function LocationMapScreen({ route }: Props) {
                             onPress={moveToLatestLocation}
                         >
                             <Text style={styles.primaryButtonText}>
-                                最新位置へ戻る
+                                {activeSessionId && currentLocation
+                                    ? "現在地へ戻る"
+                                    : "最新記録地点へ戻る"}
                             </Text>
                         </Pressable>
                     )}
@@ -845,5 +1007,19 @@ const styles = StyleSheet.create({
         color: "#2f4f66",
         fontSize: 12,
         fontWeight: "bold",
+    },
+    routeFitButton: {
+        marginTop: 8,
+        paddingVertical: 9,
+        borderRadius: 8,
+        backgroundColor: "#e6edf3",
+        alignItems: "center",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+    },
+    routeFitButtonText: {
+        color: "#2f4f66",
+        fontWeight: "bold",
+        fontSize: 13,
     },
 });

@@ -65,6 +65,12 @@ type UserProfileItem = {
     searchText?: string | null;
 };
 
+type LocationLogListResult = {
+    data?: any[] | null;
+    errors?: unknown;
+    nextToken?: string | null;
+};
+
 export default function LocationLogScreen({ navigation }: Props) {
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
     const [loading, setLoading] = useState(false);
@@ -85,14 +91,37 @@ export default function LocationLogScreen({ navigation }: Props) {
         try {
             setLoading(true);
 
-            const result = await client.models.LocationLog.list({});
+            const allData: any[] = [];
+            let nextToken: string | null = null;
 
-            if (result.errors) {
-                console.error("LocationLog list errors:", result.errors);
-                return;
-            }
+            const locationLogModel = client.models.LocationLog as any;
 
-            const items = (result.data ?? [])
+            do {
+                const listParams: {
+                    limit: number;
+                    nextToken?: string;
+                } = {
+                    limit: 1000,
+                };
+
+                if (nextToken) {
+                    listParams.nextToken = nextToken;
+                }
+
+                const result = (await locationLogModel.list(
+                    listParams,
+                )) as LocationLogListResult;
+
+                if (result.errors) {
+                    console.error("LocationLog list errors:", result.errors);
+                    return;
+                }
+
+                allData.push(...(result.data ?? []));
+                nextToken = result.nextToken ?? null;
+            } while (nextToken);
+
+            const items = allData
                 .map((item) => ({
                     id: item.id,
                     latitude: Number(item.latitude),

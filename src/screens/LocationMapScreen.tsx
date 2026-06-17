@@ -44,6 +44,12 @@ type RecordingSessionListResult = {
     errors?: unknown;
 };
 
+type LocationLogListResult = {
+    data?: any[] | null;
+    errors?: unknown;
+    nextToken?: string | null;
+};
+
 const DEFAULT_LATITUDE_DELTA = 0.01;
 const DEFAULT_LONGITUDE_DELTA = 0.01;
 
@@ -91,32 +97,78 @@ export default function LocationMapScreen({ route }: Props) {
 
     const currentLocationOpacity = useRef(new Animated.Value(1)).current;
 
-    const loadLogs = useCallback(async (showLoading: boolean = true) => {
-        try {
-            if (showLoading) {
-                setLoading(true);
+    const loadLogs = useCallback(
+        async (showLoading: boolean = true) => {
+            try {
+                if (showLoading) {
+                    setLoading(true);
+                }
+
+                const allData: any[] = [];
+                let nextToken: string | null = null;
+
+                const locationLogModel = client.models.LocationLog as any;
+
+                do {
+                    const listParams: {
+                        limit: number;
+                        nextToken?: string;
+                        filter?: {
+                            recordingSessionId: {
+                                eq: string;
+                            };
+                        };
+                    } = {
+                        limit: 1000,
+                    };
+
+                    if (nextToken) {
+                        listParams.nextToken = nextToken;
+                    }
+
+                    if (activeSessionId) {
+                        listParams.filter = {
+                            recordingSessionId: {
+                                eq: activeSessionId,
+                            },
+                        };
+                    }
+
+                    const result = (await locationLogModel.list(
+                        listParams,
+                    )) as LocationLogListResult;
+
+                    if (result.errors) {
+                        console.error(
+                            "LocationLog list errors:",
+                            result.errors,
+                        );
+                        return;
+                    }
+
+                    allData.push(...(result.data ?? []));
+                    nextToken = result.nextToken ?? null;
+                } while (nextToken);
+
+                console.log("Map LocationLog loaded:", {
+                    activeSessionId,
+                    count: allData.length,
+                });
+
+                const items = normalizeLocationLogs(allData);
+                setLogs(items);
+            } catch (error) {
+                console.error("Map loadLogs error:", error);
+            } finally {
+                if (showLoading) {
+                    setLoading(false);
+                }
+
+                setHasLoaded(true);
             }
-
-            const result = await client.models.LocationLog.list({});
-            //console.log("LocationLog sample:", result.data?.[0]);
-
-            if (result.errors) {
-                console.error("LocationLog list errors:", result.errors);
-                return;
-            }
-
-            const items = normalizeLocationLogs(result.data ?? []);
-            setLogs(items);
-        } catch (error) {
-            console.error("Map loadLogs error:", error);
-        } finally {
-            if (showLoading) {
-                setLoading(false);
-            }
-
-            setHasLoaded(true);
-        }
-    }, []);
+        },
+        [activeSessionId],
+    );
 
     const loadRecordingSessionSummary = useCallback(
         async (recordingSessionId: string) => {
@@ -625,6 +677,15 @@ export default function LocationMapScreen({ route }: Props) {
             ? routeLogs[routeLogs.length - 1]
             : null;
 
+    const recordPointCount =
+        recordingSessionSummary?.pointCount ?? visibleLogs.length;
+
+    const displayedPointCount = showPoints
+        ? routeLogs.filter(
+              (log) => log.id !== startLog?.id && log.id !== endLog?.id,
+          ).length
+        : 0;
+
     const sessionStartAt =
         activeSessionId && routeLogs.length > 0
             ? routeLogs[0].recordedAt
@@ -838,6 +899,15 @@ export default function LocationMapScreen({ route }: Props) {
                 ) : (
                     <Text style={styles.infoText}>距離: 集計情報なし</Text>
                 )}
+                <View style={styles.pointCountRow}>
+                    <Text style={[styles.infoText, styles.pointCountText]}>
+                        記録ポイント: {recordPointCount}件
+                    </Text>
+
+                    <Text style={[styles.infoText, styles.pointCountText]}>
+                        表示ポイント: {displayedPointCount}件
+                    </Text>
+                </View>
                 {/*
                 <Text style={styles.infoText}>
                     緯度: {displayLocation.latitude.toFixed(6)}
@@ -1248,5 +1318,15 @@ const styles = StyleSheet.create({
         color: "#2f4f66",
         fontWeight: "bold",
         fontSize: 13,
+    },
+    pointCountRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+        marginTop: 2,
+        marginBottom: 2,
+    },
+    pointCountText: {
+        marginBottom: 0,
     },
 });

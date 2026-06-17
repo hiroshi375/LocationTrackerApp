@@ -27,11 +27,36 @@ type LocationLogItem = {
     recordingSessionName?: string | null;
 };
 
+type RecordingSessionItem = {
+    id: string;
+    recordingSessionId: string;
+    userId: string;
+    recordingSessionName?: string | null;
+    startedAt: string;
+    endedAt: string;
+    distanceMeters: number;
+    pointCount: number;
+    sharedOwners?: string[] | null;
+};
+
+type RecordingSessionListResult = {
+    data?: any[] | null;
+    errors?: unknown;
+};
+
+const DEFAULT_LATITUDE_DELTA = 0.01;
+const DEFAULT_LONGITUDE_DELTA = 0.01;
+
+// 現在地を画面中央付近に見せるため、カメラ中心を少し南へずらす
+const CAMERA_CENTER_LATITUDE_OFFSET = 0.0025;
+
 export default function LocationMapScreen({ route }: Props) {
     const mapRef = useRef<MapView | null>(null);
     const hasFittedInitialRouteRef = useRef(false);
 
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
+    const [recordingSessionSummary, setRecordingSessionSummary] =
+        useState<RecordingSessionItem | null>(null);
     const [loading, setLoading] = useState(true);
     const [hasLoaded, setHasLoaded] = useState(false);
     const [showPoints, setShowPoints] = useState(false);
@@ -92,6 +117,82 @@ export default function LocationMapScreen({ route }: Props) {
             setHasLoaded(true);
         }
     }, []);
+
+    const loadRecordingSessionSummary = useCallback(
+        async (recordingSessionId: string) => {
+            try {
+                console.log(
+                    "Map loadRecordingSessionSummary recordingSessionId:",
+                    recordingSessionId,
+                );
+
+                const recordingSessionModel = client.models
+                    .RecordingSession as any;
+
+                const result = (await recordingSessionModel.list({
+                    filter: {
+                        recordingSessionId: {
+                            eq: recordingSessionId,
+                        },
+                    },
+                    limit: 1000,
+                })) as RecordingSessionListResult;
+
+                if (result.errors) {
+                    console.error(
+                        "RecordingSession summary load errors:",
+                        result.errors,
+                    );
+                    return;
+                }
+
+                const items = result.data ?? [];
+
+                console.log("Map RecordingSession result count:", items.length);
+
+                console.log(
+                    "Map RecordingSession candidates:",
+                    items.map((item: any) => ({
+                        id: item.id,
+                        recordingSessionId: item.recordingSessionId,
+                        recordingSessionName: item.recordingSessionName,
+                        startedAt: item.startedAt,
+                        endedAt: item.endedAt,
+                        distanceMeters: item.distanceMeters,
+                        pointCount: item.pointCount,
+                    })),
+                );
+
+                const item = items[0];
+
+                if (!item) {
+                    console.log(
+                        "Map RecordingSession not found:",
+                        recordingSessionId,
+                    );
+                    setRecordingSessionSummary(null);
+                    return;
+                }
+
+                setRecordingSessionSummary({
+                    id: item.id,
+                    recordingSessionId: item.recordingSessionId,
+                    userId: item.userId,
+                    recordingSessionName: item.recordingSessionName ?? null,
+                    startedAt: item.startedAt,
+                    endedAt: item.endedAt,
+                    distanceMeters: Number(item.distanceMeters ?? 0),
+                    pointCount: Number(item.pointCount ?? 0),
+                    sharedOwners: Array.isArray(item.sharedOwners)
+                        ? item.sharedOwners
+                        : [],
+                });
+            } catch (error) {
+                console.error("RecordingSession summary load error:", error);
+            }
+        },
+        [],
+    );
 
     useEffect(() => {
         if (!isLiveRecordingMap) {
@@ -218,10 +319,7 @@ export default function LocationMapScreen({ route }: Props) {
 
         mapRef.current?.animateCamera(
             {
-                center: {
-                    latitude: currentLocation.latitude,
-                    longitude: currentLocation.longitude,
-                },
+                center: getAdjustedMapCenter(currentLocation),
             },
             {
                 duration: 500,
@@ -328,6 +426,17 @@ export default function LocationMapScreen({ route }: Props) {
         logs,
     ]);
 
+    useEffect(() => {
+        console.log("Map activeSessionId changed:", activeSessionId);
+
+        if (!activeSessionId) {
+            setRecordingSessionSummary(null);
+            return;
+        }
+
+        void loadRecordingSessionSummary(activeSessionId);
+    }, [activeSessionId, loadRecordingSessionSummary]);
+
     useFocusEffect(
         useCallback(() => {
             void loadLogs(true);
@@ -396,12 +505,14 @@ export default function LocationMapScreen({ route }: Props) {
             return;
         }
 
+        const adjustedCenter = getAdjustedMapCenter(location);
+
         mapRef.current?.animateToRegion?.(
             {
-                latitude: location.latitude,
-                longitude: location.longitude,
-                latitudeDelta: 0.01,
-                longitudeDelta: 0.01,
+                latitude: adjustedCenter.latitude,
+                longitude: adjustedCenter.longitude,
+                latitudeDelta: DEFAULT_LATITUDE_DELTA,
+                longitudeDelta: DEFAULT_LONGITUDE_DELTA,
             },
             500,
         );
@@ -411,10 +522,7 @@ export default function LocationMapScreen({ route }: Props) {
         if (activeSessionId && currentLocation) {
             mapRef.current?.animateCamera(
                 {
-                    center: {
-                        latitude: currentLocation.latitude,
-                        longitude: currentLocation.longitude,
-                    },
+                    center: getAdjustedMapCenter(currentLocation),
                 },
                 {
                     duration: 500,
@@ -496,6 +604,19 @@ export default function LocationMapScreen({ route }: Props) {
             ? calculateRouteDistanceMeters(routeLogs)
             : null;
 
+    console.log("Map distance debug:", {
+        activeSessionId,
+        dbDistanceMeters: recordingSessionSummary?.distanceMeters ?? null,
+        dbDistanceKm:
+            recordingSessionSummary?.distanceMeters !== undefined
+                ? recordingSessionSummary.distanceMeters / 1000
+                : null,
+        calculatedRouteDistanceMeters: routeDistanceMeters,
+        calculatedRouteDistanceKm:
+            routeDistanceMeters !== null ? routeDistanceMeters / 1000 : null,
+        routeLogCount: routeLogs.length,
+    });
+
     const startLog =
         activeSessionId && routeLogs.length > 0 ? routeLogs[0] : null;
 
@@ -521,6 +642,8 @@ export default function LocationMapScreen({ route }: Props) {
         Boolean(sessionStartAt) &&
         Boolean(sessionEndAt);
 
+    const adjustedInitialCenter = getAdjustedMapCenter(displayLocation);
+
     return (
         <View style={styles.container}>
             <MapView
@@ -530,10 +653,10 @@ export default function LocationMapScreen({ route }: Props) {
                 mapType="standard"
                 onMapReady={() => setMapReady(true)}
                 initialRegion={{
-                    latitude: displayLocation.latitude,
-                    longitude: displayLocation.longitude,
-                    latitudeDelta: 0.01,
-                    longitudeDelta: 0.01,
+                    latitude: adjustedInitialCenter.latitude,
+                    longitude: adjustedInitialCenter.longitude,
+                    latitudeDelta: DEFAULT_LATITUDE_DELTA,
+                    longitudeDelta: DEFAULT_LONGITUDE_DELTA,
                 }}
             >
                 {routeCoordinates.length >= 2 && (
@@ -691,16 +814,29 @@ export default function LocationMapScreen({ route }: Props) {
                     {isSelectedMode ? "選択した位置" : "最新位置"}
                 </Text>
 
-                <Text style={styles.infoText}>
-                    {shouldShowSessionPeriod ? "期間: " : "日時: "}
-                    {shouldShowSessionPeriod && sessionStartAt && sessionEndAt
-                        ? `${formatDateTime(sessionStartAt)} - ${formatDateTime(sessionEndAt)}`
-                        : formatDateTime(displayLocation.recordedAt)}
-                </Text>
-                {routeDistanceMeters !== null && (
+                {recordingSessionSummary ? (
                     <Text style={styles.infoText}>
-                        距離: {formatDistance(routeDistanceMeters)}
+                        期間:{" "}
+                        {formatDateTime(recordingSessionSummary.startedAt)} -{" "}
+                        {formatDateTime(recordingSessionSummary.endedAt)}
                     </Text>
+                ) : (
+                    <Text style={styles.infoText}>
+                        {shouldShowSessionPeriod ? "期間: " : "日時: "}
+                        {shouldShowSessionPeriod &&
+                        sessionStartAt &&
+                        sessionEndAt
+                            ? `${formatDateTime(sessionStartAt)} - ${formatDateTime(sessionEndAt)}`
+                            : formatDateTime(displayLocation.recordedAt)}
+                    </Text>
+                )}
+                {recordingSessionSummary ? (
+                    <Text style={styles.infoText}>
+                        距離:{" "}
+                        {formatDistance(recordingSessionSummary.distanceMeters)}
+                    </Text>
+                ) : (
+                    <Text style={styles.infoText}>距離: 集計情報なし</Text>
                 )}
                 {/*
                 <Text style={styles.infoText}>
@@ -776,6 +912,16 @@ export default function LocationMapScreen({ route }: Props) {
             </View>
         </View>
     );
+}
+
+function getAdjustedMapCenter(location: {
+    latitude: number;
+    longitude: number;
+}) {
+    return {
+        latitude: location.latitude - CAMERA_CENTER_LATITUDE_OFFSET,
+        longitude: location.longitude,
+    };
 }
 
 function formatDateTime(value: string) {

@@ -23,6 +23,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "LocationLog">;
 
 type LocationLogItem = {
     id: string;
+    userId: string;
     latitude: number;
     longitude: number;
     accuracy?: number | null;
@@ -41,6 +42,7 @@ type LocationLogSingleDisplayItem = LocationLogItem & {
 type LocationLogSessionDisplayItem = {
     kind: "session";
     id: string;
+    userId: string;
     recordingSessionId: string;
     recordingSessionName: string;
     logs: LocationLogItem[];
@@ -48,6 +50,7 @@ type LocationLogSessionDisplayItem = {
     endLog: LocationLogItem;
     startAt: string;
     endAt: string;
+    distanceMeters: number;
     pointCount: number;
     sortAt: string;
 };
@@ -76,6 +79,8 @@ export default function LocationLogScreen({ navigation }: Props) {
     const [loading, setLoading] = useState(false);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [searchText, setSearchText] = useState("");
+
+    const [userProfiles, setUserProfiles] = useState<UserProfileItem[]>([]);
 
     const [shareModalVisible, setShareModalVisible] = useState(false);
     const [shareSearchText, setShareSearchText] = useState("");
@@ -124,6 +129,7 @@ export default function LocationLogScreen({ navigation }: Props) {
             const items = allData
                 .map((item) => ({
                     id: item.id,
+                    userId: item.userId ?? "",
                     latitude: Number(item.latitude),
                     longitude: Number(item.longitude),
                     accuracy: item.accuracy,
@@ -158,9 +164,63 @@ export default function LocationLogScreen({ navigation }: Props) {
         }
     }, []);
 
+    const loadUserProfiles = useCallback(async () => {
+        try {
+            const userProfileModel = client.models.UserProfile as any;
+
+            const result = await userProfileModel.list({
+                limit: 1000,
+            });
+
+            if (result.errors) {
+                console.error("UserProfile list errors:", result.errors);
+                return;
+            }
+
+            const profiles: UserProfileItem[] = (result.data ?? []).map(
+                (profile: any) => ({
+                    id: profile.id,
+                    userId: profile.userId,
+                    email: profile.email ?? null,
+                    displayName: profile.displayName ?? null,
+                    ownerValue: profile.ownerValue ?? null,
+                    searchText: profile.searchText ?? null,
+                }),
+            );
+
+            setUserProfiles(profiles);
+        } catch (error) {
+            console.error("UserProfile load error:", error);
+        }
+    }, []);
+
     const clearSearchText = () => {
         setSearchText("");
     };
+
+    const userNameMap = useMemo(() => {
+        const map = new Map<string, string>();
+
+        userProfiles.forEach((profile) => {
+            const name =
+                profile.displayName?.trim() ||
+                profile.email?.trim() ||
+                "ユーザー";
+
+            if (profile.userId) {
+                map.set(profile.userId, name);
+            }
+        });
+
+        return map;
+    }, [userProfiles]);
+
+    const getUserDisplayName = useCallback(
+        (userId: string) => {
+            return userNameMap.get(userId) ?? "ユーザー";
+        },
+        [userNameMap],
+    );
 
     const displayItems = useMemo(() => {
         return buildDisplayItems(logs);
@@ -213,6 +273,7 @@ export default function LocationLogScreen({ navigation }: Props) {
     const handleOpenSessionMap = (item: LocationLogSessionDisplayItem) => {
         const selectedLocation: LocationLogItem = {
             id: item.endLog.id,
+            userId: item.endLog.userId,
             latitude: item.endLog.latitude,
             longitude: item.endLog.longitude,
             accuracy: item.endLog.accuracy ?? null,
@@ -479,8 +540,9 @@ export default function LocationLogScreen({ navigation }: Props) {
 
     useFocusEffect(
         useCallback(() => {
-            loadLogs();
-        }, [loadLogs]),
+            void loadLogs();
+            void loadUserProfiles();
+        }, [loadLogs, loadUserProfiles]),
     );
 
     return (
@@ -543,11 +605,20 @@ export default function LocationLogScreen({ navigation }: Props) {
                                         </View>
 
                                         <Text style={styles.memoText}>
-                                            開始: {formatDateTime(item.startAt)}
+                                            ユーザー:{" "}
+                                            {getUserDisplayName(item.userId)}
                                         </Text>
 
                                         <Text style={styles.memoText}>
-                                            終了: {formatDateTime(item.endAt)}
+                                            期間: {formatDateTime(item.startAt)}{" "}
+                                            - {formatDateTime(item.endAt)}
+                                        </Text>
+
+                                        <Text style={styles.memoText}>
+                                            距離:{" "}
+                                            {formatDistance(
+                                                item.distanceMeters,
+                                            )}
                                         </Text>
 
                                         <Text style={styles.memoText}>
@@ -626,6 +697,10 @@ export default function LocationLogScreen({ navigation }: Props) {
                                         </Text>
                                     </View>
 
+                                    <Text style={styles.memoText}>
+                                        ユーザー:{" "}
+                                        {getUserDisplayName(item.userId)}
+                                    </Text>
                                     {item.memo ? (
                                         <Text style={styles.memoText}>
                                             メモ: {item.memo}
@@ -787,6 +862,81 @@ function formatDateTime(value: string) {
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
 }
 
+function calculateDistanceMeters(
+    lat1: number,
+    lon1: number,
+    lat2: number,
+    lon2: number,
+) {
+    const earthRadiusMeters = 6371000;
+
+    const dLat = toRadians(lat2 - lat1);
+    const dLon = toRadians(lon2 - lon1);
+
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRadians(lat1)) *
+            Math.cos(toRadians(lat2)) *
+            Math.sin(dLon / 2) *
+            Math.sin(dLon / 2);
+
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return earthRadiusMeters * c;
+}
+
+function calculateRouteDistanceMeters(logs: LocationLogItem[]) {
+    if (logs.length < 2) {
+        return 0;
+    }
+
+    return logs.reduce((total, currentLog, index) => {
+        if (index === 0) {
+            return total;
+        }
+
+        const previousLog = logs[index - 1];
+
+        if (
+            !Number.isFinite(previousLog.latitude) ||
+            !Number.isFinite(previousLog.longitude) ||
+            !Number.isFinite(currentLog.latitude) ||
+            !Number.isFinite(currentLog.longitude)
+        ) {
+            return total;
+        }
+
+        const distance = calculateDistanceMeters(
+            previousLog.latitude,
+            previousLog.longitude,
+            currentLog.latitude,
+            currentLog.longitude,
+        );
+
+        if (distance < 3) {
+            return total;
+        }
+
+        return total + distance;
+    }, 0);
+}
+
+function toRadians(value: number) {
+    return (value * Math.PI) / 180;
+}
+
+function formatDistance(value: number) {
+    if (!Number.isFinite(value)) {
+        return "-";
+    }
+
+    if (value >= 1000) {
+        return `${(value / 1000).toFixed(2)}km`;
+    }
+
+    return `${Math.round(value)}m`;
+}
+
 function buildDisplayItems(logs: LocationLogItem[]): LocationLogDisplayItem[] {
     const sessionMap = new Map<string, LocationLogItem[]>();
     const displayItems: LocationLogDisplayItem[] = [];
@@ -826,9 +976,12 @@ function buildDisplayItems(logs: LocationLogItem[]): LocationLogDisplayItem[] {
                 .find((log) => log.recordingSessionName?.trim())
                 ?.recordingSessionName?.trim() ?? "自動記録セッション";
 
+        const distanceMeters = calculateRouteDistanceMeters(sortedLogs);
+
         displayItems.push({
             kind: "session",
             id: `session-${recordingSessionId}`,
+            userId: startLog.userId,
             recordingSessionId,
             recordingSessionName,
             logs: sortedLogs,
@@ -836,6 +989,7 @@ function buildDisplayItems(logs: LocationLogItem[]): LocationLogDisplayItem[] {
             endLog,
             startAt: startLog.recordedAt,
             endAt: endLog.recordedAt,
+            distanceMeters,
             pointCount: sortedLogs.length,
             sortAt: endLog.recordedAt,
         });

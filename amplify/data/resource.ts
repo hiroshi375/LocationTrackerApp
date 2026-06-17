@@ -23,6 +23,25 @@ const schema = a.schema({
             allow.owner(),
             allow.ownersDefinedIn("sharedOwners").to(["read"]),
         ]),
+    RecordingSession: a
+        .model({
+            recordingSessionId: a.string().required(),
+            userId: a.string().required(),
+
+            recordingSessionName: a.string(),
+
+            startedAt: a.datetime().required(),
+            endedAt: a.datetime().required(),
+
+            distanceMeters: a.float().required(),
+            pointCount: a.integer().required(),
+
+            sharedOwners: a.string().array(),
+        })
+        .authorization((allow) => [
+            allow.owner(),
+            allow.ownersDefinedIn("sharedOwners").to(["read"]),
+        ]),
     UserProfile: a
         .model({
             userId: a.string().required(),

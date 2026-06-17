@@ -21,6 +21,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRecorder";
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
+import { upsertRecordingSessionSummary } from "../services/recordingSessionService";
 import {
     ensureUserProfile,
     getCurrentUserProfile,
@@ -53,6 +54,12 @@ type UserProfileItem = {
 type UserProfileListResult = {
     data?: any[] | null;
     errors?: unknown;
+};
+
+type LocationLogListResult = {
+    data?: any[] | null;
+    errors?: unknown;
+    nextToken?: string | null;
 };
 
 // 現在地の記録と保存を行うホーム画面コンポーネント
@@ -376,6 +383,56 @@ export default function LocationHomeScreen({ navigation }: Props) {
         }
     };
 
+    const listLocationLogsBySessionId = useCallback(
+        async (recordingSessionId: string) => {
+            const allData: any[] = [];
+            let nextToken: string | null = null;
+
+            const locationLogModel = client.models.LocationLog as any;
+
+            do {
+                const listParams: {
+                    filter: {
+                        recordingSessionId: {
+                            eq: string;
+                        };
+                    };
+                    limit: number;
+                    nextToken?: string;
+                } = {
+                    filter: {
+                        recordingSessionId: {
+                            eq: recordingSessionId,
+                        },
+                    },
+                    limit: 1000,
+                };
+
+                if (nextToken) {
+                    listParams.nextToken = nextToken;
+                }
+
+                const result = (await locationLogModel.list(
+                    listParams,
+                )) as LocationLogListResult;
+
+                if (result.errors) {
+                    console.error(
+                        "LocationLog session list errors:",
+                        result.errors,
+                    );
+                    throw new Error("LocationLog session list failed");
+                }
+
+                allData.push(...(result.data ?? []));
+                nextToken = result.nextToken ?? null;
+            } while (nextToken);
+
+            return allData;
+        },
+        [],
+    );
+
     // セッションIDを生成する関数
     const saveSessionName = async (name: string) => {
         if (!pendingSessionId) {
@@ -390,32 +447,14 @@ export default function LocationHomeScreen({ navigation }: Props) {
         try {
             setSavingSessionName(true);
 
-            const result = await client.models.LocationLog.list({
-                filter: {
-                    recordingSessionId: {
-                        eq: pendingSessionId,
-                    },
-                },
-                limit: 1000,
-            });
+            const sessionLogs =
+                await listLocationLogsBySessionId(pendingSessionId);
 
-            if (result.errors) {
-                console.error(
-                    "LocationLog session list errors:",
-                    result.errors,
-                );
-                Alert.alert(
-                    "保存エラー",
-                    "セッション名を保存できませんでした。",
-                );
-                return;
-            }
-
-            const sessionLogs = result.data ?? [];
+            const locationLogModel = client.models.LocationLog as any;
 
             const updateResults = await Promise.all(
                 sessionLogs.map((log) =>
-                    client.models.LocationLog.update({
+                    locationLogModel.update({
                         id: log.id,
                         recordingSessionName: sessionName,
                     }),
@@ -437,6 +476,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 );
                 return;
             }
+
+            await upsertRecordingSessionSummary(pendingSessionId, sessionName);
 
             setSessionNameModalVisible(false);
             setSessionNameInput("");
@@ -465,6 +506,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
         if (!finishedSessionId) {
             return;
+        }
+
+        try {
+            await upsertRecordingSessionSummary(finishedSessionId, null);
+        } catch (error) {
+            console.error("RecordingSession summary save error:", error);
         }
 
         setPendingSessionId(finishedSessionId);
@@ -722,15 +769,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                     共有先を解除
                                 </Text>
                             </Pressable>
-                        )}
-
-                        {isRecording && selectedLiveShareUser && (
-                            <Text style={styles.liveShareActiveText}>
-                                現在地を共有中:{" "}
-                                {selectedLiveShareUser.displayName ||
-                                    selectedLiveShareUser.email ||
-                                    "名前未設定ユーザー"}
-                            </Text>
                         )}
                     </View>
                     {isRecording && selectedLiveShareUser && (
@@ -1354,12 +1392,6 @@ const styles = StyleSheet.create({
     liveShareClearButtonText: {
         color: "#2f4f66",
         fontSize: 12,
-        fontWeight: "bold",
-    },
-    liveShareActiveText: {
-        marginTop: 8,
-        fontSize: 12,
-        color: "#d9534f",
         fontWeight: "bold",
     },
     liveShareSearchInput: {

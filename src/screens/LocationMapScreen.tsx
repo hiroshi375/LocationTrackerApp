@@ -491,6 +491,11 @@ export default function LocationMapScreen({ route }: Props) {
         longitude: log.longitude,
     }));
 
+    const routeDistanceMeters =
+        activeSessionId && routeLogs.length >= 2
+            ? calculateRouteDistanceMeters(routeLogs)
+            : null;
+
     const startLog =
         activeSessionId && routeLogs.length > 0 ? routeLogs[0] : null;
 
@@ -692,6 +697,11 @@ export default function LocationMapScreen({ route }: Props) {
                         ? `${formatDateTime(sessionStartAt)} - ${formatDateTime(sessionEndAt)}`
                         : formatDateTime(displayLocation.recordedAt)}
                 </Text>
+                {routeDistanceMeters !== null && (
+                    <Text style={styles.infoText}>
+                        距離: {formatDistance(routeDistanceMeters)}
+                    </Text>
+                )}
                 {/*
                 <Text style={styles.infoText}>
                     緯度: {displayLocation.latitude.toFixed(6)}
@@ -778,6 +788,77 @@ function formatDateTime(value: string) {
     const mi = String(date.getMinutes()).padStart(2, "0");
 
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+function calculateRouteDistanceMeters(logs: LocationLogItem[]) {
+    if (logs.length < 2) {
+        return 0;
+    }
+
+    return logs.reduce((total, currentLog, index) => {
+        if (index === 0) {
+            return total;
+        }
+
+        const previousLog = logs[index - 1];
+
+        if (
+            !Number.isFinite(previousLog.latitude) ||
+            !Number.isFinite(previousLog.longitude) ||
+            !Number.isFinite(currentLog.latitude) ||
+            !Number.isFinite(currentLog.longitude)
+        ) {
+            return total;
+        }
+
+        const distance = calculateDistanceMeters(
+            previousLog.latitude,
+            previousLog.longitude,
+            currentLog.latitude,
+            currentLog.longitude,
+        );
+
+        return total + distance;
+    }, 0);
+}
+
+function calculateDistanceMeters(
+    lat1: number,
+    lon1: number,
+    lat2: number,
+    lon2: number,
+) {
+    const earthRadiusMeters = 6371000;
+
+    const dLat = toRadians(lat2 - lat1);
+    const dLon = toRadians(lon2 - lon1);
+
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRadians(lat1)) *
+            Math.cos(toRadians(lat2)) *
+            Math.sin(dLon / 2) *
+            Math.sin(dLon / 2);
+
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return earthRadiusMeters * c;
+}
+
+function toRadians(value: number) {
+    return (value * Math.PI) / 180;
+}
+
+function formatDistance(value: number) {
+    if (!Number.isFinite(value)) {
+        return "-";
+    }
+
+    if (value >= 1000) {
+        return `${(value / 1000).toFixed(2)}km`;
+    }
+
+    return `${Math.round(value)}m`;
 }
 
 function buildMarkerDescription(log: LocationLogItem) {

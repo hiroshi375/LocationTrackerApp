@@ -74,6 +74,12 @@ type LocationLogListResult = {
     nextToken?: string | null;
 };
 
+type RecordingSessionListResult = {
+    data?: any[] | null;
+    errors?: unknown;
+    nextToken?: string | null;
+};
+
 export default function LocationLogScreen({ navigation }: Props) {
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
     const [loading, setLoading] = useState(false);
@@ -91,6 +97,12 @@ export default function LocationLogScreen({ navigation }: Props) {
         useState<LocationLogSessionDisplayItem | null>(null);
     const [shareSearching, setShareSearching] = useState(false);
     const [sharing, setSharing] = useState(false);
+
+    const [editNameModalVisible, setEditNameModalVisible] = useState(false);
+    const [editingSession, setEditingSession] =
+        useState<LocationLogSessionDisplayItem | null>(null);
+    const [editSessionNameInput, setEditSessionNameInput] = useState("");
+    const [savingEditSessionName, setSavingEditSessionName] = useState(false);
 
     const loadLogs = useCallback(async () => {
         try {
@@ -334,6 +346,79 @@ export default function LocationLogScreen({ navigation }: Props) {
         }
     };
 
+    const deleteRecordingSessionSummaries = async (
+        recordingSessionId: string,
+    ) => {
+        try {
+            const recordingSessionModel = client.models.RecordingSession as any;
+
+            const summaries: any[] = [];
+            let nextToken: string | null = null;
+
+            do {
+                const listParams: {
+                    filter: {
+                        recordingSessionId: {
+                            eq: string;
+                        };
+                    };
+                    limit: number;
+                    nextToken?: string;
+                } = {
+                    filter: {
+                        recordingSessionId: {
+                            eq: recordingSessionId,
+                        },
+                    },
+                    limit: 1000,
+                };
+
+                if (nextToken) {
+                    listParams.nextToken = nextToken;
+                }
+
+                const result = (await recordingSessionModel.list(
+                    listParams,
+                )) as RecordingSessionListResult;
+
+                if (result.errors) {
+                    console.error(
+                        "RecordingSession list errors:",
+                        result.errors,
+                    );
+                    return false;
+                }
+
+                summaries.push(...(result.data ?? []));
+                nextToken = result.nextToken ?? null;
+            } while (nextToken);
+
+            if (summaries.length === 0) {
+                return true;
+            }
+
+            const deleteResults = await Promise.all(
+                summaries.map((summary) =>
+                    recordingSessionModel.delete({
+                        id: summary.id,
+                    }),
+                ),
+            );
+
+            const hasErrors = deleteResults.some((result) => result.errors);
+
+            if (hasErrors) {
+                console.error("RecordingSession delete errors:", deleteResults);
+                return false;
+            }
+
+            return true;
+        } catch (error) {
+            console.error("RecordingSession delete error:", error);
+            return false;
+        }
+    };
+
     const handleDeleteSession = (item: LocationLogSessionDisplayItem) => {
         Alert.alert(
             "自動記録セッションを削除",
@@ -379,6 +464,16 @@ export default function LocationLogScreen({ navigation }: Props) {
                 return;
             }
 
+            const recordingSessionDeleted =
+                await deleteRecordingSessionSummaries(item.recordingSessionId);
+
+            if (!recordingSessionDeleted) {
+                Alert.alert(
+                    "一部削除エラー",
+                    "位置履歴は削除しましたが、セッション集計情報の削除に失敗しました。",
+                );
+            }
+
             setLogs((currentLogs) =>
                 currentLogs.filter(
                     (log) => log.recordingSessionId !== item.recordingSessionId,
@@ -415,6 +510,22 @@ export default function LocationLogScreen({ navigation }: Props) {
         setShareSearchText("");
         setShareUsers([]);
         setSelectedShareUser(null);
+    };
+
+    const openEditNameModal = (item: LocationLogSessionDisplayItem) => {
+        setEditingSession(item);
+        setEditSessionNameInput(item.recordingSessionName);
+        setEditNameModalVisible(true);
+    };
+
+    const closeEditNameModal = () => {
+        if (savingEditSessionName) {
+            return;
+        }
+
+        setEditNameModalVisible(false);
+        setEditingSession(null);
+        setEditSessionNameInput("");
     };
 
     const loadShareUsers = useCallback(async () => {
@@ -538,6 +649,115 @@ export default function LocationLogScreen({ navigation }: Props) {
         }
     };
 
+    const saveEditedSessionName = async () => {
+        if (!editingSession) {
+            return;
+        }
+
+        const trimmedName = editSessionNameInput.trim();
+        const nextSessionName = trimmedName || "自動記録セッション";
+
+        try {
+            setSavingEditSessionName(true);
+
+            const locationLogModel = client.models.LocationLog as any;
+            const recordingSessionModel = client.models.RecordingSession as any;
+
+            const locationLogUpdateResults = await Promise.all(
+                editingSession.logs.map((log) =>
+                    locationLogModel.update({
+                        id: log.id,
+                        recordingSessionName: nextSessionName,
+                    }),
+                ),
+            );
+
+            const hasLocationLogErrors = locationLogUpdateResults.some(
+                (result) => result.errors,
+            );
+
+            if (hasLocationLogErrors) {
+                console.error(
+                    "LocationLog session name update errors:",
+                    locationLogUpdateResults,
+                );
+                Alert.alert(
+                    "保存エラー",
+                    "LocationLog のセッション名を更新できませんでした。",
+                );
+                return;
+            }
+
+            const recordingSessionResult = (await recordingSessionModel.list({
+                filter: {
+                    recordingSessionId: {
+                        eq: editingSession.recordingSessionId,
+                    },
+                },
+                limit: 1000,
+            })) as RecordingSessionListResult;
+
+            if (recordingSessionResult.errors) {
+                console.error(
+                    "RecordingSession list errors:",
+                    recordingSessionResult.errors,
+                );
+            } else {
+                const recordingSessions = recordingSessionResult.data ?? [];
+
+                const recordingSessionUpdateResults = await Promise.all(
+                    recordingSessions.map((session: any) =>
+                        recordingSessionModel.update({
+                            id: session.id,
+                            recordingSessionName: nextSessionName,
+                        }),
+                    ),
+                );
+
+                const hasRecordingSessionErrors =
+                    recordingSessionUpdateResults.some(
+                        (result) => result.errors,
+                    );
+
+                if (hasRecordingSessionErrors) {
+                    console.error(
+                        "RecordingSession name update errors:",
+                        recordingSessionUpdateResults,
+                    );
+                    Alert.alert(
+                        "保存エラー",
+                        "RecordingSession のセッション名を更新できませんでした。",
+                    );
+                    return;
+                }
+            }
+
+            setLogs((currentLogs) =>
+                currentLogs.map((log) => {
+                    if (
+                        log.recordingSessionId !==
+                        editingSession.recordingSessionId
+                    ) {
+                        return log;
+                    }
+
+                    return {
+                        ...log,
+                        recordingSessionName: nextSessionName,
+                    };
+                }),
+            );
+
+            Alert.alert("保存完了", "セッション名を更新しました。");
+            closeEditNameModal();
+        } catch (error) {
+            console.error("Edit session name error:", error);
+            Alert.alert("保存エラー", "セッション名の更新に失敗しました。");
+        } finally {
+            setSavingEditSessionName(false);
+        }
+    };
+
     useFocusEffect(
         useCallback(() => {
             void loadLogs();
@@ -603,27 +823,37 @@ export default function LocationLogScreen({ navigation }: Props) {
                                                 {item.recordingSessionName}
                                             </Text>
                                         </View>
-
                                         <Text style={styles.memoText}>
                                             ユーザー:{" "}
                                             {getUserDisplayName(item.userId)}
                                         </Text>
-
                                         <Text style={styles.memoText}>
                                             期間: {formatDateTime(item.startAt)}{" "}
                                             - {formatDateTime(item.endAt)}
                                         </Text>
+                                        <View style={styles.sessionStatsRow}>
+                                            <Text
+                                                style={[
+                                                    styles.memoText,
+                                                    styles.sessionStatsText,
+                                                ]}
+                                            >
+                                                距離:{" "}
+                                                {formatDistance(
+                                                    item.distanceMeters,
+                                                )}
+                                            </Text>
 
-                                        <Text style={styles.memoText}>
-                                            距離:{" "}
-                                            {formatDistance(
-                                                item.distanceMeters,
-                                            )}
-                                        </Text>
-
-                                        <Text style={styles.memoText}>
-                                            記録ポイント: {item.pointCount}件
-                                        </Text>
+                                            <Text
+                                                style={[
+                                                    styles.memoText,
+                                                    styles.sessionStatsText,
+                                                ]}
+                                            >
+                                                記録ポイント: {item.pointCount}
+                                                件
+                                            </Text>
+                                        </View>{" "}
                                     </View>
 
                                     <View style={styles.actionRow}>
@@ -641,6 +871,24 @@ export default function LocationLogScreen({ navigation }: Props) {
                                                 style={styles.detailButtonText}
                                             >
                                                 地図で表示
+                                            </Text>
+                                        </Pressable>
+
+                                        <Pressable
+                                            style={({ pressed }) => [
+                                                styles.detailButton,
+                                                pressed &&
+                                                    styles.detailButtonPressed,
+                                            ]}
+                                            onPress={() =>
+                                                openEditNameModal(item)
+                                            }
+                                            disabled={isDeleting}
+                                        >
+                                            <Text
+                                                style={styles.detailButtonText}
+                                            >
+                                                名前変更
                                             </Text>
                                         </Pressable>
 
@@ -840,6 +1088,67 @@ export default function LocationLogScreen({ navigation }: Props) {
                             >
                                 <Text style={styles.modalPrimaryButtonText}>
                                     {sharing ? "共有中..." : "共有する"}
+                                </Text>
+                            </Pressable>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            <Modal
+                visible={editNameModalVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={closeEditNameModal}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>
+                            セッション名を編集
+                        </Text>
+
+                        <Text style={styles.modalDescription}>
+                            この自動記録セッションの名前を変更します。
+                        </Text>
+
+                        <TextInput
+                            style={styles.sessionNameInput}
+                            value={editSessionNameInput}
+                            onChangeText={setEditSessionNameInput}
+                            placeholder="例：朝のランニング"
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            editable={!savingEditSessionName}
+                        />
+
+                        <View style={styles.modalButtonRow}>
+                            <Pressable
+                                style={[
+                                    styles.modalSecondaryButton,
+                                    savingEditSessionName &&
+                                        styles.deleteButtonDisabled,
+                                ]}
+                                onPress={closeEditNameModal}
+                                disabled={savingEditSessionName}
+                            >
+                                <Text style={styles.modalSecondaryButtonText}>
+                                    キャンセル
+                                </Text>
+                            </Pressable>
+
+                            <Pressable
+                                style={[
+                                    styles.modalPrimaryButton,
+                                    savingEditSessionName &&
+                                        styles.deleteButtonDisabled,
+                                ]}
+                                onPress={saveEditedSessionName}
+                                disabled={savingEditSessionName}
+                            >
+                                <Text style={styles.modalPrimaryButtonText}>
+                                    {savingEditSessionName
+                                        ? "保存中..."
+                                        : "保存"}
                                 </Text>
                             </Pressable>
                         </View>
@@ -1068,6 +1377,16 @@ const styles = StyleSheet.create({
         marginTop: 4,
         color: "#333",
     },
+    sessionStatsRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 12,
+        marginTop: 4,
+    },
+    sessionStatsText: {
+        marginTop: 0,
+    },
     noMemoText: {
         marginTop: 4,
         color: "#999",
@@ -1247,5 +1566,20 @@ const styles = StyleSheet.create({
         color: "#2f4f66",
         fontSize: 14,
         fontWeight: "bold",
+    },
+    modalDescription: {
+        fontSize: 13,
+        color: "#555",
+        marginBottom: 10,
+    },
+    sessionNameInput: {
+        height: 44,
+        borderWidth: 1,
+        borderColor: "#ccc",
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 0,
+        fontSize: 16,
+        backgroundColor: "#fff",
     },
 });

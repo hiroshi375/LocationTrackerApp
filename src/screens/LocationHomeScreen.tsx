@@ -449,7 +449,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     <Text style={styles.userInfoLabel}>ログインユーザー：</Text>
                     <Text style={styles.userInfoName}>{loginUserName}</Text>
                 </View>
-                {/* <Text style={styles.title}>現在地を手動記録</Text> */}
 
                 <View style={styles.buttonSpace}>
                     <AppButton

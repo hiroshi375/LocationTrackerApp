@@ -853,7 +853,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                                                 記録ポイント: {item.pointCount}
                                                 件
                                             </Text>
-                                        </View>{" "}
+                                        </View>
                                     </View>
 
                                     <View style={styles.actionRow}>

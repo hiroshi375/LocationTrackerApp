@@ -451,6 +451,21 @@ export default function LocationHomeScreen({ navigation }: Props) {
         setSessionNameModalVisible(true);
     };
 
+    const canOpenRecordingMap =
+        isRecording && Boolean(activeRecordingSessionId);
+
+    const handleOpenRecordingMap = () => {
+        if (!activeRecordingSessionId) {
+            return;
+        }
+
+        navigation.navigate("LocationMap", {
+            recordingSessionId: activeRecordingSessionId,
+            recordingIntervalMs: recordIntervalMs,
+            recordingDistanceMeters: recordDistanceMeters,
+        });
+    };
+
     useEffect(() => {
         void ensureUserProfile();
     }, []);
@@ -489,24 +504,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
                 <View style={styles.buttonSpace}>
                     <AppButton
-                        title="地図で見る"
-                        onPress={() =>
-                            navigation.navigate("LocationMap", {
-                                recordingSessionId:
-                                    activeRecordingSessionId ?? undefined,
-                                recordingIntervalMs: activeRecordingSessionId
-                                    ? recordIntervalMs
-                                    : undefined,
-                                recordingDistanceMeters:
-                                    activeRecordingSessionId
-                                        ? recordDistanceMeters
-                                        : undefined,
-                            })
-                        }
-                    />
-                </View>
-                <View style={styles.buttonSpace}>
-                    <AppButton
                         title="共有中の現在地を見る"
                         onPress={() => navigation.navigate("LiveLocationMap")}
                     />
@@ -540,7 +537,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             )}
                         </View>
                     </View>
-
                     {recordingStartedAt && (
                         <View style={styles.recordingTimeBox}>
                             <Text style={styles.autoRecordStatus}>
@@ -552,7 +548,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             </Text>
                         </View>
                     )}
-
                     <View style={styles.settingBlock}>
                         <Text style={styles.settingTitle}>記録頻度</Text>
 
@@ -590,7 +585,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             })}
                         </View>
                     </View>
-
                     <View style={styles.settingBlock}>
                         <Text style={styles.settingTitle}>
                             記録する移動距離
@@ -632,7 +626,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             })}
                         </View>
                     </View>
-
                     <View style={styles.settingBlock}>
                         <Text style={styles.settingTitle}>
                             リアルタイム共有先
@@ -679,7 +672,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             </Text>
                         </View>
                     )}
-
                     {!isRecording && liveShareStatusMessage.length > 0 && (
                         <View style={styles.liveShareStatusStoppedBox}>
                             <Text style={styles.liveShareStatusStoppedText}>
@@ -687,6 +679,13 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             </Text>
                         </View>
                     )}
+                    <View style={styles.autoRecordMapButtonSpace}>
+                        <AppButton
+                            title="地図で見る"
+                            onPress={handleOpenRecordingMap}
+                            disabled={!canOpenRecordingMap}
+                        />
+                    </View>
                     {isRecording ? (
                         <Pressable
                             style={({ pressed }) => [
@@ -1353,5 +1352,8 @@ const styles = StyleSheet.create({
         color: "#2f4f66",
         fontSize: 16,
         fontWeight: "bold",
+    },
+    autoRecordMapButtonSpace: {
+        marginTop: 10,
     },
 });

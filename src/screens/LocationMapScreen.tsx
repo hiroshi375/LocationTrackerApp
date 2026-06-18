@@ -878,8 +878,10 @@ export default function LocationMapScreen({ route }: Props) {
                 {recordingSessionSummary ? (
                     <Text style={styles.infoText}>
                         期間:{" "}
-                        {formatDateTime(recordingSessionSummary.startedAt)} -{" "}
-                        {formatDateTime(recordingSessionSummary.endedAt)}
+                        {formatPeriod(
+                            recordingSessionSummary.startedAt,
+                            recordingSessionSummary.endedAt,
+                        )}
                     </Text>
                 ) : (
                     <Text style={styles.infoText}>
@@ -887,7 +889,7 @@ export default function LocationMapScreen({ route }: Props) {
                         {shouldShowSessionPeriod &&
                         sessionStartAt &&
                         sessionEndAt
-                            ? `${formatDateTime(sessionStartAt)} - ${formatDateTime(sessionEndAt)}`
+                            ? formatPeriod(sessionStartAt, sessionEndAt)
                             : formatDateTime(displayLocation.recordedAt)}
                     </Text>
                 )}
@@ -1004,6 +1006,38 @@ function formatDateTime(value: string) {
     const mi = String(date.getMinutes()).padStart(2, "0");
 
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+function formatDate(value: string) {
+    const date = new Date(value);
+
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const dd = String(date.getDate()).padStart(2, "0");
+
+    return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatTime(value: string) {
+    const date = new Date(value);
+
+    const hh = String(date.getHours()).padStart(2, "0");
+    const mi = String(date.getMinutes()).padStart(2, "0");
+
+    return `${hh}:${mi}`;
+}
+
+function formatPeriod(startValue: string, endValue: string) {
+    const startDate = formatDate(startValue);
+    const endDate = formatDate(endValue);
+
+    if (startDate === endDate) {
+        return `${startDate} ${formatTime(startValue)} - ${formatTime(
+            endValue,
+        )}`;
+    }
+
+    return `${formatDateTime(startValue)} - ${formatDateTime(endValue)}`;
 }
 
 function calculateRouteDistanceMeters(logs: LocationLogItem[]) {

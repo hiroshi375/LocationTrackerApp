@@ -25,17 +25,6 @@ import {
 
 type Props = NativeStackScreenProps<RootStackParamList, "Profile">;
 
-type UserProfileItem = {
-    id: string;
-    userId: string;
-    email?: string | null;
-    displayName?: string | null;
-    ownerValue?: string | null;
-    owner?: string | null;
-    searchText?: string | null;
-    iconImagePath?: string | null;
-};
-
 export default function ProfileScreen({ navigation }: Props) {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);

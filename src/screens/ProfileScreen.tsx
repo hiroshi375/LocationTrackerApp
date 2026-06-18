@@ -32,7 +32,6 @@ export default function ProfileScreen({ navigation }: Props) {
     const [profileId, setProfileId] = useState<string | null>(null);
     const [email, setEmail] = useState("");
     const [displayName, setDisplayName] = useState("");
-    const [iconImagePath, setIconImagePath] = useState<string | null>(null);
     const [iconImageUrl, setIconImageUrl] = useState<string | null>(null);
     const [uploadingIcon, setUploadingIcon] = useState(false);
     const [selectedIconUri, setSelectedIconUri] = useState<string | null>(null);
@@ -48,7 +47,6 @@ export default function ProfileScreen({ navigation }: Props) {
             setDisplayName(profile.displayName ?? "");
 
             const nextIconImagePath = profile.iconImagePath ?? null;
-            setIconImagePath(nextIconImagePath);
 
             if (nextIconImagePath) {
                 const urlResult = await getUrl({
@@ -180,7 +178,6 @@ export default function ProfileScreen({ navigation }: Props) {
                 },
             });
 
-            setIconImagePath(nextIconImagePath);
             setIconImageUrl(urlResult.url.toString());
             setSelectedIconUri(null);
 

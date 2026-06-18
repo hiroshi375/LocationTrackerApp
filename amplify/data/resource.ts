@@ -49,6 +49,7 @@ const schema = a.schema({
             displayName: a.string(),
             ownerValue: a.string(),
             searchText: a.string(),
+            iconImagePath: a.string(),
         })
         .authorization((allow) => [
             allow.owner(),

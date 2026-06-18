@@ -40,6 +40,28 @@
         },
         "plugins": [
             [
+                "expo-image-picker",
+                {
+                    "photosPermission": "プロフィールアイコンを選択するために写真へのアクセスを使用します。",
+                    "colors": {
+                        "cropToolbarColor": "#ffffff",
+                        "cropToolbarIconColor": "#2f4f66",
+                        "cropToolbarActionTextColor": "#2f4f66",
+                        "cropBackButtonIconColor": "#2f4f66",
+                        "cropBackgroundColor": "#ffffff"
+                    },
+                    "dark": {
+                        "colors": {
+                            "cropToolbarColor": "#ffffff",
+                            "cropToolbarIconColor": "#2f4f66",
+                            "cropToolbarActionTextColor": "#2f4f66",
+                            "cropBackButtonIconColor": "#2f4f66",
+                            "cropBackgroundColor": "#ffffff"
+                        }
+                    }
+                }
+            ],
+            [
                 "expo-splash-screen",
                 {
                     "image": "./assets/images/splash-icon.png",

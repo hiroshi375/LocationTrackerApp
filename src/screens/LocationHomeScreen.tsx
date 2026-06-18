@@ -5,6 +5,7 @@ import {
     ActivityIndicator,
     Alert,
     Animated,
+    Image,
     KeyboardAvoidingView,
     Modal,
     Platform,
@@ -17,6 +18,7 @@ import {
 } from "react-native";
 
 import { useFocusEffect } from "@react-navigation/native";
+import { getUrl } from "aws-amplify/storage";
 import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRecorder";
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
@@ -57,6 +59,9 @@ type LocationLogListResult = {
 // 現在地の記録と保存を行うホーム画面コンポーネント
 export default function LocationHomeScreen({ navigation }: Props) {
     const [loginUserName, setLoginUserName] = useState("ユーザー");
+    const [loginUserIconUrl, setLoginUserIconUrl] = useState<string | null>(
+        null,
+    );
 
     const RECORD_INTERVAL_OPTIONS = [
         { label: "10秒", value: 10 * 1000 },
@@ -117,9 +122,23 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 "ユーザー";
 
             setLoginUserName(name);
+
+            if (profile?.iconImagePath) {
+                const urlResult = await getUrl({
+                    path: profile.iconImagePath,
+                    options: {
+                        expiresIn: 3600,
+                    },
+                });
+
+                setLoginUserIconUrl(urlResult.url.toString());
+            } else {
+                setLoginUserIconUrl(null);
+            }
         } catch (error) {
             console.error("Load login user name error:", error);
             setLoginUserName("ユーザー");
+            setLoginUserIconUrl(null);
         }
     }, []);
 
@@ -448,8 +467,19 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 <View style={styles.userInfoBox}>
                     <Text style={styles.userInfoLabel}>ログインユーザー：</Text>
                     <Text style={styles.userInfoName}>{loginUserName}</Text>
+                    {loginUserIconUrl ? (
+                        <Image
+                            source={{ uri: loginUserIconUrl }}
+                            style={styles.userIcon}
+                        />
+                    ) : (
+                        <View style={styles.userIconPlaceholder}>
+                            <Text style={styles.userIconPlaceholderText}>
+                                {loginUserName.slice(0, 1)}
+                            </Text>
+                        </View>
+                    )}
                 </View>
-
                 <View style={styles.buttonSpace}>
                     <AppButton
                         title="セッション履歴を見る"
@@ -1303,6 +1333,25 @@ const styles = StyleSheet.create({
     liveShareStatusStoppedText: {
         color: "#2f4f66",
         fontSize: 13,
+        fontWeight: "bold",
+    },
+    userIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: "#e6edf3",
+    },
+    userIconPlaceholder: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: "#dbe7f0",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    userIconPlaceholderText: {
+        color: "#2f4f66",
+        fontSize: 16,
         fontWeight: "bold",
     },
 });

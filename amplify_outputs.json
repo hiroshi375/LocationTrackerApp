@@ -339,6 +339,13 @@
               "isRequired": false,
               "attributes": []
             },
+            "iconImagePath": {
+              "name": "iconImagePath",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
             "createdAt": {
               "name": "createdAt",
               "isArray": false,
@@ -517,6 +524,33 @@
       "enums": {},
       "nonModels": {}
     }
+  },
+  "storage": {
+    "aws_region": "ap-northeast-1",
+    "bucket_name": "amplify-locationtrackerap-locationtrackerstoragebu-wzt0xp9a3oye",
+    "buckets": [
+      {
+        "name": "locationTrackerStorage",
+        "bucket_name": "amplify-locationtrackerap-locationtrackerstoragebu-wzt0xp9a3oye",
+        "aws_region": "ap-northeast-1",
+        "paths": {
+          "profile-icons/${cognito-identity.amazonaws.com:sub}/*": {
+            "entityidentity": [
+              "get",
+              "list",
+              "write",
+              "delete"
+            ]
+          },
+          "profile-icons/*": {
+            "authenticated": [
+              "get",
+              "list"
+            ]
+          }
+        }
+      }
+    ]
   },
   "version": "1.4"
 }

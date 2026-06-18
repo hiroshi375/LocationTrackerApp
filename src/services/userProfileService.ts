@@ -2,7 +2,7 @@ import { fetchUserAttributes, getCurrentUser } from "aws-amplify/auth";
 
 import { client } from "../lib/client";
 
-type UserProfileItem = {
+type UserProfileRecord = {
     id: string;
     userId: string;
     email?: string | null;
@@ -10,6 +10,16 @@ type UserProfileItem = {
     ownerValue?: string | null;
     owner?: string | null;
     searchText?: string | null;
+    iconImagePath?: string | null;
+};
+
+type CurrentUserProfile = {
+    id: string | null;
+    userId: string;
+    email: string;
+    displayName: string;
+    ownerValue: string | null;
+    iconImagePath: string | null;
 };
 
 export async function ensureUserProfile() {
@@ -107,7 +117,7 @@ export async function updateUserProfileDisplayName(displayName: string) {
     }
 }
 
-export async function getCurrentUserProfile() {
+export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
     const user = await getCurrentUser();
     const attributes = await fetchUserAttributes();
 
@@ -122,6 +132,7 @@ export async function getCurrentUserProfile() {
             email: existing.email ?? email,
             displayName: existing.displayName ?? "",
             ownerValue: existing.ownerValue ?? null,
+            iconImagePath: existing.iconImagePath ?? null,
         };
     }
 
@@ -136,6 +147,7 @@ export async function getCurrentUserProfile() {
             email,
             displayName: "",
             ownerValue: null,
+            iconImagePath: null,
         };
     }
 
@@ -145,10 +157,13 @@ export async function getCurrentUserProfile() {
         email: created.email ?? email,
         displayName: created.displayName ?? "",
         ownerValue: created.ownerValue ?? null,
+        iconImagePath: created.iconImagePath ?? null,
     };
 }
 
-async function findExistingUserProfile(userId: string) {
+async function findExistingUserProfile(
+    userId: string,
+): Promise<UserProfileRecord | null> {
     const result = await client.models.UserProfile.list({
         filter: {
             userId: {
@@ -163,12 +178,12 @@ async function findExistingUserProfile(userId: string) {
         throw new Error("プロフィールを取得できませんでした。");
     }
 
-    const profiles = (result.data ?? []) as UserProfileItem[];
+    const profiles = (result.data ?? []) as UserProfileRecord[];
 
     return pickUserProfile(profiles);
 }
 
-function pickUserProfile(profiles: UserProfileItem[]) {
+function pickUserProfile(profiles: UserProfileRecord[]) {
     if (profiles.length === 0) {
         return null;
     }

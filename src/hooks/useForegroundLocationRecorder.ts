@@ -3,6 +3,7 @@ import * as Location from "expo-location";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 
+import * as Battery from "expo-battery";
 import { client } from "../lib/client";
 
 type SavedLocation = {
@@ -202,6 +203,8 @@ export function useForegroundLocationRecorder({
 
                 const recordedAt = new Date().toISOString();
 
+                const batterySnapshot = await getBatterySnapshot();
+
                 const result = await client.models.LocationLog.create({
                     userId: currentUser.userId,
                     latitude,
@@ -210,6 +213,10 @@ export function useForegroundLocationRecorder({
                     recordedAt,
                     memo: "自動記録",
                     recordingSessionId: recordingSessionIdRef.current,
+
+                    batteryLevel: batterySnapshot.batteryLevel ?? undefined,
+                    batteryState: batterySnapshot.batteryState ?? undefined,
+                    lowPowerMode: batterySnapshot.lowPowerMode ?? undefined,
                 });
 
                 if (result.errors) {
@@ -386,4 +393,51 @@ function toRadians(value: number) {
 
 function createRecordingSessionId() {
     return `session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+type BatterySnapshot = {
+    batteryLevel: number | null;
+    batteryState: string | null;
+    lowPowerMode: boolean | null;
+};
+
+async function getBatterySnapshot(): Promise<BatterySnapshot> {
+    try {
+        const [batteryLevel, batteryState, lowPowerMode] = await Promise.all([
+            Battery.getBatteryLevelAsync(),
+            Battery.getBatteryStateAsync(),
+            Battery.isLowPowerModeEnabledAsync(),
+        ]);
+
+        return {
+            batteryLevel:
+                typeof batteryLevel === "number" && batteryLevel >= 0
+                    ? batteryLevel
+                    : null,
+            batteryState: formatBatteryState(batteryState),
+            lowPowerMode,
+        };
+    } catch (error) {
+        console.error("Battery snapshot error:", error);
+
+        return {
+            batteryLevel: null,
+            batteryState: "unknown",
+            lowPowerMode: null,
+        };
+    }
+}
+
+function formatBatteryState(state: Battery.BatteryState) {
+    switch (state) {
+        case Battery.BatteryState.UNPLUGGED:
+            return "unplugged";
+        case Battery.BatteryState.CHARGING:
+            return "charging";
+        case Battery.BatteryState.FULL:
+            return "full";
+        case Battery.BatteryState.UNKNOWN:
+        default:
+            return "unknown";
+    }
 }

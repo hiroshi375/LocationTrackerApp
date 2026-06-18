@@ -109,6 +109,27 @@
               "attributes": [],
               "isArrayNullable": true
             },
+            "batteryLevel": {
+              "name": "batteryLevel",
+              "isArray": false,
+              "type": "Float",
+              "isRequired": false,
+              "attributes": []
+            },
+            "batteryState": {
+              "name": "batteryState",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "lowPowerMode": {
+              "name": "lowPowerMode",
+              "isArray": false,
+              "type": "Boolean",
+              "isRequired": false,
+              "attributes": []
+            },
             "createdAt": {
               "name": "createdAt",
               "isArray": false,

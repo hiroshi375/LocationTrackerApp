@@ -32,6 +32,10 @@ type LocationLogItem = {
     recordingSessionId?: string | null;
     recordingSessionName?: string | null;
     sharedOwners?: string[] | null;
+
+    batteryLevel?: number | null;
+    batteryState?: string | null;
+    lowPowerMode?: boolean | null;
 };
 
 type LocationLogSingleDisplayItem = LocationLogItem & {
@@ -155,6 +159,14 @@ export default function LocationLogScreen({ navigation }: Props) {
                                   typeof owner === "string" && owner.length > 0,
                           )
                         : [],
+
+                    batteryLevel:
+                        item.batteryLevel !== null &&
+                        item.batteryLevel !== undefined
+                            ? Number(item.batteryLevel)
+                            : null,
+                    batteryState: item.batteryState ?? null,
+                    lowPowerMode: item.lowPowerMode ?? null,
                 }))
                 .filter(
                     (item) =>
@@ -294,6 +306,9 @@ export default function LocationLogScreen({ navigation }: Props) {
             recordingSessionId: item.recordingSessionId,
             recordingSessionName: item.recordingSessionName,
             sharedOwners: item.endLog.sharedOwners ?? [],
+            batteryLevel: item.endLog.batteryLevel ?? null,
+            batteryState: item.endLog.batteryState ?? null,
+            lowPowerMode: item.endLog.lowPowerMode ?? null,
         };
 
         navigation.push("LocationMap", {
@@ -611,6 +626,61 @@ export default function LocationLogScreen({ navigation }: Props) {
                 }),
             );
 
+            const recordingSessionModel = client.models.RecordingSession as any;
+
+            const recordingSessionResult = (await recordingSessionModel.list({
+                filter: {
+                    recordingSessionId: {
+                        eq: sharingSession.recordingSessionId,
+                    },
+                },
+                limit: 1000,
+            })) as RecordingSessionListResult;
+
+            if (recordingSessionResult.errors) {
+                console.error(
+                    "RecordingSession share list errors:",
+                    recordingSessionResult.errors,
+                );
+            } else {
+                const recordingSessions = recordingSessionResult.data ?? [];
+
+                const recordingSessionUpdateResults = await Promise.all(
+                    recordingSessions.map((session: any) => {
+                        const currentSharedOwners = Array.isArray(
+                            session.sharedOwners,
+                        )
+                            ? session.sharedOwners.filter(
+                                  (owner: unknown): owner is string =>
+                                      typeof owner === "string" &&
+                                      owner.length > 0,
+                              )
+                            : [];
+
+                        const nextSharedOwners = Array.from(
+                            new Set([...currentSharedOwners, sharedOwner]),
+                        );
+
+                        return recordingSessionModel.update({
+                            id: session.id,
+                            sharedOwners: nextSharedOwners,
+                        });
+                    }),
+                );
+
+                const hasRecordingSessionErrors =
+                    recordingSessionUpdateResults.some(
+                        (result) => result.errors,
+                    );
+
+                if (hasRecordingSessionErrors) {
+                    console.error(
+                        "RecordingSession share update errors:",
+                        recordingSessionUpdateResults,
+                    );
+                }
+            }
+
             const hasErrors = updateResults.some((result) => result.errors);
 
             if (hasErrors) {
@@ -854,6 +924,26 @@ export default function LocationLogScreen({ navigation }: Props) {
                                                 件
                                             </Text>
                                         </View>
+
+                                        <Text style={styles.memoText}>
+                                            バッテリー:{" "}
+                                            {formatBatteryLevel(
+                                                item.startLog.batteryLevel,
+                                            )}
+                                            {" → "}
+                                            {formatBatteryLevel(
+                                                item.endLog.batteryLevel,
+                                            )}
+                                        </Text>
+                                        <Text style={styles.memoText}>
+                                            バッテリー状態:{" "}
+                                            {formatBatteryStateLabel(
+                                                item.endLog.batteryState,
+                                            )}
+                                            {item.endLog.lowPowerMode
+                                                ? " / 低電力モードON"
+                                                : ""}
+                                        </Text>
                                     </View>
 
                                     <View style={styles.actionRow}>
@@ -958,6 +1048,20 @@ export default function LocationLogScreen({ navigation }: Props) {
                                             メモなし
                                         </Text>
                                     )}
+                                    <Text style={styles.memoText}>
+                                        バッテリー:{" "}
+                                        {formatBatteryLevel(item.batteryLevel)}
+                                        {" / "}
+                                        {formatBatteryStateLabel(
+                                            item.batteryState,
+                                        )}
+                                    </Text>
+
+                                    {item.lowPowerMode && (
+                                        <Text style={styles.memoText}>
+                                            低電力モード: ON
+                                        </Text>
+                                    )}
                                 </View>
 
                                 <View style={styles.actionRow}>
@@ -1009,7 +1113,6 @@ export default function LocationLogScreen({ navigation }: Props) {
                             共有先ユーザーを選択
                         </Text>
 
-                        {/*
                         <TextInput
                             style={styles.shareSearchInput}
                             value={shareSearchText}
@@ -1018,7 +1121,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                             autoCapitalize="none"
                             autoCorrect={false}
                             editable={!sharing}
-                        /> */}
+                        />
 
                         <ScrollView
                             style={styles.shareUserList}
@@ -1307,6 +1410,28 @@ function buildDisplayItems(logs: LocationLogItem[]): LocationLogDisplayItem[] {
     return displayItems.sort((a, b) => {
         return new Date(b.sortAt).getTime() - new Date(a.sortAt).getTime();
     });
+}
+
+function formatBatteryLevel(value?: number | null) {
+    if (value === null || value === undefined || !Number.isFinite(value)) {
+        return "-";
+    }
+
+    return `${Math.round(value * 100)}%`;
+}
+
+function formatBatteryStateLabel(value?: string | null) {
+    switch (value) {
+        case "charging":
+            return "充電中";
+        case "full":
+            return "満充電";
+        case "unplugged":
+            return "未充電";
+        case "unknown":
+        default:
+            return "不明";
+    }
 }
 
 const styles = StyleSheet.create({

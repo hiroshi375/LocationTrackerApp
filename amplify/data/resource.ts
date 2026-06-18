@@ -18,6 +18,10 @@ const schema = a.schema({
             recordingSessionId: a.string(),
             recordingSessionName: a.string(),
             sharedOwners: a.string().array(),
+
+            batteryLevel: a.float(),
+            batteryState: a.string(),
+            lowPowerMode: a.boolean(),
         })
         .authorization((allow) => [
             allow.owner(),

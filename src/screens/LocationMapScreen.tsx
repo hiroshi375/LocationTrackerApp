@@ -3,6 +3,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { getCurrentUser } from "aws-amplify/auth";
 import { getUrl } from "aws-amplify/storage";
 import * as Location from "expo-location";
+import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
@@ -727,6 +728,13 @@ export default function LocationMapScreen({ route }: Props) {
 
     return (
         <View style={styles.container}>
+            <StatusBar
+                style="dark"
+                hidden={false}
+                backgroundColor="#ffffff"
+                translucent={false}
+            />
+
             <MapView
                 ref={mapRef}
                 provider={PROVIDER_GOOGLE}

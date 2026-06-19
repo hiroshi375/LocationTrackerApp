@@ -656,6 +656,13 @@ export default function LocationMapScreen({ route }: Props) {
             ? calculateRouteDistanceMeters(routeLogs)
             : null;
 
+    const displayDistanceText =
+        typeof recordingSessionSummary?.distanceMeters === "number"
+            ? formatDistance(recordingSessionSummary.distanceMeters)
+            : routeDistanceMeters !== null
+              ? formatDistance(routeDistanceMeters)
+              : "集計情報なし";
+
     console.log("Map distance debug:", {
         activeSessionId,
         dbDistanceMeters: recordingSessionSummary?.distanceMeters ?? null,
@@ -893,14 +900,7 @@ export default function LocationMapScreen({ route }: Props) {
                             : formatDateTime(displayLocation.recordedAt)}
                     </Text>
                 )}
-                {recordingSessionSummary ? (
-                    <Text style={styles.infoText}>
-                        距離:{" "}
-                        {formatDistance(recordingSessionSummary.distanceMeters)}
-                    </Text>
-                ) : (
-                    <Text style={styles.infoText}>距離: 集計情報なし</Text>
-                )}
+                <Text style={styles.infoText}>距離: {displayDistanceText}</Text>
                 <View style={styles.pointCountRow}>
                     <Text style={[styles.infoText, styles.pointCountText]}>
                         記録ポイント: {recordPointCount}件
@@ -1030,14 +1030,37 @@ function formatTime(value: string) {
 function formatPeriod(startValue: string, endValue: string) {
     const startDate = formatDate(startValue);
     const endDate = formatDate(endValue);
+    const durationText = formatDuration(startValue, endValue);
 
     if (startDate === endDate) {
         return `${startDate} ${formatTime(startValue)} - ${formatTime(
             endValue,
-        )}`;
+        )}（${durationText}）`;
     }
 
-    return `${formatDateTime(startValue)} - ${formatDateTime(endValue)}`;
+    return `${formatDateTime(startValue)} - ${formatDateTime(
+        endValue,
+    )}（${durationText}）`;
+}
+
+function formatDuration(startValue: string, endValue: string) {
+    const startTime = new Date(startValue).getTime();
+    const endTime = new Date(endValue).getTime();
+
+    if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+        return "--:--";
+    }
+
+    const diffMs = Math.max(0, endTime - startTime);
+    const totalMinutes = Math.floor(diffMs / 1000 / 60);
+
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+
+    const hh = String(hours).padStart(2, "0");
+    const mm = String(minutes).padStart(2, "0");
+
+    return `${hh}:${mm}`;
 }
 
 function calculateRouteDistanceMeters(logs: LocationLogItem[]) {

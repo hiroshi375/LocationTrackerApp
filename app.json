@@ -11,7 +11,11 @@
             "supportsTablet": true,
             "infoPlist": {
                 "NSLocationWhenInUseUsageDescription": "現在地を記録するために位置情報を使用します。"
-            }
+            },
+            "config": {
+                "googleMapsApiKey": "YOUR_IOS_GOOGLE_MAPS_API_KEY"
+            },
+            "bundleIdentifier": "com.hiroshisato.locationtrackerapp"
         },
         "android": {
             "adaptiveIcon": {
@@ -21,10 +25,9 @@
                 "monochromeImage": "./assets/images/android-icon-monochrome.png"
             },
             "permissions": [
-                "ACCESS_FINE_LOCATION",
-                "ACCESS_COARSE_LOCATION",
-                "ACCESS_FINE_LOCATION",
-                "ACCESS_COARSE_LOCATION"
+                "android.permission.ACCESS_FINE_LOCATION",
+                "android.permission.ACCESS_COARSE_LOCATION",
+                "android.permission.RECORD_AUDIO"
             ],
             "predictiveBackGestureEnabled": false,
             "package": "com.hiroshisato.locationtrackerapp",

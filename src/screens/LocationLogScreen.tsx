@@ -929,23 +929,12 @@ export default function LocationLogScreen({ navigation }: Props) {
                                         </View>
 
                                         <Text style={styles.memoText}>
-                                            バッテリー:{" "}
-                                            {formatBatteryLevel(
+                                            {formatSessionBatterySummary(
                                                 item.startLog.batteryLevel,
-                                            )}
-                                            {" → "}
-                                            {formatBatteryLevel(
                                                 item.endLog.batteryLevel,
-                                            )}
-                                        </Text>
-                                        <Text style={styles.memoText}>
-                                            バッテリー状態:{" "}
-                                            {formatBatteryStateLabel(
                                                 item.endLog.batteryState,
+                                                item.endLog.lowPowerMode,
                                             )}
-                                            {item.endLog.lowPowerMode
-                                                ? " / 低電力モードON"
-                                                : ""}
                                         </Text>
                                     </View>
 
@@ -1037,7 +1026,6 @@ export default function LocationLogScreen({ navigation }: Props) {
                                             {formatDateTime(item.recordedAt)}
                                         </Text>
                                     </View>
-
                                     <Text style={styles.memoText}>
                                         ユーザー:{" "}
                                         {getUserDisplayName(item.userId)}
@@ -1052,19 +1040,12 @@ export default function LocationLogScreen({ navigation }: Props) {
                                         </Text>
                                     )}
                                     <Text style={styles.memoText}>
-                                        バッテリー:{" "}
-                                        {formatBatteryLevel(item.batteryLevel)}
-                                        {" / "}
-                                        {formatBatteryStateLabel(
+                                        {formatSingleBatterySummary(
+                                            item.batteryLevel,
                                             item.batteryState,
+                                            item.lowPowerMode,
                                         )}
-                                    </Text>
-
-                                    {item.lowPowerMode && (
-                                        <Text style={styles.memoText}>
-                                            低電力モード: ON
-                                        </Text>
-                                    )}
+                                    </Text>{" "}
                                 </View>
 
                                 <View style={styles.actionRow}>
@@ -1299,14 +1280,37 @@ function formatTime(value: string) {
 function formatPeriod(startValue: string, endValue: string) {
     const startDate = formatDate(startValue);
     const endDate = formatDate(endValue);
+    const durationText = formatDuration(startValue, endValue);
 
     if (startDate === endDate) {
         return `${startDate} ${formatTime(startValue)} - ${formatTime(
             endValue,
-        )}`;
+        )}（${durationText}）`;
     }
 
-    return `${formatDateTime(startValue)} - ${formatDateTime(endValue)}`;
+    return `${formatDateTime(startValue)} - ${formatDateTime(
+        endValue,
+    )}（${durationText}）`;
+}
+
+function formatDuration(startValue: string, endValue: string) {
+    const startTime = new Date(startValue).getTime();
+    const endTime = new Date(endValue).getTime();
+
+    if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+        return "--:--";
+    }
+
+    const diffMs = Math.max(0, endTime - startTime);
+    const totalMinutes = Math.floor(diffMs / 1000 / 60);
+
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+
+    const hh = String(hours).padStart(2, "0");
+    const mm = String(minutes).padStart(2, "0");
+
+    return `${hh}:${mm}`;
 }
 
 function calculateDistanceMeters(
@@ -1462,11 +1466,45 @@ function formatBatteryStateLabel(value?: string | null) {
         case "full":
             return "満充電";
         case "unplugged":
-            return "未充電";
+            return "放電中";
         case "unknown":
         default:
             return "不明";
     }
+}
+
+function formatSessionBatterySummary(
+    startBatteryLevel?: number | null,
+    endBatteryLevel?: number | null,
+    endBatteryState?: string | null,
+    lowPowerMode?: boolean | null,
+) {
+    const batteryText = `バッテリー：${formatBatteryLevel(
+        startBatteryLevel,
+    )} → ${formatBatteryLevel(endBatteryLevel)}`;
+
+    const stateText = `バッテリー状態：${formatBatteryStateLabel(
+        endBatteryState,
+    )}`;
+
+    const lowPowerModeText = lowPowerMode ? "、低電力モード：ON" : "";
+
+    return `${batteryText}、${stateText}${lowPowerModeText}`;
+}
+
+function formatSingleBatterySummary(
+    batteryLevel?: number | null,
+    batteryState?: string | null,
+    lowPowerMode?: boolean | null,
+) {
+    const batteryText = `バッテリー：${formatBatteryLevel(batteryLevel)}`;
+    const stateText = `バッテリー状態：${formatBatteryStateLabel(
+        batteryState,
+    )}`;
+
+    const lowPowerModeText = lowPowerMode ? "、低電力モード：ON" : "";
+
+    return `${batteryText}、${stateText}${lowPowerModeText}`;
 }
 
 const styles = StyleSheet.create({
@@ -1522,7 +1560,7 @@ const styles = StyleSheet.create({
     },
     cardContent: {
         padding: 14,
-        gap: 4,
+        gap: 0,
     },
     row: {
         flexDirection: "row",
@@ -1534,7 +1572,7 @@ const styles = StyleSheet.create({
         marginBottom: 4,
     },
     memoText: {
-        marginTop: 4,
+        marginTop: 0,
         color: "#333",
     },
     sessionStatsRow: {

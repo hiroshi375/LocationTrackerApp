@@ -13,7 +13,7 @@
                 "NSLocationWhenInUseUsageDescription": "現在地を記録するために位置情報を使用します。"
             },
             "config": {
-                "googleMapsApiKey": "YOUR_IOS_GOOGLE_MAPS_API_KEY"
+                "googleMapsApiKey": "AIzaSyDLpFSg18FfTJ5NUDgHFHI2jxRS0X8xQQk"
             },
             "bundleIdentifier": "com.hiroshisato.locationtrackerapp"
         },

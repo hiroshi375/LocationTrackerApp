@@ -1,10 +1,13 @@
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { getCurrentUser } from "aws-amplify/auth";
+import { getUrl } from "aws-amplify/storage";
 import * as Location from "expo-location";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Animated,
+    Image,
     Pressable,
     StyleSheet,
     Text,
@@ -39,6 +42,14 @@ type RecordingSessionItem = {
     sharedOwners?: string[] | null;
 };
 
+type UserProfileItem = {
+    id: string;
+    userId: string;
+    email?: string | null;
+    displayName?: string | null;
+    iconImagePath?: string | null;
+};
+
 type RecordingSessionListResult = {
     data?: any[] | null;
     errors?: unknown;
@@ -67,6 +78,10 @@ export default function LocationMapScreen({ route }: Props) {
     const [hasLoaded, setHasLoaded] = useState(false);
     const [showPoints, setShowPoints] = useState(false);
     const [mapReady, setMapReady] = useState(false);
+    const [currentUserIconUrl, setCurrentUserIconUrl] = useState<string | null>(
+        null,
+    );
+    const [currentUserIconLoaded, setCurrentUserIconLoaded] = useState(false);
 
     const selectedLocation = route.params?.selectedLocation ?? null;
     const routeRecordingSessionId = route.params?.recordingSessionId ?? null;
@@ -94,8 +109,38 @@ export default function LocationMapScreen({ route }: Props) {
         latitude: number;
         longitude: number;
     } | null>(null);
+    const [currentLocationScreenPoint, setCurrentLocationScreenPoint] =
+        useState<{
+            x: number;
+            y: number;
+        } | null>(null);
 
     const currentLocationOpacity = useRef(new Animated.Value(1)).current;
+
+    const updateCurrentLocationScreenPoint = useCallback(async () => {
+        if (
+            !mapReady ||
+            !isLiveRecordingMap ||
+            !currentLocation ||
+            !mapRef.current
+        ) {
+            setCurrentLocationScreenPoint(null);
+            return;
+        }
+
+        try {
+            const point =
+                await mapRef.current.pointForCoordinate(currentLocation);
+
+            setCurrentLocationScreenPoint({
+                x: point.x,
+                y: point.y,
+            });
+        } catch (error) {
+            console.error("Current location screen point error:", error);
+            setCurrentLocationScreenPoint(null);
+        }
+    }, [mapReady, isLiveRecordingMap, currentLocation]);
 
     const loadLogs = useCallback(
         async (showLoading: boolean = true) => {
@@ -246,6 +291,79 @@ export default function LocationMapScreen({ route }: Props) {
         [],
     );
 
+    const loadCurrentUserProfileIcon = useCallback(async () => {
+        try {
+            const currentUser = await getCurrentUser();
+
+            console.log("Current user:", {
+                userId: currentUser.userId,
+                username: currentUser.username,
+            });
+
+            const userProfileModel = client.models.UserProfile as any;
+
+            const result = await userProfileModel.list({
+                filter: {
+                    userId: {
+                        eq: currentUser.userId,
+                    },
+                },
+                limit: 1000,
+            });
+
+            if (result.errors) {
+                console.error("UserProfile icon load errors:", result.errors);
+                setCurrentUserIconUrl(null);
+                return;
+            }
+
+            const profiles = (result.data ?? []) as UserProfileItem[];
+
+            console.log(
+                "UserProfile icon candidates:",
+                profiles.map((profile) => ({
+                    id: profile.id,
+                    userId: profile.userId,
+                    email: profile.email,
+                    displayName: profile.displayName,
+                    iconImagePath: profile.iconImagePath,
+                })),
+            );
+
+            const profileWithIcon = profiles.find(
+                (profile) => !!profile.iconImagePath,
+            );
+
+            if (!profileWithIcon?.iconImagePath) {
+                console.log("UserProfile iconImagePath not found.");
+                setCurrentUserIconUrl(null);
+                return;
+            }
+
+            console.log(
+                "Selected profile iconImagePath:",
+                profileWithIcon.iconImagePath,
+            );
+
+            const urlResult = await getUrl({
+                path: profileWithIcon.iconImagePath,
+                options: {
+                    expiresIn: 3600,
+                },
+            });
+
+            const iconUrl = urlResult.url.toString();
+
+            console.log("Current user icon URL:", iconUrl);
+
+            setCurrentUserIconLoaded(false);
+            setCurrentUserIconUrl(iconUrl);
+        } catch (error) {
+            console.error("Current user profile icon load error:", error);
+            setCurrentUserIconUrl(null);
+        }
+    }, []);
+
     useEffect(() => {
         if (!isLiveRecordingMap) {
             setCurrentLocation(null);
@@ -329,7 +447,7 @@ export default function LocationMapScreen({ route }: Props) {
     }, [isLiveRecordingMap]);
 
     useEffect(() => {
-        if (!activeSessionId || !currentLocation) {
+        if (!isLiveRecordingMap || !currentLocationScreenPoint) {
             currentLocationOpacity.setValue(1);
             return;
         }
@@ -353,8 +471,13 @@ export default function LocationMapScreen({ route }: Props) {
 
         return () => {
             animation.stop();
+            currentLocationOpacity.setValue(1);
         };
-    }, [activeSessionId, currentLocation, currentLocationOpacity]);
+    }, [
+        isLiveRecordingMap,
+        currentLocationScreenPoint,
+        currentLocationOpacity,
+    ]);
 
     useEffect(() => {
         if (!mapReady) {
@@ -489,9 +612,14 @@ export default function LocationMapScreen({ route }: Props) {
         void loadRecordingSessionSummary(activeSessionId);
     }, [activeSessionId, loadRecordingSessionSummary]);
 
+    useEffect(() => {
+        void updateCurrentLocationScreenPoint();
+    }, [updateCurrentLocationScreenPoint]);
+
     useFocusEffect(
         useCallback(() => {
             void loadLogs(true);
+            void loadCurrentUserProfileIcon();
 
             const timerId = setInterval(() => {
                 void loadLogs(false);
@@ -500,7 +628,7 @@ export default function LocationMapScreen({ route }: Props) {
             return () => {
                 clearInterval(timerId);
             };
-        }, [loadLogs]),
+        }, [loadLogs, loadCurrentUserProfileIcon]),
     );
 
     if (!hasLoaded || loading) {
@@ -688,6 +816,13 @@ export default function LocationMapScreen({ route }: Props) {
 
     const adjustedInitialCenter = getAdjustedMapCenter(displayLocation);
 
+    console.log("Current marker render state:", {
+        isLiveRecordingMap,
+        hasCurrentLocation: Boolean(currentLocation),
+        hasCurrentUserIconUrl: Boolean(currentUserIconUrl),
+        currentUserIconLoaded,
+    });
+
     return (
         <View style={styles.container}>
             <MapView
@@ -696,6 +831,9 @@ export default function LocationMapScreen({ route }: Props) {
                 style={styles.map}
                 mapType="standard"
                 onMapReady={() => setMapReady(true)}
+                onRegionChangeComplete={() => {
+                    void updateCurrentLocationScreenPoint();
+                }}
                 initialRegion={{
                     latitude: adjustedInitialCenter.latitude,
                     longitude: adjustedInitialCenter.longitude,
@@ -718,25 +856,6 @@ export default function LocationMapScreen({ route }: Props) {
                         strokeWidth={6}
                         lineDashPattern={[8, 6]}
                     />
-                )}
-
-                {activeSessionId && currentLocation && (
-                    <Marker
-                        coordinate={currentLocation}
-                        anchor={{ x: 0.5, y: 0.5 }}
-                        tracksViewChanges
-                    >
-                        <Animated.View
-                            style={[
-                                styles.currentLocationMarkerOuter,
-                                {
-                                    opacity: currentLocationOpacity,
-                                },
-                            ]}
-                        >
-                            <View style={styles.currentLocationMarkerInner} />
-                        </Animated.View>
-                    </Marker>
                 )}
 
                 {showPoints &&
@@ -790,6 +909,7 @@ export default function LocationMapScreen({ route }: Props) {
                         anchor={{ x: 0.5, y: 0.5 }}
                         centerOffset={{ x: 0, y: 0 }}
                         tracksViewChanges
+                        zIndex={100}
                     >
                         <View
                             collapsable={false}
@@ -816,6 +936,7 @@ export default function LocationMapScreen({ route }: Props) {
                         anchor={{ x: 0.5, y: 0.5 }}
                         centerOffset={{ x: 0, y: 0 }}
                         tracksViewChanges
+                        zIndex={100}
                     >
                         <View
                             collapsable={false}
@@ -853,6 +974,39 @@ export default function LocationMapScreen({ route }: Props) {
                     )}
             </MapView>
 
+            {isLiveRecordingMap && currentLocationScreenPoint && (
+                <Animated.View
+                    pointerEvents="none"
+                    style={[
+                        styles.currentUserOverlayMarker,
+                        {
+                            left: currentLocationScreenPoint.x - 35,
+                            top: currentLocationScreenPoint.y - 35,
+                            opacity: currentLocationOpacity,
+                        },
+                    ]}
+                >
+                    {currentUserIconUrl ? (
+                        <Image
+                            source={{ uri: currentUserIconUrl }}
+                            style={styles.currentUserOverlayMarkerImage}
+                            resizeMode="cover"
+                            fadeDuration={0}
+                        />
+                    ) : (
+                        <View style={styles.currentUserOverlayMarkerFallback}>
+                            <Text
+                                style={
+                                    styles.currentUserOverlayMarkerFallbackText
+                                }
+                            >
+                                自
+                            </Text>
+                        </View>
+                    )}
+                </Animated.View>
+            )}
+
             <View style={styles.infoBox}>
                 <Text style={styles.infoTitle}>
                     {isSelectedMode ? "記録サマリー" : "最新位置"}
@@ -877,6 +1031,9 @@ export default function LocationMapScreen({ route }: Props) {
                     </Text>
                 )}
                 <Text style={styles.infoText}>距離: {displayDistanceText}</Text>
+                <Text style={styles.infoText}>
+                    アイコンURL: {currentUserIconUrl ? "あり" : "なし"}
+                </Text>
                 <View style={styles.pointCountRow}>
                     <Text style={[styles.infoText, styles.pointCountText]}>
                         記録ポイント: {recordPointCount}件
@@ -1337,5 +1494,54 @@ const styles = StyleSheet.create({
     },
     pointCountText: {
         marginBottom: 0,
+    },
+
+    currentUserMarkerCircle: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        overflow: "hidden",
+        backgroundColor: "#ffffff",
+        borderWidth: 3,
+        borderColor: "#4b6f8f",
+    },
+    currentUserMarkerContainer: {
+        width: 70,
+        height: 70,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    currentUserOverlayMarker: {
+        position: "absolute",
+        width: 70,
+        height: 70,
+        borderRadius: 35,
+        backgroundColor: "#ffffff",
+        borderWidth: 4,
+        borderColor: "#4b6f8f",
+        overflow: "hidden",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+        elevation: 1000,
+    },
+
+    currentUserOverlayMarkerImage: {
+        width: "100%",
+        height: "100%",
+    },
+
+    currentUserOverlayMarkerFallback: {
+        width: "100%",
+        height: "100%",
+        backgroundColor: "#4b6f8f",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    currentUserOverlayMarkerFallbackText: {
+        color: "#ffffff",
+        fontSize: 18,
+        fontWeight: "bold",
     },
 });

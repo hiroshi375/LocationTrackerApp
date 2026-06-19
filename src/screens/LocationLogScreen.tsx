@@ -877,8 +877,8 @@ export default function LocationLogScreen({ navigation }: Props) {
                     ListEmptyComponent={
                         <Text style={styles.emptyText}>
                             {searchText.trim().length > 0
-                                ? "検索条件に一致する位置履歴がありません。"
-                                : "まだ位置履歴がありません。"}
+                                ? "検索条件に一致するセッション履歴がありません。"
+                                : "まだセッション履歴がありません。"}
                         </Text>
                     }
                     renderItem={({ item }) => {
@@ -1045,7 +1045,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                                             item.batteryState,
                                             item.lowPowerMode,
                                         )}
-                                    </Text>{" "}
+                                    </Text>
                                 </View>
 
                                 <View style={styles.actionRow}>
@@ -1393,18 +1393,13 @@ function buildDisplayItems(logs: LocationLogItem[]): LocationLogDisplayItem[] {
     const displayItems: LocationLogDisplayItem[] = [];
 
     logs.forEach((log) => {
-        if (log.recordingSessionId) {
-            const current = sessionMap.get(log.recordingSessionId) ?? [];
-            current.push(log);
-            sessionMap.set(log.recordingSessionId, current);
+        if (!log.recordingSessionId) {
             return;
         }
 
-        displayItems.push({
-            ...log,
-            kind: "single",
-            sortAt: log.recordedAt,
-        });
+        const current = sessionMap.get(log.recordingSessionId) ?? [];
+        current.push(log);
+        sessionMap.set(log.recordingSessionId, current);
     });
 
     sessionMap.forEach((sessionLogs, recordingSessionId) => {

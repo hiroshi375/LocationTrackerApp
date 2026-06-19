@@ -621,34 +621,6 @@ export default function LocationMapScreen({ route }: Props) {
 
     const isSelectedMode = selectedLocation !== null;
 
-    const fitToRoute = () => {
-        if (routeCoordinates.length === 0) {
-            return;
-        }
-
-        if (routeCoordinates.length === 1) {
-            mapRef.current?.animateCamera(
-                {
-                    center: routeCoordinates[0],
-                },
-                {
-                    duration: 500,
-                },
-            );
-            return;
-        }
-
-        mapRef.current?.fitToCoordinates(routeCoordinates, {
-            edgePadding: {
-                top: 80,
-                right: 40,
-                bottom: 260,
-                left: 40,
-            },
-            animated: true,
-        });
-    };
-
     const routeLogs = visibleLogs
         .filter(
             (log) =>
@@ -677,6 +649,39 @@ export default function LocationMapScreen({ route }: Props) {
         latitude: log.latitude,
         longitude: log.longitude,
     }));
+
+    const fitTargetCoordinates =
+        isLiveRecordingMap && currentLocation
+            ? [...routeCoordinates, currentLocation]
+            : routeCoordinates;
+
+    const fitToRoute = () => {
+        if (fitTargetCoordinates.length === 0) {
+            return;
+        }
+
+        if (fitTargetCoordinates.length === 1) {
+            mapRef.current?.animateCamera(
+                {
+                    center: getAdjustedMapCenter(fitTargetCoordinates[0]),
+                },
+                {
+                    duration: 500,
+                },
+            );
+            return;
+        }
+
+        mapRef.current?.fitToCoordinates(fitTargetCoordinates, {
+            edgePadding: {
+                top: 100,
+                right: 60,
+                bottom: 320,
+                left: 60,
+            },
+            animated: true,
+        });
+    };
 
     const routeDistanceMeters =
         activeSessionId && routeLogs.length >= 2
@@ -941,9 +946,6 @@ export default function LocationMapScreen({ route }: Props) {
                     </Text>
                 )}
                 <Text style={styles.infoText}>距離: {displayDistanceText}</Text>
-                <Text style={styles.infoText}>
-                    アイコンURL: {currentUserIconUrl ? "あり" : "なし"}
-                </Text>
                 <View style={styles.pointCountRow}>
                     <Text style={[styles.infoText, styles.pointCountText]}>
                         記録ポイント: {recordPointCount}件

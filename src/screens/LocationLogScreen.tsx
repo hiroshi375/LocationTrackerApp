@@ -970,7 +970,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                                             <Text
                                                 style={styles.detailButtonText}
                                             >
-                                                名前変更
+                                                タイトル変更
                                             </Text>
                                         </Pressable>
 

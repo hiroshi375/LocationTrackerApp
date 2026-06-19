@@ -81,7 +81,6 @@ export default function LocationMapScreen({ route }: Props) {
     const [currentUserIconUrl, setCurrentUserIconUrl] = useState<string | null>(
         null,
     );
-    const [currentUserIconLoaded, setCurrentUserIconLoaded] = useState(false);
 
     const selectedLocation = route.params?.selectedLocation ?? null;
     const routeRecordingSessionId = route.params?.recordingSessionId ?? null;
@@ -195,11 +194,6 @@ export default function LocationMapScreen({ route }: Props) {
                     nextToken = result.nextToken ?? null;
                 } while (nextToken);
 
-                console.log("Map LocationLog loaded:", {
-                    activeSessionId,
-                    count: allData.length,
-                });
-
                 const items = normalizeLocationLogs(allData);
                 setLogs(items);
             } catch (error) {
@@ -218,11 +212,6 @@ export default function LocationMapScreen({ route }: Props) {
     const loadRecordingSessionSummary = useCallback(
         async (recordingSessionId: string) => {
             try {
-                console.log(
-                    "Map loadRecordingSessionSummary recordingSessionId:",
-                    recordingSessionId,
-                );
-
                 const recordingSessionModel = client.models
                     .RecordingSession as any;
 
@@ -245,28 +234,9 @@ export default function LocationMapScreen({ route }: Props) {
 
                 const items = result.data ?? [];
 
-                console.log("Map RecordingSession result count:", items.length);
-
-                console.log(
-                    "Map RecordingSession candidates:",
-                    items.map((item: any) => ({
-                        id: item.id,
-                        recordingSessionId: item.recordingSessionId,
-                        recordingSessionName: item.recordingSessionName,
-                        startedAt: item.startedAt,
-                        endedAt: item.endedAt,
-                        distanceMeters: item.distanceMeters,
-                        pointCount: item.pointCount,
-                    })),
-                );
-
                 const item = items[0];
 
                 if (!item) {
-                    console.log(
-                        "Map RecordingSession not found:",
-                        recordingSessionId,
-                    );
                     setRecordingSessionSummary(null);
                     return;
                 }
@@ -295,11 +265,6 @@ export default function LocationMapScreen({ route }: Props) {
         try {
             const currentUser = await getCurrentUser();
 
-            console.log("Current user:", {
-                userId: currentUser.userId,
-                username: currentUser.username,
-            });
-
             const userProfileModel = client.models.UserProfile as any;
 
             const result = await userProfileModel.list({
@@ -319,31 +284,14 @@ export default function LocationMapScreen({ route }: Props) {
 
             const profiles = (result.data ?? []) as UserProfileItem[];
 
-            console.log(
-                "UserProfile icon candidates:",
-                profiles.map((profile) => ({
-                    id: profile.id,
-                    userId: profile.userId,
-                    email: profile.email,
-                    displayName: profile.displayName,
-                    iconImagePath: profile.iconImagePath,
-                })),
-            );
-
             const profileWithIcon = profiles.find(
                 (profile) => !!profile.iconImagePath,
             );
 
             if (!profileWithIcon?.iconImagePath) {
-                console.log("UserProfile iconImagePath not found.");
                 setCurrentUserIconUrl(null);
                 return;
             }
-
-            console.log(
-                "Selected profile iconImagePath:",
-                profileWithIcon.iconImagePath,
-            );
 
             const urlResult = await getUrl({
                 path: profileWithIcon.iconImagePath,
@@ -354,9 +302,6 @@ export default function LocationMapScreen({ route }: Props) {
 
             const iconUrl = urlResult.url.toString();
 
-            console.log("Current user icon URL:", iconUrl);
-
-            setCurrentUserIconLoaded(false);
             setCurrentUserIconUrl(iconUrl);
         } catch (error) {
             console.error("Current user profile icon load error:", error);
@@ -602,8 +547,6 @@ export default function LocationMapScreen({ route }: Props) {
     ]);
 
     useEffect(() => {
-        console.log("Map activeSessionId changed:", activeSessionId);
-
         if (!activeSessionId) {
             setRecordingSessionSummary(null);
             return;
@@ -677,27 +620,6 @@ export default function LocationMapScreen({ route }: Props) {
 
     const isSelectedMode = selectedLocation !== null;
 
-    const moveToLocation = (location: LocationLogItem) => {
-        if (
-            !Number.isFinite(location.latitude) ||
-            !Number.isFinite(location.longitude)
-        ) {
-            return;
-        }
-
-        const adjustedCenter = getAdjustedMapCenter(location);
-
-        mapRef.current?.animateToRegion?.(
-            {
-                latitude: adjustedCenter.latitude,
-                longitude: adjustedCenter.longitude,
-                latitudeDelta: DEFAULT_LATITUDE_DELTA,
-                longitudeDelta: DEFAULT_LONGITUDE_DELTA,
-            },
-            500,
-        );
-    };
-
     const fitToRoute = () => {
         if (routeCoordinates.length === 0) {
             return;
@@ -767,19 +689,6 @@ export default function LocationMapScreen({ route }: Props) {
               ? formatDistance(routeDistanceMeters)
               : "集計情報なし";
 
-    console.log("Map distance debug:", {
-        activeSessionId,
-        dbDistanceMeters: recordingSessionSummary?.distanceMeters ?? null,
-        dbDistanceKm:
-            recordingSessionSummary?.distanceMeters !== undefined
-                ? recordingSessionSummary.distanceMeters / 1000
-                : null,
-        calculatedRouteDistanceMeters: routeDistanceMeters,
-        calculatedRouteDistanceKm:
-            routeDistanceMeters !== null ? routeDistanceMeters / 1000 : null,
-        routeLogCount: routeLogs.length,
-    });
-
     const startLog =
         activeSessionId && routeLogs.length > 0 ? routeLogs[0] : null;
 
@@ -815,13 +724,6 @@ export default function LocationMapScreen({ route }: Props) {
         Boolean(sessionEndAt);
 
     const adjustedInitialCenter = getAdjustedMapCenter(displayLocation);
-
-    console.log("Current marker render state:", {
-        isLiveRecordingMap,
-        hasCurrentLocation: Boolean(currentLocation),
-        hasCurrentUserIconUrl: Boolean(currentUserIconUrl),
-        currentUserIconLoaded,
-    });
 
     return (
         <View style={styles.container}>
@@ -1312,59 +1214,6 @@ const styles = StyleSheet.create({
         marginBottom: 2,
         color: "#333",
     },
-    buttonRow: {
-        flexDirection: "row",
-        gap: 8,
-        marginTop: 10,
-    },
-    primaryButton: {
-        flex: 1,
-        paddingVertical: 10,
-        borderRadius: 8,
-        backgroundColor: "#4b6f8f",
-        alignItems: "center",
-    },
-    primaryButtonText: {
-        color: "#fff",
-        fontWeight: "bold",
-        fontSize: 13,
-    },
-    secondaryButton: {
-        flex: 1,
-        paddingVertical: 10,
-        borderRadius: 8,
-        backgroundColor: "#e6edf3",
-        alignItems: "center",
-    },
-    secondaryButtonText: {
-        color: "#2f4f66",
-        fontWeight: "bold",
-        fontSize: 13,
-    },
-    historyMarker: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: "#4b6f8f",
-        borderWidth: 1,
-        borderColor: "#fff",
-    },
-    currentMarkerOuter: {
-        width: 22,
-        height: 22,
-        borderRadius: 11,
-        backgroundColor: "rgba(75,111,143,0.25)",
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    currentMarkerInner: {
-        width: 12,
-        height: 12,
-        borderRadius: 6,
-        backgroundColor: "#4b6f8f",
-        borderWidth: 2,
-        borderColor: "#fff",
-    },
     routeToggleButton: {
         marginTop: 10,
         paddingVertical: 9,
@@ -1378,22 +1227,6 @@ const styles = StyleSheet.create({
         color: "#2f4f66",
         fontWeight: "bold",
         fontSize: 13,
-    },
-    currentLocationMarkerOuter: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
-        backgroundColor: "rgba(0, 122, 255, 0.25)",
-        alignItems: "center",
-        justifyContent: "center",
-        borderWidth: 2,
-        borderColor: "rgba(0, 122, 255, 0.9)",
-    },
-    currentLocationMarkerInner: {
-        width: 12,
-        height: 12,
-        borderRadius: 6,
-        backgroundColor: "rgba(0, 122, 255, 1)",
     },
     logPointMarker: {
         width: 12,
@@ -1494,22 +1327,6 @@ const styles = StyleSheet.create({
     },
     pointCountText: {
         marginBottom: 0,
-    },
-
-    currentUserMarkerCircle: {
-        width: 60,
-        height: 60,
-        borderRadius: 30,
-        overflow: "hidden",
-        backgroundColor: "#ffffff",
-        borderWidth: 3,
-        borderColor: "#4b6f8f",
-    },
-    currentUserMarkerContainer: {
-        width: 70,
-        height: 70,
-        alignItems: "center",
-        justifyContent: "center",
     },
     currentUserOverlayMarker: {
         position: "absolute",

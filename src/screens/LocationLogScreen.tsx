@@ -1489,7 +1489,7 @@ function formatSessionBatterySummary(
 
     const lowPowerModeText = lowPowerMode ? "、低電力モード：ON" : "";
 
-    return `${batteryText}、${stateText}${lowPowerModeText}`;
+    return `${batteryText}  ${stateText}${lowPowerModeText}`;
 }
 
 function formatSingleBatterySummary(
@@ -1504,7 +1504,7 @@ function formatSingleBatterySummary(
 
     const lowPowerModeText = lowPowerMode ? "、低電力モード：ON" : "";
 
-    return `${batteryText}、${stateText}${lowPowerModeText}`;
+    return `${batteryText}  ${stateText}${lowPowerModeText}`;
 }
 
 const styles = StyleSheet.create({

@@ -570,26 +570,6 @@ export default function LocationMapScreen({ route }: Props) {
         );
     };
 
-    const moveToLatestLocation = () => {
-        if (activeSessionId && currentLocation) {
-            mapRef.current?.animateCamera(
-                {
-                    center: getAdjustedMapCenter(currentLocation),
-                },
-                {
-                    duration: 500,
-                },
-            );
-            return;
-        }
-
-        if (!latest) {
-            return;
-        }
-
-        moveToLocation(latest);
-    };
-
     const fitToRoute = () => {
         if (routeCoordinates.length === 0) {
             return;
@@ -616,10 +596,6 @@ export default function LocationMapScreen({ route }: Props) {
             },
             animated: true,
         });
-    };
-
-    const moveToDisplayLocation = () => {
-        moveToLocation(displayLocation);
     };
 
     const routeLogs = visibleLogs
@@ -780,7 +756,7 @@ export default function LocationMapScreen({ route }: Props) {
                                     latitude: log.latitude,
                                     longitude: log.longitude,
                                 }}
-                                title={isSelected ? "選択した位置" : "記録地点"}
+                                title={isSelected ? "記録サマリー" : "記録地点"}
                                 description={buildMarkerDescription(log)}
                                 anchor={{ x: 0.5, y: 0.5 }}
                                 centerOffset={{ x: 0, y: 0 }}
@@ -865,7 +841,7 @@ export default function LocationMapScreen({ route }: Props) {
                                 latitude: selectedLocation.latitude,
                                 longitude: selectedLocation.longitude,
                             }}
-                            title="選択した位置"
+                            title="記録サマリー"
                             description={buildMarkerDescription(
                                 selectedLocation,
                             )}
@@ -879,7 +855,7 @@ export default function LocationMapScreen({ route }: Props) {
 
             <View style={styles.infoBox}>
                 <Text style={styles.infoTitle}>
-                    {isSelectedMode ? "選択した位置" : "最新位置"}
+                    {isSelectedMode ? "記録サマリー" : "最新位置"}
                 </Text>
 
                 {recordingSessionSummary ? (
@@ -957,30 +933,6 @@ export default function LocationMapScreen({ route }: Props) {
                         ルート全体を表示
                     </Text>
                 </Pressable>
-
-                <View style={styles.buttonRow}>
-                    <Pressable
-                        style={styles.secondaryButton}
-                        onPress={moveToDisplayLocation}
-                    >
-                        <Text style={styles.secondaryButtonText}>
-                            表示位置へ戻る
-                        </Text>
-                    </Pressable>
-
-                    {latest && (
-                        <Pressable
-                            style={styles.primaryButton}
-                            onPress={moveToLatestLocation}
-                        >
-                            <Text style={styles.primaryButtonText}>
-                                {activeSessionId && currentLocation
-                                    ? "現在地へ戻る"
-                                    : "最新記録地点へ戻る"}
-                            </Text>
-                        </Pressable>
-                    )}
-                </View>
             </View>
         </View>
     );
@@ -1186,7 +1138,7 @@ const styles = StyleSheet.create({
         position: "absolute",
         left: 16,
         right: 16,
-        bottom: 24,
+        bottom: 48,
         padding: 14,
         backgroundColor: "rgba(255,255,255,0.94)",
         borderRadius: 12,

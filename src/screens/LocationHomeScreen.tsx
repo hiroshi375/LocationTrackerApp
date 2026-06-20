@@ -110,6 +110,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [pendingSessionId, setPendingSessionId] = useState<string | null>(
         null,
     );
+    const [pendingSessionShareOwnerValue, setPendingSessionShareOwnerValue] =
+        useState<string | null>(null);
     const [savingSessionName, setSavingSessionName] = useState(false);
 
     const loadLoginUserName = useCallback(async () => {
@@ -409,11 +411,16 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 return;
             }
 
-            await upsertRecordingSessionSummary(pendingSessionId, sessionName);
+            await upsertRecordingSessionSummary(
+                pendingSessionId,
+                sessionName,
+                pendingSessionShareOwnerValue,
+            );
 
             setSessionNameModalVisible(false);
             setSessionNameInput("");
             setPendingSessionId(null);
+            setPendingSessionShareOwnerValue(null);
         } catch (error) {
             console.error("Save session name error:", error);
             Alert.alert("保存エラー", "セッション名の保存に失敗しました。");
@@ -425,6 +432,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
     // セッションIDに紐づくLocationLogを全件取得してセッション名を更新する
     const handleStopRecording = async () => {
         const stoppedShareUserName = liveShareUserName;
+        const stoppedShareOwnerValue =
+            selectedLiveShareUser?.ownerValue ?? null;
 
         const finishedSessionId = await stopRecording();
 
@@ -441,12 +450,17 @@ export default function LocationHomeScreen({ navigation }: Props) {
         }
 
         try {
-            await upsertRecordingSessionSummary(finishedSessionId, null);
+            await upsertRecordingSessionSummary(
+                finishedSessionId,
+                null,
+                stoppedShareOwnerValue,
+            );
         } catch (error) {
             console.error("RecordingSession summary save error:", error);
         }
 
         setPendingSessionId(finishedSessionId);
+        setPendingSessionShareOwnerValue(stoppedShareOwnerValue);
         setSessionNameInput("");
         setSessionNameModalVisible(true);
     };

@@ -56,6 +56,11 @@ type RecordingSessionListResult = {
     errors?: unknown;
 };
 
+type LiveLocationListResult = {
+    data?: any[] | null;
+    errors?: unknown;
+};
+
 type LocationLogListResult = {
     data?: any[] | null;
     errors?: unknown;
@@ -85,11 +90,24 @@ export default function LocationMapScreen({ route }: Props) {
 
     const selectedLocation = route.params?.selectedLocation ?? null;
     const routeRecordingSessionId = route.params?.recordingSessionId ?? null;
+    const sharedLiveUserId = route.params?.sharedLiveUserId ?? null;
+    const sharedLiveLocationId = route.params?.sharedLiveLocationId ?? null;
 
     const activeSessionId =
         selectedLocation?.recordingSessionId ?? routeRecordingSessionId ?? null;
 
-    const isLiveRecordingMap = Boolean(routeRecordingSessionId);
+    const isSharedLiveLocationMap = Boolean(
+        sharedLiveUserId && routeRecordingSessionId,
+    );
+
+    const isOwnLiveRecordingMap =
+        Boolean(routeRecordingSessionId) && !isSharedLiveLocationMap;
+
+    const shouldShowLiveCurrentLocation =
+        isOwnLiveRecordingMap || isSharedLiveLocationMap;
+
+    // 既存コードの isLiveRecordingMap 条件をなるべく活かすため
+    const isLiveRecordingMap = shouldShowLiveCurrentLocation;
 
     const recordingIntervalMs = route.params?.recordingIntervalMs ?? null;
     const recordingDistanceMeters =
@@ -266,12 +284,14 @@ export default function LocationMapScreen({ route }: Props) {
         try {
             const currentUser = await getCurrentUser();
 
+            const targetUserId = sharedLiveUserId ?? currentUser.userId;
+
             const userProfileModel = client.models.UserProfile as any;
 
             const result = await userProfileModel.list({
                 filter: {
                     userId: {
-                        eq: currentUser.userId,
+                        eq: targetUserId,
                     },
                 },
                 limit: 1000,
@@ -301,18 +321,15 @@ export default function LocationMapScreen({ route }: Props) {
                 },
             });
 
-            const iconUrl = urlResult.url.toString();
-
-            setCurrentUserIconUrl(iconUrl);
+            setCurrentUserIconUrl(urlResult.url.toString());
         } catch (error) {
             console.error("Current user profile icon load error:", error);
             setCurrentUserIconUrl(null);
         }
-    }, []);
+    }, [sharedLiveUserId]);
 
     useEffect(() => {
-        if (!isLiveRecordingMap) {
-            setCurrentLocation(null);
+        if (!isOwnLiveRecordingMap) {
             return;
         }
 
@@ -390,7 +407,91 @@ export default function LocationMapScreen({ route }: Props) {
             cancelled = true;
             subscription?.remove();
         };
-    }, [isLiveRecordingMap]);
+    }, [isOwnLiveRecordingMap]);
+
+    useEffect(() => {
+        if (
+            !isSharedLiveLocationMap ||
+            !sharedLiveUserId ||
+            !routeRecordingSessionId
+        ) {
+            return;
+        }
+
+        const liveLocationModel = client.models.LiveLocation as any;
+
+        const subscription = liveLocationModel
+            .observeQuery({
+                filter: {
+                    userId: {
+                        eq: sharedLiveUserId,
+                    },
+                    recordingSessionId: {
+                        eq: routeRecordingSessionId,
+                    },
+                    isActive: {
+                        eq: true,
+                    },
+                },
+            })
+            .subscribe({
+                next: ({ items }: { items: any[] }) => {
+                    const validItems = (items ?? [])
+                        .filter((item) => {
+                            if (sharedLiveLocationId) {
+                                return item.id === sharedLiveLocationId;
+                            }
+
+                            return true;
+                        })
+                        .filter(
+                            (item) =>
+                                Number.isFinite(Number(item.latitude)) &&
+                                Number.isFinite(Number(item.longitude)),
+                        )
+                        .sort((a, b) => {
+                            const aTime = new Date(
+                                a.updatedAt ?? a.recordedAt ?? 0,
+                            ).getTime();
+                            const bTime = new Date(
+                                b.updatedAt ?? b.recordedAt ?? 0,
+                            ).getTime();
+
+                            return bTime - aTime;
+                        });
+
+                    const latest = validItems[0];
+
+                    if (!latest) {
+                        return;
+                    }
+
+                    setCurrentLocation({
+                        latitude: Number(latest.latitude),
+                        longitude: Number(latest.longitude),
+                    });
+                },
+                error: (error: unknown) => {
+                    console.error("Shared LiveLocation observe error:", error);
+                },
+            });
+
+        return () => {
+            subscription.unsubscribe();
+        };
+    }, [
+        isSharedLiveLocationMap,
+        sharedLiveUserId,
+        sharedLiveLocationId,
+        routeRecordingSessionId,
+    ]);
+
+    useEffect(() => {
+        if (!shouldShowLiveCurrentLocation) {
+            setCurrentLocation(null);
+            setCurrentLocationScreenPoint(null);
+        }
+    }, [shouldShowLiveCurrentLocation]);
 
     useEffect(() => {
         if (!isLiveRecordingMap || !currentLocationScreenPoint) {

@@ -32,6 +32,7 @@ type SessionLogItem = {
 export async function upsertRecordingSessionSummary(
     recordingSessionId: string,
     recordingSessionName?: string | null,
+    liveShareOwnerValue?: string | null,
 ) {
     const logs = await listLocationLogsBySessionId(recordingSessionId);
 
@@ -54,9 +55,14 @@ export async function upsertRecordingSessionSummary(
 
     const distanceMeters = calculateRouteDistanceMeters(routeLogs);
 
-    const sharedOwners = Array.isArray(lastLog.sharedOwners)
-        ? lastLog.sharedOwners
-        : [];
+    const sharedOwnersFromLogs = routeLogs.flatMap((log) =>
+        Array.isArray(log.sharedOwners)
+            ? log.sharedOwners.filter(
+                  (owner): owner is string =>
+                      typeof owner === "string" && owner.length > 0,
+              )
+            : [],
+    );
 
     const summaryName =
         recordingSessionName ??
@@ -81,6 +87,25 @@ export async function upsertRecordingSessionSummary(
     }
 
     const existing = existingResult.data?.[0];
+
+    const existingSharedOwners = Array.isArray(existing?.sharedOwners)
+        ? existing.sharedOwners.filter(
+              (owner: unknown): owner is string =>
+                  typeof owner === "string" && owner.length > 0,
+          )
+        : [];
+
+    const explicitSharedOwners = liveShareOwnerValue
+        ? [liveShareOwnerValue]
+        : [];
+
+    const sharedOwners = Array.from(
+        new Set([
+            ...existingSharedOwners,
+            ...sharedOwnersFromLogs,
+            ...explicitSharedOwners,
+        ]),
+    );
 
     const payload = {
         recordingSessionId,

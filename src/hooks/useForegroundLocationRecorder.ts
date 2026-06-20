@@ -205,6 +205,10 @@ export function useForegroundLocationRecorder({
 
                 const batterySnapshot = await getBatterySnapshot();
 
+                const sharedOwners = liveShareOwnerValue
+                    ? [liveShareOwnerValue]
+                    : undefined;
+
                 const result = await client.models.LocationLog.create({
                     userId: currentUser.userId,
                     latitude,
@@ -213,6 +217,8 @@ export function useForegroundLocationRecorder({
                     recordedAt,
                     memo: "自動記録",
                     recordingSessionId: recordingSessionIdRef.current,
+
+                    sharedOwners,
 
                     batteryLevel: batterySnapshot.batteryLevel ?? undefined,
                     batteryState: batterySnapshot.batteryState ?? undefined,
@@ -242,7 +248,7 @@ export function useForegroundLocationRecorder({
                 console.error("Auto LocationLog create error:", error);
             }
         },
-        [shouldSaveLocation, updateDistanceFromStart],
+        [shouldSaveLocation, updateDistanceFromStart, liveShareOwnerValue],
     );
 
     // 記録開始関数

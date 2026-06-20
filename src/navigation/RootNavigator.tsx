@@ -11,24 +11,26 @@ import ProfileScreen from "../screens/ProfileScreen";
 export type RootStackParamList = {
     LocationHome: undefined;
     LocationLog: undefined;
-    LocationMap:
-        | {
-              recordingSessionId?: string | null;
-              recordingIntervalMs?: number | null;
-              recordingDistanceMeters?: number | null;
-              selectedLocation?: {
-                  id: string;
-                  latitude: number;
-                  longitude: number;
-                  accuracy?: number | null;
-                  recordedAt: string;
-                  memo?: string | null;
-                  recordingSessionId?: string | null;
-                  recordingSessionName?: string | null;
-                  sharedOwners?: string[] | null;
-              };
-          }
-        | undefined;
+    LocationMap: {
+        recordingSessionId?: string | null;
+        recordingIntervalMs?: number | null;
+        recordingDistanceMeters?: number | null;
+
+        sharedLiveUserId?: string | null;
+        sharedLiveLocationId?: string | null;
+
+        selectedLocation?: {
+            id: string;
+            latitude: number;
+            longitude: number;
+            accuracy?: number | null;
+            recordedAt: string;
+            memo?: string | null;
+            recordingSessionId?: string | null;
+            recordingSessionName?: string | null;
+            sharedOwners?: string[] | null;
+        };
+    };
     LocationLogDetail: {
         locationLogId: string;
     };

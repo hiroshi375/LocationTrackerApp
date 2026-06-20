@@ -1,24 +1,37 @@
 // src/screens/LiveLocationMapScreen.tsx
 
+import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import {
+    ActivityIndicator,
+    Alert,
+    Pressable,
+    StyleSheet,
+    Text,
+    View,
+} from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 
 import { client } from "../lib/client";
+import type { RootStackParamList } from "../navigation/RootNavigator";
+
+type Props = NativeStackScreenProps<RootStackParamList, "LiveLocationMap">;
 
 type LiveLocationItem = {
     id: string;
     userId: string;
-    recordingSessionId: string;
+    recordingSessionId: string | null;
+    recordingSessionName?: string | null;
     latitude: number;
     longitude: number;
     accuracy?: number | null;
     updatedAt: string;
+    recordedAt?: string | null;
     isActive: boolean;
     sharedOwners?: string[] | null;
 };
 
-export default function LiveLocationMapScreen() {
+export default function LiveLocationMapScreen({ navigation }: Props) {
     const [liveLocations, setLiveLocations] = useState<LiveLocationItem[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -38,12 +51,18 @@ export default function LiveLocationMapScreen() {
                     const normalizedItems: LiveLocationItem[] = items
                         .map((item) => ({
                             id: item.id,
-                            userId: item.userId,
-                            recordingSessionId: item.recordingSessionId,
+                            userId: item.userId ?? "",
+                            recordingSessionId: item.recordingSessionId ?? null,
+                            recordingSessionName:
+                                item.recordingSessionName ?? null,
                             latitude: Number(item.latitude),
                             longitude: Number(item.longitude),
                             accuracy: item.accuracy ?? null,
-                            updatedAt: item.updatedAt,
+                            updatedAt:
+                                item.updatedAt ??
+                                item.recordedAt ??
+                                new Date().toISOString(),
+                            recordedAt: item.recordedAt ?? null,
                             isActive: Boolean(item.isActive),
                             sharedOwners: Array.isArray(item.sharedOwners)
                                 ? item.sharedOwners
@@ -52,9 +71,16 @@ export default function LiveLocationMapScreen() {
                         .filter(
                             (item) =>
                                 item.isActive &&
+                                item.userId.length > 0 &&
                                 Number.isFinite(item.latitude) &&
                                 Number.isFinite(item.longitude),
-                        );
+                        )
+                        .sort((a, b) => {
+                            return (
+                                new Date(b.updatedAt).getTime() -
+                                new Date(a.updatedAt).getTime()
+                            );
+                        });
 
                     setLiveLocations(normalizedItems);
                     setLoading(false);
@@ -75,13 +101,34 @@ export default function LiveLocationMapScreen() {
             return null;
         }
 
-        return liveLocations.slice().sort((a, b) => {
-            return (
-                new Date(b.updatedAt).getTime() -
-                new Date(a.updatedAt).getTime()
-            );
-        })[0];
+        return liveLocations[0];
     }, [liveLocations]);
+
+    const openLocationMap = (liveLocation: LiveLocationItem) => {
+        if (!liveLocation.recordingSessionId) {
+            Alert.alert(
+                "表示できません",
+                "共有中の現在地にセッションIDがありません。",
+            );
+            return;
+        }
+
+        navigation.navigate("LocationMap", {
+            recordingSessionId: liveLocation.recordingSessionId,
+            sharedLiveUserId: liveLocation.userId,
+            sharedLiveLocationId: liveLocation.id,
+            selectedLocation: {
+                id: liveLocation.id,
+                latitude: liveLocation.latitude,
+                longitude: liveLocation.longitude,
+                accuracy: liveLocation.accuracy ?? null,
+                recordedAt: liveLocation.updatedAt,
+                memo: "共有中の現在地",
+                recordingSessionId: liveLocation.recordingSessionId,
+                recordingSessionName: liveLocation.recordingSessionName ?? null,
+            },
+        });
+    };
 
     if (loading) {
         return (
@@ -122,6 +169,7 @@ export default function LiveLocationMapScreen() {
                         description={`更新: ${formatDateTime(
                             location.updatedAt,
                         )}`}
+                        onPress={() => openLocationMap(location)}
                     >
                         <View style={styles.liveMarkerOuter}>
                             <View style={styles.liveMarkerInner} />
@@ -132,15 +180,24 @@ export default function LiveLocationMapScreen() {
 
             <View style={styles.infoBox}>
                 <Text style={styles.infoTitle}>共有中の現在地</Text>
+
                 <Text style={styles.infoText}>
                     更新日時: {formatDateTime(latestLiveLocation.updatedAt)}
                 </Text>
+
+                <Text style={styles.infoText}>
+                    セッションID:{" "}
+                    {latestLiveLocation.recordingSessionId ?? "なし"}
+                </Text>
+
                 <Text style={styles.infoText}>
                     緯度: {latestLiveLocation.latitude.toFixed(6)}
                 </Text>
+
                 <Text style={styles.infoText}>
                     経度: {latestLiveLocation.longitude.toFixed(6)}
                 </Text>
+
                 <Text style={styles.infoText}>
                     精度:{" "}
                     {latestLiveLocation.accuracy !== null &&
@@ -148,6 +205,15 @@ export default function LiveLocationMapScreen() {
                         ? `${Math.round(latestLiveLocation.accuracy)}m`
                         : "不明"}
                 </Text>
+
+                <Pressable
+                    style={styles.openMapButton}
+                    onPress={() => openLocationMap(latestLiveLocation)}
+                >
+                    <Text style={styles.openMapButtonText}>
+                        ルート地図を表示
+                    </Text>
+                </Pressable>
             </View>
         </View>
     );
@@ -214,5 +280,17 @@ const styles = StyleSheet.create({
         fontSize: 13,
         marginBottom: 2,
         color: "#333",
+    },
+    openMapButton: {
+        marginTop: 10,
+        backgroundColor: "#4b6f8f",
+        borderRadius: 8,
+        paddingVertical: 9,
+        alignItems: "center",
+    },
+    openMapButtonText: {
+        color: "#fff",
+        fontSize: 14,
+        fontWeight: "bold",
     },
 });

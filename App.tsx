@@ -1,4 +1,5 @@
 import "react-native-get-random-values";
+import "./src/tasks/backgroundLocationTask";
 
 import { Authenticator } from "@aws-amplify/ui-react-native";
 import { Amplify } from "aws-amplify";

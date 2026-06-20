@@ -76,6 +76,16 @@
                     }
                 }
             ],
+            [
+                "expo-location",
+                {
+                    "isIosBackgroundLocationEnabled": true,
+                    "isAndroidBackgroundLocationEnabled": true,
+                    "isAndroidForegroundServiceEnabled": true,
+                    "locationWhenInUsePermission": "現在地を記録するために位置情報を使用します。",
+                    "locationAlwaysAndWhenInUsePermission": "アプリを閉じている間も自動記録を継続するために位置情報を使用します。"
+                }
+            ],
             "expo-asset"
         ],
         "extra": {

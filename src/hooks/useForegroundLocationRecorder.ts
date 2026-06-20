@@ -5,6 +5,12 @@ import { Alert } from "react-native";
 
 import * as Battery from "expo-battery";
 import { client } from "../lib/client";
+import {
+    BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED,
+    ensureBackgroundLocationPermission,
+    startBackgroundLocationRecording,
+    stopBackgroundLocationRecording,
+} from "../services/backgroundLocationService";
 
 type SavedLocation = {
     latitude: number;
@@ -257,10 +263,18 @@ export function useForegroundLocationRecorder({
             return;
         }
 
-        const foregroundPermission =
-            await Location.requestForegroundPermissionsAsync();
+        try {
+            await ensureBackgroundLocationPermission();
+        } catch (error) {
+            console.error("Background location permission error:", error);
 
-        if (foregroundPermission.status !== "granted") {
+            if (
+                error instanceof Error &&
+                error.message === BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED
+            ) {
+                return;
+            }
+
             Alert.alert(
                 "位置情報の許可が必要です",
                 "自動記録を使うには位置情報の許可が必要です。",
@@ -291,6 +305,37 @@ export function useForegroundLocationRecorder({
         await updateLiveLocation(currentLocation);
         await saveLocationLog(currentLocation, true);
 
+        try {
+            const currentUser = await getCurrentUser();
+
+            await startBackgroundLocationRecording({
+                userId: currentUser.userId,
+                recordingSessionId: newSessionId,
+                intervalMs,
+                distanceMeters,
+                liveShareOwnerValue,
+                lastSavedLocation: {
+                    latitude: currentLocation.coords.latitude,
+                    longitude: currentLocation.coords.longitude,
+                    recordedAt: Date.now(),
+                },
+            });
+        } catch (error) {
+            console.error("Start background location recording error:", error);
+
+            if (
+                error instanceof Error &&
+                error.message === BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED
+            ) {
+                return;
+            }
+
+            Alert.alert(
+                "バックグラウンド記録エラー",
+                "バックグラウンドでの位置記録を開始できませんでした。アプリ起動中の自動記録は継続します。",
+            );
+        }
+
         const subscription = await Location.watchPositionAsync(
             {
                 accuracy: Location.Accuracy.Balanced,
@@ -305,7 +350,13 @@ export function useForegroundLocationRecorder({
 
         subscriptionRef.current = subscription;
         setIsRecording(true);
-    }, [saveLocationLog, updateLiveLocation]);
+    }, [
+        saveLocationLog,
+        updateLiveLocation,
+        intervalMs,
+        distanceMeters,
+        liveShareOwnerValue,
+    ]);
 
     // 記録停止関数
     const stopRecording = useCallback(async (): Promise<string | null> => {
@@ -313,6 +364,12 @@ export function useForegroundLocationRecorder({
 
         subscriptionRef.current?.remove();
         subscriptionRef.current = null;
+
+        try {
+            await stopBackgroundLocationRecording();
+        } catch (error) {
+            console.error("Stop background location recording error:", error);
+        }
 
         if (recordingSessionIdRef.current) {
             try {

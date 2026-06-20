@@ -12,6 +12,23 @@ import {
 export const BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED =
     "BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED";
 
+export class BackgroundLocationPermissionError extends Error {
+    code = BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED;
+
+    constructor() {
+        super(BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED);
+        this.name = "BackgroundLocationPermissionError";
+    }
+}
+
+export function isBackgroundLocationPermissionError(error: unknown) {
+    return (
+        error instanceof BackgroundLocationPermissionError ||
+        (error instanceof Error &&
+            error.message === BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED)
+    );
+}
+
 type StartBackgroundLocationRecordingParams = {
     userId: string;
     recordingSessionId: string;
@@ -88,7 +105,7 @@ export async function ensureBackgroundLocationPermission() {
     const foregroundPermission =
         await Location.requestForegroundPermissionsAsync();
 
-    if (foregroundPermission.status !== "granted") {
+    if (foregroundPermission.status !== Location.PermissionStatus.GRANTED) {
         Alert.alert(
             "位置情報の許可が必要です",
             "自動記録を使うには、位置情報の使用を許可してください。",
@@ -99,19 +116,19 @@ export async function ensureBackgroundLocationPermission() {
 
     let backgroundPermission = await Location.getBackgroundPermissionsAsync();
 
-    if (backgroundPermission.status === "granted") {
+    if (backgroundPermission.status === Location.PermissionStatus.GRANTED) {
         return;
     }
 
     backgroundPermission = await Location.requestBackgroundPermissionsAsync();
 
-    if (backgroundPermission.status === "granted") {
+    if (backgroundPermission.status === Location.PermissionStatus.GRANTED) {
         return;
     }
 
     Alert.alert(
         "位置情報の「常に許可」が必要です",
-        "バックグラウンドで自動記録を続けるには、端末の設定で位置情報を「常に許可」に変更してください。",
+        "バックグラウンドで自動記録を続けるには、端末の設定で位置情報を「常に許可」に変更してください。変更後はアプリに戻り、もう一度「自動記録開始」を押してください。",
         [
             {
                 text: "キャンセル",
@@ -126,5 +143,5 @@ export async function ensureBackgroundLocationPermission() {
         ],
     );
 
-    throw new Error(BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED);
+    throw new BackgroundLocationPermissionError();
 }

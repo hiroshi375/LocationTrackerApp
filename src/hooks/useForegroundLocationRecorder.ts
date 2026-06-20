@@ -6,8 +6,8 @@ import { Alert } from "react-native";
 import * as Battery from "expo-battery";
 import { client } from "../lib/client";
 import {
-    BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED,
     ensureBackgroundLocationPermission,
+    isBackgroundLocationPermissionError,
     startBackgroundLocationRecording,
     stopBackgroundLocationRecording,
 } from "../services/backgroundLocationService";
@@ -257,105 +257,176 @@ export function useForegroundLocationRecorder({
         [shouldSaveLocation, updateDistanceFromStart, liveShareOwnerValue],
     );
 
-    // 記録開始関数
-    const startRecording = useCallback(async () => {
-        if (subscriptionRef.current) {
-            return;
-        }
+    const resetRecordingState = useCallback(() => {
+        subscriptionRef.current?.remove();
+        subscriptionRef.current = null;
 
-        try {
-            await ensureBackgroundLocationPermission();
-        } catch (error) {
-            console.error("Background location permission error:", error);
-
-            if (
-                error instanceof Error &&
-                error.message === BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED
-            ) {
-                return;
-            }
-
-            Alert.alert(
-                "位置情報の許可が必要です",
-                "自動記録を使うには位置情報の許可が必要です。",
-            );
-            return;
-        }
-
-        const newSessionId = createRecordingSessionId();
-
-        recordingSessionIdRef.current = newSessionId;
-        setActiveRecordingSessionId(newSessionId);
+        liveLocationIdRef.current = null;
+        recordingSessionIdRef.current = null;
+        startLocationRef.current = null;
         lastSavedLocationRef.current = null;
 
-        const startedAt = new Date().toISOString();
-        setRecordingStartedAt(startedAt);
+        setActiveRecordingSessionId(null);
+        setRecordingStartedAt(null);
+        setDistanceFromStartMeters(null);
+        setIsRecording(false);
+    }, []);
 
-        const currentLocation = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Balanced,
-        });
+    const isStartingRef = useRef(false);
 
-        startLocationRef.current = {
-            latitude: currentLocation.coords.latitude,
-            longitude: currentLocation.coords.longitude,
-        };
+    // 記録開始関数
+    const startRecording = useCallback(async () => {
+        if (subscriptionRef.current || isStartingRef.current) {
+            return;
+        }
 
-        setDistanceFromStartMeters(0);
-
-        await updateLiveLocation(currentLocation);
-        await saveLocationLog(currentLocation, true);
+        isStartingRef.current = true;
 
         try {
-            const currentUser = await getCurrentUser();
+            try {
+                await ensureBackgroundLocationPermission();
+            } catch (error) {
+                if (isBackgroundLocationPermissionError(error)) {
+                    return;
+                }
 
-            await startBackgroundLocationRecording({
-                userId: currentUser.userId,
-                recordingSessionId: newSessionId,
-                intervalMs,
-                distanceMeters,
-                liveShareOwnerValue,
-                lastSavedLocation: {
-                    latitude: currentLocation.coords.latitude,
-                    longitude: currentLocation.coords.longitude,
-                    recordedAt: Date.now(),
-                },
-            });
-        } catch (error) {
-            console.error("Start background location recording error:", error);
+                console.error("Location permission error:", error);
 
-            if (
-                error instanceof Error &&
-                error.message === BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED
-            ) {
+                Alert.alert(
+                    "位置情報の許可が必要です",
+                    "自動記録を使うには位置情報の許可が必要です。",
+                );
                 return;
             }
 
-            Alert.alert(
-                "バックグラウンド記録エラー",
-                "バックグラウンドでの位置記録を開始できませんでした。アプリ起動中の自動記録は継続します。",
-            );
+            const newSessionId = createRecordingSessionId();
+
+            recordingSessionIdRef.current = newSessionId;
+            setActiveRecordingSessionId(newSessionId);
+            lastSavedLocationRef.current = null;
+
+            const startedAt = new Date().toISOString();
+            setRecordingStartedAt(startedAt);
+
+            let currentLocation: Location.LocationObject;
+
+            try {
+                currentLocation = await Location.getCurrentPositionAsync({
+                    accuracy: Location.Accuracy.Balanced,
+                });
+            } catch (error) {
+                resetRecordingState();
+
+                console.error("Get current location error:", error);
+
+                Alert.alert(
+                    "現在地を取得できませんでした",
+                    "位置情報サービスが有効になっているか確認してください。",
+                );
+                return;
+            }
+
+            startLocationRef.current = {
+                latitude: currentLocation.coords.latitude,
+                longitude: currentLocation.coords.longitude,
+            };
+
+            setDistanceFromStartMeters(0);
+
+            try {
+                const currentUser = await getCurrentUser();
+
+                await startBackgroundLocationRecording({
+                    userId: currentUser.userId,
+                    recordingSessionId: newSessionId,
+                    intervalMs,
+                    distanceMeters,
+                    liveShareOwnerValue,
+                    lastSavedLocation: {
+                        latitude: currentLocation.coords.latitude,
+                        longitude: currentLocation.coords.longitude,
+                        recordedAt: Date.now(),
+                    },
+                });
+            } catch (error) {
+                try {
+                    await stopBackgroundLocationRecording();
+                } catch (stopError) {
+                    console.error(
+                        "Stop background after start error:",
+                        stopError,
+                    );
+                }
+
+                resetRecordingState();
+
+                if (isBackgroundLocationPermissionError(error)) {
+                    return;
+                }
+
+                console.error(
+                    "Start background location recording error:",
+                    error,
+                );
+
+                Alert.alert(
+                    "バックグラウンド記録エラー",
+                    "バックグラウンドでの位置記録を開始できませんでした。位置情報の権限設定を確認してください。",
+                );
+                return;
+            }
+
+            let subscription: Location.LocationSubscription;
+
+            try {
+                subscription = await Location.watchPositionAsync(
+                    {
+                        accuracy: Location.Accuracy.Balanced,
+                        timeInterval: 2000,
+                        distanceInterval: 1,
+                    },
+                    async (location) => {
+                        await updateLiveLocation(location);
+                        await saveLocationLog(location);
+                    },
+                );
+            } catch (error) {
+                try {
+                    await stopBackgroundLocationRecording();
+                } catch (stopError) {
+                    console.error(
+                        "Stop background after watch error:",
+                        stopError,
+                    );
+                }
+
+                resetRecordingState();
+
+                console.error("Watch position start error:", error);
+
+                Alert.alert(
+                    "自動記録を開始できませんでした",
+                    "位置情報の監視を開始できませんでした。位置情報サービスを確認してください。",
+                );
+
+                return;
+            }
+
+            subscriptionRef.current = subscription;
+            setIsRecording(true);
+
+            await updateLiveLocation(currentLocation);
+            await saveLocationLog(currentLocation, true);
+        } finally {
+            isStartingRef.current = false;
         }
-
-        const subscription = await Location.watchPositionAsync(
-            {
-                accuracy: Location.Accuracy.Balanced,
-                timeInterval: 2000,
-                distanceInterval: 1,
-            },
-            async (location) => {
-                await updateLiveLocation(location);
-                await saveLocationLog(location);
-            },
-        );
-
-        subscriptionRef.current = subscription;
-        setIsRecording(true);
     }, [
         saveLocationLog,
         updateLiveLocation,
         intervalMs,
         distanceMeters,
         liveShareOwnerValue,
+        resetRecordingState,
     ]);
 
     // 記録停止関数

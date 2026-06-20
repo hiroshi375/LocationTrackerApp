@@ -54,8 +54,31 @@ TaskManager.defineTask(
             return;
         }
 
-        for (const location of locations) {
-            await saveBackgroundLocation(location, state);
+        const sortedLocations = [...locations].sort((a, b) => {
+            const aTime =
+                typeof a.timestamp === "number" && Number.isFinite(a.timestamp)
+                    ? a.timestamp
+                    : 0;
+
+            const bTime =
+                typeof b.timestamp === "number" && Number.isFinite(b.timestamp)
+                    ? b.timestamp
+                    : 0;
+
+            return aTime - bTime;
+        });
+
+        let currentState = state;
+
+        for (const location of sortedLocations) {
+            const nextState = await saveBackgroundLocation(
+                location,
+                currentState,
+            );
+
+            if (nextState) {
+                currentState = nextState;
+            }
         }
     },
 );
@@ -84,23 +107,29 @@ async function setBackgroundRecordingState(state: BackgroundRecordingState) {
 async function saveBackgroundLocation(
     location: Location.LocationObject,
     state: BackgroundRecordingState,
-) {
+): Promise<BackgroundRecordingState | null> {
     const latitude = location.coords.latitude;
     const longitude = location.coords.longitude;
 
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-        return;
+        return state;
     }
 
-    if (!shouldSaveLocation(latitude, longitude, state)) {
-        return;
-    }
+    const recordedAtMs =
+        typeof location.timestamp === "number" &&
+        Number.isFinite(location.timestamp)
+            ? location.timestamp
+            : Date.now();
 
-    const recordedAt = new Date().toISOString();
+    if (!shouldSaveLocation(latitude, longitude, recordedAtMs, state)) {
+        return state;
+    }
 
     const sharedOwners = state.liveShareOwnerValue
         ? [state.liveShareOwnerValue]
         : undefined;
+
+    const recordedAt = new Date(recordedAtMs).toISOString();
 
     const result = await client.models.LocationLog.create({
         userId: state.userId,
@@ -115,34 +144,39 @@ async function saveBackgroundLocation(
 
     if (result.errors) {
         console.error("Background LocationLog create errors:", result.errors);
-        return;
+        return state;
     }
 
-    await updateBackgroundLiveLocation(location, state);
+    const liveLocationId = await updateBackgroundLiveLocation(location, state);
 
-    await setBackgroundRecordingState({
+    const nextState: BackgroundRecordingState = {
         ...state,
+        liveLocationId: liveLocationId ?? state.liveLocationId ?? null,
         lastSavedLocation: {
             latitude,
             longitude,
-            recordedAt: Date.now(),
+            recordedAt: recordedAtMs,
         },
-    });
+    };
+
+    await setBackgroundRecordingState(nextState);
+
+    return nextState;
 }
 
 async function updateBackgroundLiveLocation(
     location: Location.LocationObject,
     state: BackgroundRecordingState,
-) {
+): Promise<string | null | undefined> {
     if (!state.liveShareOwnerValue) {
-        return;
+        return state.liveLocationId;
     }
 
     const latitude = location.coords.latitude;
     const longitude = location.coords.longitude;
 
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-        return;
+        return state.liveLocationId;
     }
 
     const liveLocationModel = client.models.LiveLocation as any;
@@ -171,7 +205,7 @@ async function updateBackgroundLiveLocation(
             );
         }
 
-        return;
+        return state.liveLocationId;
     }
 
     const createResult = (await liveLocationModel.create(
@@ -183,18 +217,16 @@ async function updateBackgroundLiveLocation(
             "Background LiveLocation create errors:",
             createResult.errors,
         );
-        return;
+        return state.liveLocationId;
     }
 
-    await setBackgroundRecordingState({
-        ...state,
-        liveLocationId: createResult.data?.id ?? null,
-    });
+    return createResult.data?.id ?? null;
 }
 
 function shouldSaveLocation(
     latitude: number,
     longitude: number,
+    recordedAtMs: number,
     state: BackgroundRecordingState,
 ) {
     const lastSavedLocation = state.lastSavedLocation;
@@ -203,7 +235,11 @@ function shouldSaveLocation(
         return true;
     }
 
-    const elapsedMs = Date.now() - lastSavedLocation.recordedAt;
+    const elapsedMs = recordedAtMs - lastSavedLocation.recordedAt;
+
+    if (elapsedMs <= 0) {
+        return false;
+    }
 
     const distance = calculateDistanceMeters(
         lastSavedLocation.latitude,

@@ -1,7 +1,7 @@
 import { getCurrentUser } from "aws-amplify/auth";
 import * as Location from "expo-location";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert } from "react-native";
+import { Alert, AppState } from "react-native";
 
 import * as Battery from "expo-battery";
 import { client } from "../lib/client";
@@ -10,6 +10,7 @@ import {
     isBackgroundLocationPermissionError,
     startBackgroundLocationRecording,
     stopBackgroundLocationRecording,
+    updateBackgroundRecordingLiveLocationId,
 } from "../services/backgroundLocationService";
 
 type SavedLocation = {
@@ -55,19 +56,25 @@ export function useForegroundLocationRecorder({
         longitude: number;
     } | null>(null);
 
+    const appStateRef = useRef(AppState.currentState);
+
     const [distanceFromStartMeters, setDistanceFromStartMeters] = useState<
         number | null
     >(null);
 
     // 位置を保存すべきか判定する関数
     const shouldSaveLocation = useCallback(
-        (latitude: number, longitude: number) => {
+        (latitude: number, longitude: number, recordedAtMs: number) => {
             if (!lastSavedLocationRef.current) {
                 return true;
             }
 
             const elapsedMs =
-                Date.now() - lastSavedLocationRef.current.recordedAt;
+                recordedAtMs - lastSavedLocationRef.current.recordedAt;
+
+            if (elapsedMs <= 0) {
+                return false;
+            }
 
             const distance = calculateDistanceMeters(
                 lastSavedLocationRef.current.latitude,
@@ -198,16 +205,25 @@ export function useForegroundLocationRecorder({
                 return;
             }
 
+            const recordedAtMs =
+                typeof location.timestamp === "number" &&
+                Number.isFinite(location.timestamp)
+                    ? location.timestamp
+                    : Date.now();
+
+            const recordedAt = new Date(recordedAtMs).toISOString();
+
             updateDistanceFromStart(location);
 
-            if (!forceSave && !shouldSaveLocation(latitude, longitude)) {
+            if (
+                !forceSave &&
+                !shouldSaveLocation(latitude, longitude, recordedAtMs)
+            ) {
                 return;
             }
 
             try {
                 const currentUser = await getCurrentUser();
-
-                const recordedAt = new Date().toISOString();
 
                 const batterySnapshot = await getBatterySnapshot();
 
@@ -242,7 +258,7 @@ export function useForegroundLocationRecorder({
                 lastSavedLocationRef.current = {
                     latitude,
                     longitude,
-                    recordedAt: Date.now(),
+                    recordedAt: recordedAtMs,
                 };
 
                 console.log("Auto location saved:", {
@@ -326,6 +342,12 @@ export function useForegroundLocationRecorder({
                 return;
             }
 
+            const currentLocationRecordedAtMs =
+                typeof currentLocation.timestamp === "number" &&
+                Number.isFinite(currentLocation.timestamp)
+                    ? currentLocation.timestamp
+                    : Date.now();
+
             startLocationRef.current = {
                 latitude: currentLocation.coords.latitude,
                 longitude: currentLocation.coords.longitude,
@@ -345,7 +367,7 @@ export function useForegroundLocationRecorder({
                     lastSavedLocation: {
                         latitude: currentLocation.coords.latitude,
                         longitude: currentLocation.coords.longitude,
-                        recordedAt: Date.now(),
+                        recordedAt: currentLocationRecordedAtMs,
                     },
                 });
             } catch (error) {
@@ -382,10 +404,14 @@ export function useForegroundLocationRecorder({
                 subscription = await Location.watchPositionAsync(
                     {
                         accuracy: Location.Accuracy.Balanced,
-                        timeInterval: 2000,
-                        distanceInterval: 1,
+                        timeInterval: intervalMs,
+                        distanceInterval: distanceMeters,
                     },
                     async (location) => {
+                        if (appStateRef.current !== "active") {
+                            return;
+                        }
+
                         await updateLiveLocation(location);
                         await saveLocationLog(location);
                     },
@@ -416,6 +442,9 @@ export function useForegroundLocationRecorder({
             setIsRecording(true);
 
             await updateLiveLocation(currentLocation);
+            await updateBackgroundRecordingLiveLocationId(
+                liveLocationIdRef.current,
+            );
             await saveLocationLog(currentLocation, true);
         } finally {
             isStartingRef.current = false;
@@ -484,6 +513,19 @@ export function useForegroundLocationRecorder({
         return () => {
             subscriptionRef.current?.remove();
             subscriptionRef.current = null;
+        };
+    }, []);
+
+    useEffect(() => {
+        const subscription = AppState.addEventListener(
+            "change",
+            (nextState) => {
+                appStateRef.current = nextState;
+            },
+        );
+
+        return () => {
+            subscription.remove();
         };
     }, []);
 

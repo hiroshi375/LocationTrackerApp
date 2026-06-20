@@ -3,6 +3,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import { Alert, Linking } from "react-native";
+import { client } from "../lib/client";
 
 import {
     BACKGROUND_LOCATION_TASK_NAME,
@@ -96,6 +97,26 @@ export async function stopBackgroundLocationRecording() {
 
     if (hasStarted) {
         await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME);
+    }
+
+    const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);
+
+    if (raw) {
+        try {
+            const state = JSON.parse(raw) as {
+                liveLocationId?: string | null;
+            };
+
+            if (state.liveLocationId) {
+                await client.models.LiveLocation.update({
+                    id: state.liveLocationId,
+                    isActive: false,
+                    updatedAt: new Date().toISOString(),
+                });
+            }
+        } catch (error) {
+            console.error("Background LiveLocation stop update error:", error);
+        }
     }
 
     await AsyncStorage.removeItem(BACKGROUND_RECORDING_STATE_KEY);

@@ -29,6 +29,7 @@ type LocationLogItem = {
     memo?: string | null;
     recordingSessionId?: string | null;
     recordingSessionName?: string | null;
+    source?: string | null;
 };
 
 type RecordingSessionItem = {
@@ -570,31 +571,9 @@ export default function LocationMapScreen({ route }: Props) {
             return;
         }
 
-        const sessionRouteLogs = logs
-            .filter((log) => log.recordingSessionId === activeSessionId)
-            .filter(
-                (log) =>
-                    Number.isFinite(log.latitude) &&
-                    Number.isFinite(log.longitude),
-            )
-            .sort((a, b) => {
-                return (
-                    new Date(a.recordedAt).getTime() -
-                    new Date(b.recordedAt).getTime()
-                );
-            })
-            .filter((log, index, array) => {
-                if (index === 0) {
-                    return true;
-                }
-
-                const previous = array[index - 1];
-
-                return (
-                    Math.abs(previous.latitude - log.latitude) > 0.000001 ||
-                    Math.abs(previous.longitude - log.longitude) > 0.000001
-                );
-            });
+        const sessionRouteLogs = buildRouteLogs(
+            logs.filter((log) => log.recordingSessionId === activeSessionId),
+        );
 
         const coordinates = sessionRouteLogs.map((log) => ({
             latitude: log.latitude,
@@ -661,6 +640,10 @@ export default function LocationMapScreen({ route }: Props) {
             void loadLogs(true);
             void loadCurrentUserProfileIcon();
 
+            if (!isLiveRecordingMap) {
+                return;
+            }
+
             const timerId = setInterval(() => {
                 void loadLogs(false);
             }, 5000);
@@ -668,7 +651,7 @@ export default function LocationMapScreen({ route }: Props) {
             return () => {
                 clearInterval(timerId);
             };
-        }, [loadLogs, loadCurrentUserProfileIcon]),
+        }, [loadLogs, loadCurrentUserProfileIcon, isLiveRecordingMap]),
     );
 
     if (!hasLoaded || loading) {
@@ -683,7 +666,39 @@ export default function LocationMapScreen({ route }: Props) {
         ? logs.filter((log) => log.recordingSessionId === activeSessionId)
         : logs;
 
-    const latestRecordedLog = visibleLogs.length > 0 ? visibleLogs[0] : null;
+    if (visibleLogs.length === 0 && !selectedLocation) {
+        return (
+            <View style={styles.center}>
+                <Text>表示できる位置履歴がありません。</Text>
+            </View>
+        );
+    }
+
+    const isSelectedMode = selectedLocation !== null;
+
+    const routeLogs = buildRouteLogs(visibleLogs);
+
+    const latest =
+        routeLogs.length > 0
+            ? routeLogs[routeLogs.length - 1]
+            : (visibleLogs[0] ?? null);
+
+    const displayLocation = selectedLocation ?? latest;
+
+    if (!displayLocation) {
+        return (
+            <View style={styles.center}>
+                <Text>表示できる位置情報がありません。</Text>
+            </View>
+        );
+    }
+    const routeCoordinates = routeLogs.map((log) => ({
+        latitude: log.latitude,
+        longitude: log.longitude,
+    }));
+
+    const latestRecordedLog =
+        routeLogs.length > 0 ? routeLogs[routeLogs.length - 1] : null;
 
     const currentLocationLineCoordinates =
         isLiveRecordingMap && latestRecordedLog && currentLocation
@@ -695,56 +710,6 @@ export default function LocationMapScreen({ route }: Props) {
                   currentLocation,
               ]
             : [];
-
-    if (visibleLogs.length === 0 && !selectedLocation) {
-        return (
-            <View style={styles.center}>
-                <Text>表示できる位置履歴がありません。</Text>
-            </View>
-        );
-    }
-
-    const latest = visibleLogs[0] ?? null;
-    const displayLocation = selectedLocation ?? latest;
-
-    if (!displayLocation) {
-        return (
-            <View style={styles.center}>
-                <Text>表示できる位置情報がありません。</Text>
-            </View>
-        );
-    }
-
-    const isSelectedMode = selectedLocation !== null;
-
-    const routeLogs = visibleLogs
-        .filter(
-            (log) =>
-                Number.isFinite(log.latitude) && Number.isFinite(log.longitude),
-        )
-        .sort((a, b) => {
-            return (
-                new Date(a.recordedAt).getTime() -
-                new Date(b.recordedAt).getTime()
-            );
-        })
-        .filter((log, index, array) => {
-            if (index === 0) {
-                return true;
-            }
-
-            const previous = array[index - 1];
-
-            return (
-                Math.abs(previous.latitude - log.latitude) > 0.000001 ||
-                Math.abs(previous.longitude - log.longitude) > 0.000001
-            );
-        });
-
-    const routeCoordinates = routeLogs.map((log) => ({
-        latitude: log.latitude,
-        longitude: log.longitude,
-    }));
 
     const fitTargetCoordinates =
         isLiveRecordingMap && currentLocation
@@ -965,7 +930,7 @@ export default function LocationMapScreen({ route }: Props) {
 
                 {showPoints &&
                     selectedLocation &&
-                    !visibleLogs.some(
+                    !routeLogs.some(
                         (log) => log.id === selectedLocation.id,
                     ) && (
                         <Marker
@@ -1234,6 +1199,80 @@ function calculateDistanceMeters(
     return earthRadiusMeters * c;
 }
 
+const SAME_SECOND_DISTANCE_THRESHOLD_METERS = 8;
+const MAX_ROUTE_SPEED_METERS_PER_SECOND = 80;
+
+function buildRouteLogs(logs: LocationLogItem[]) {
+    const sortedLogs = [...logs]
+        .filter(
+            (log) =>
+                Number.isFinite(log.latitude) &&
+                Number.isFinite(log.longitude) &&
+                Number.isFinite(new Date(log.recordedAt).getTime()),
+        )
+        .sort((a, b) => {
+            return (
+                new Date(a.recordedAt).getTime() -
+                new Date(b.recordedAt).getTime()
+            );
+        });
+
+    const result: LocationLogItem[] = [];
+
+    for (const log of sortedLogs) {
+        const previous = result[result.length - 1];
+
+        if (!previous) {
+            result.push(log);
+            continue;
+        }
+
+        const previousTime = new Date(previous.recordedAt).getTime();
+        const currentTime = new Date(log.recordedAt).getTime();
+
+        const elapsedMs = currentTime - previousTime;
+
+        if (elapsedMs <= 0) {
+            continue;
+        }
+
+        const distance = calculateDistanceMeters(
+            previous.latitude,
+            previous.longitude,
+            log.latitude,
+            log.longitude,
+        );
+
+        // ほぼ同じ地点は除外
+        if (distance < 1) {
+            continue;
+        }
+
+        // 同じ秒の近接ログは除外
+        const previousSecond = Math.floor(previousTime / 1000);
+        const currentSecond = Math.floor(currentTime / 1000);
+
+        if (
+            previousSecond === currentSecond &&
+            distance < SAME_SECOND_DISTANCE_THRESHOLD_METERS
+        ) {
+            continue;
+        }
+
+        // GPS飛び値を除外
+        const elapsedSeconds = elapsedMs / 1000;
+        const speedMetersPerSecond = distance / elapsedSeconds;
+
+        if (speedMetersPerSecond > MAX_ROUTE_SPEED_METERS_PER_SECOND) {
+            continue;
+        }
+
+        result.push(log);
+    }
+
+    return result;
+}
+
 function toRadians(value: number) {
     return (value * Math.PI) / 180;
 }
@@ -1271,11 +1310,13 @@ function normalizeLocationLogs(data: any[]): LocationLogItem[] {
             memo: item.memo,
             recordingSessionId: item.recordingSessionId ?? null,
             recordingSessionName: item.recordingSessionName ?? null,
+            source: item.source ?? null,
         }))
         .filter(
             (item) =>
                 Number.isFinite(item.latitude) &&
-                Number.isFinite(item.longitude),
+                Number.isFinite(item.longitude) &&
+                Number.isFinite(new Date(item.recordedAt).getTime()),
         )
         .sort((a, b) => {
             return (

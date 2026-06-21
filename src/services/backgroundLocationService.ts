@@ -166,3 +166,27 @@ export async function ensureBackgroundLocationPermission() {
 
     throw new BackgroundLocationPermissionError();
 }
+
+export async function updateBackgroundRecordingLiveLocationId(
+    liveLocationId: string | null,
+) {
+    const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);
+
+    if (!raw) {
+        return;
+    }
+
+    try {
+        const state = JSON.parse(raw);
+
+        await AsyncStorage.setItem(
+            BACKGROUND_RECORDING_STATE_KEY,
+            JSON.stringify({
+                ...state,
+                liveLocationId,
+            }),
+        );
+    } catch (error) {
+        console.error("Update background liveLocationId error:", error);
+    }
+}

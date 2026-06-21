@@ -62,6 +62,8 @@ export function useForegroundLocationRecorder({
         number | null
     >(null);
 
+    const forceDistanceMeters = Math.max(distanceMeters * 5, 100);
+
     // 位置を保存すべきか判定する関数
     const shouldSaveLocation = useCallback(
         (latitude: number, longitude: number, recordedAtMs: number) => {
@@ -83,17 +85,23 @@ export function useForegroundLocationRecorder({
                 longitude,
             );
 
+            //指定間隔未満なら保存しない
+            if (elapsedMs < intervalMs && distance < forceDistanceMeters) {
+                return false;
+            }
+
             if (elapsedMs >= intervalMs) {
                 return true;
             }
 
-            if (distance >= distanceMeters) {
+            //100m以上動いた場合は例外的に保存
+            if (distance >= forceDistanceMeters) {
                 return true;
             }
 
             return false;
         },
-        [intervalMs, distanceMeters],
+        [intervalMs],
     );
 
     //
@@ -239,6 +247,7 @@ export function useForegroundLocationRecorder({
                     recordedAt,
                     memo: "自動記録",
                     recordingSessionId: recordingSessionIdRef.current,
+                    source: "foreground",
 
                     sharedOwners,
 

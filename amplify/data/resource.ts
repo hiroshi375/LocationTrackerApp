@@ -22,6 +22,8 @@ const schema = a.schema({
             batteryLevel: a.float(),
             batteryState: a.string(),
             lowPowerMode: a.boolean(),
+
+            source: a.string(),
         })
         .authorization((allow) => [
             allow.owner(),

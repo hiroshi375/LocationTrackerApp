@@ -139,6 +139,7 @@ async function saveBackgroundLocation(
         recordedAt,
         memo: "自動記録",
         recordingSessionId: state.recordingSessionId,
+        source: "background",
         sharedOwners,
     });
 
@@ -223,6 +224,8 @@ async function updateBackgroundLiveLocation(
     return createResult.data?.id ?? null;
 }
 
+const FORCE_DISTANCE_METERS = 100;
+
 function shouldSaveLocation(
     latitude: number,
     longitude: number,
@@ -248,11 +251,17 @@ function shouldSaveLocation(
         longitude,
     );
 
+    //指定間隔未満なら保存しない
+    if (elapsedMs < state.intervalMs && distance < FORCE_DISTANCE_METERS) {
+        return false;
+    }
+
     if (elapsedMs >= state.intervalMs) {
         return true;
     }
 
-    if (distance >= state.distanceMeters) {
+    //100m以上動いた場合は例外的に保存
+    if (distance >= FORCE_DISTANCE_METERS) {
         return true;
     }
 

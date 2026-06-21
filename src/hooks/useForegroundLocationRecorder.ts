@@ -101,7 +101,7 @@ export function useForegroundLocationRecorder({
 
             return false;
         },
-        [intervalMs],
+        [intervalMs, forceDistanceMeters],
     );
 
     //

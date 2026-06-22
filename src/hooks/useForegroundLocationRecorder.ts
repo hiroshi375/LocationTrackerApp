@@ -224,6 +224,23 @@ export function useForegroundLocationRecorder({
 
             updateDistanceFromStart(location);
 
+            const lastSavedLocation = lastSavedLocationRef.current;
+
+            if (lastSavedLocation) {
+                const elapsedMs = recordedAtMs - lastSavedLocation.recordedAt;
+
+                const distanceFromLastSaved = calculateDistanceMeters(
+                    lastSavedLocation.latitude,
+                    lastSavedLocation.longitude,
+                    latitude,
+                    longitude,
+                );
+
+                if (elapsedMs === 0 && distanceFromLastSaved < 1) {
+                    return;
+                }
+            }
+
             if (
                 !forceSave &&
                 !shouldSaveLocation(latitude, longitude, recordedAtMs)

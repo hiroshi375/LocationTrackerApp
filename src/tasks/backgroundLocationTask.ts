@@ -15,6 +15,7 @@ export const BACKGROUND_RECORDING_STATE_KEY =
 type BackgroundRecordingState = {
     userId: string;
     recordingSessionId: string;
+    startedAt?: string | null;
     liveShareOwnerValue?: string | null;
     liveLocationId?: string | null;
     lastSavedLocation?: {
@@ -137,6 +138,18 @@ async function saveBackgroundLocation(
                 ? location.timestamp
                 : Date.now();
 
+        if (
+            isExactDuplicateLocation(latitude, longitude, recordedAtMs, state)
+        ) {
+            console.log("Skip exact duplicate background location:", {
+                latitude,
+                longitude,
+                recordedAt: new Date(recordedAtMs).toISOString(),
+            });
+
+            return state;
+        }
+
         if (!shouldSaveLocation(latitude, longitude, recordedAtMs, state)) {
             return state;
         }
@@ -251,6 +264,33 @@ async function updateBackgroundLiveLocation(
 }
 
 const FORCE_DISTANCE_METERS = 100;
+const EXACT_DUPLICATE_DISTANCE_METERS = 1;
+
+function isExactDuplicateLocation(
+    latitude: number,
+    longitude: number,
+    recordedAtMs: number,
+    state: BackgroundRecordingState,
+) {
+    const lastSavedLocation = state.lastSavedLocation;
+
+    if (!lastSavedLocation) {
+        return false;
+    }
+
+    if (recordedAtMs !== lastSavedLocation.recordedAt) {
+        return false;
+    }
+
+    const distance = calculateDistanceMeters(
+        lastSavedLocation.latitude,
+        lastSavedLocation.longitude,
+        latitude,
+        longitude,
+    );
+
+    return distance < EXACT_DUPLICATE_DISTANCE_METERS;
+}
 
 function shouldSaveLocation(
     latitude: number,

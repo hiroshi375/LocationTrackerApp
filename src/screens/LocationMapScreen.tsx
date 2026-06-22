@@ -52,6 +52,13 @@ type UserProfileItem = {
     iconImagePath?: string | null;
 };
 
+type MapLayerMode = "standard" | "satellite" | "retro";
+
+type MapLayerOption = {
+    value: MapLayerMode;
+    label: string;
+};
+
 type RecordingSessionListResult = {
     data?: any[] | null;
     errors?: unknown;
@@ -66,6 +73,81 @@ type LocationLogListResult = {
 const DEFAULT_LATITUDE_DELTA = 0.01;
 const DEFAULT_LONGITUDE_DELTA = 0.01;
 
+const MAP_LAYER_OPTIONS: MapLayerOption[] = [
+    {
+        value: "standard",
+        label: "標準",
+    },
+    {
+        value: "satellite",
+        label: "航空写真",
+    },
+    {
+        value: "retro",
+        label: "レトロ風",
+    },
+];
+
+const retroMapStyle = [
+    {
+        elementType: "geometry",
+        stylers: [{ color: "#ebe3cd" }],
+    },
+    {
+        elementType: "labels.text.fill",
+        stylers: [{ color: "#523735" }],
+    },
+    {
+        elementType: "labels.text.stroke",
+        stylers: [{ color: "#f5f1e6" }],
+    },
+    {
+        featureType: "administrative",
+        elementType: "geometry.stroke",
+        stylers: [{ color: "#c9b2a6" }],
+    },
+    {
+        featureType: "landscape.natural",
+        elementType: "geometry",
+        stylers: [{ color: "#dfd2ae" }],
+    },
+    {
+        featureType: "poi",
+        elementType: "geometry",
+        stylers: [{ color: "#d9c99f" }],
+    },
+    {
+        featureType: "poi.park",
+        elementType: "geometry.fill",
+        stylers: [{ color: "#a5b076" }],
+    },
+    {
+        featureType: "road",
+        elementType: "geometry",
+        stylers: [{ color: "#d8b384" }],
+    },
+    {
+        featureType: "road.arterial",
+        elementType: "geometry",
+        stylers: [{ color: "#c49a6c" }],
+    },
+    {
+        featureType: "road.highway",
+        elementType: "geometry",
+        stylers: [{ color: "#b77b57" }],
+    },
+    {
+        featureType: "transit.line",
+        elementType: "geometry",
+        stylers: [{ color: "#8f7d6a" }],
+    },
+    {
+        featureType: "water",
+        elementType: "geometry.fill",
+        stylers: [{ color: "#9bbbd4" }],
+    },
+];
+
 // 現在地を画面中央付近に見せるため、カメラ中心を少し南へずらす
 const CAMERA_CENTER_LATITUDE_OFFSET = 0.0025;
 
@@ -79,6 +161,7 @@ export default function LocationMapScreen({ route }: Props) {
     const [loading, setLoading] = useState(true);
     const [hasLoaded, setHasLoaded] = useState(false);
     const [showPoints, setShowPoints] = useState(false);
+    const [mapLayerMode, setMapLayerMode] = useState<MapLayerMode>("standard");
     const [isRouteOverviewMode, setIsRouteOverviewMode] = useState(false);
     const [mapReady, setMapReady] = useState(false);
     const [currentUserIconUrl, setCurrentUserIconUrl] = useState<string | null>(
@@ -835,6 +918,12 @@ export default function LocationMapScreen({ route }: Props) {
 
     const adjustedInitialCenter = getAdjustedMapCenter(displayLocation);
 
+    const selectedMapType =
+        mapLayerMode === "satellite" ? "satellite" : "standard";
+
+    const selectedCustomMapStyle =
+        mapLayerMode === "retro" ? retroMapStyle : [];
+
     return (
         <View style={styles.container}>
             <StatusBar
@@ -848,7 +937,8 @@ export default function LocationMapScreen({ route }: Props) {
                 ref={mapRef}
                 provider={PROVIDER_GOOGLE}
                 style={styles.map}
-                mapType="standard"
+                mapType={selectedMapType}
+                customMapStyle={selectedCustomMapStyle}
                 onMapReady={() => setMapReady(true)}
                 onRegionChangeComplete={() => {
                     void updateCurrentLocationScreenPoint();
@@ -1090,6 +1180,34 @@ export default function LocationMapScreen({ route }: Props) {
                             </Text>
                         </View>
                     )}
+                </View>
+
+                <View style={styles.mapLayerRow}>
+                    {MAP_LAYER_OPTIONS.map((option) => {
+                        const isActive = mapLayerMode === option.value;
+
+                        return (
+                            <Pressable
+                                key={option.value}
+                                style={({ pressed }) => [
+                                    styles.mapLayerButton,
+                                    isActive && styles.mapLayerButtonActive,
+                                    pressed && styles.mapLayerButtonPressed,
+                                ]}
+                                onPress={() => setMapLayerMode(option.value)}
+                            >
+                                <Text
+                                    style={[
+                                        styles.mapLayerButtonText,
+                                        isActive &&
+                                            styles.mapLayerButtonTextActive,
+                                    ]}
+                                >
+                                    {option.label}
+                                </Text>
+                            </Pressable>
+                        );
+                    })}
                 </View>
 
                 <Pressable
@@ -1506,6 +1624,43 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: "bold",
     },
+
+    mapLayerRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        marginTop: 10,
+    },
+
+    mapLayerButton: {
+        flex: 1,
+        paddingVertical: 8,
+        borderRadius: 8,
+        backgroundColor: "#eef3f7",
+        alignItems: "center",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+    },
+
+    mapLayerButtonActive: {
+        backgroundColor: "#4b6f8f",
+        borderColor: "#4b6f8f",
+    },
+
+    mapLayerButtonPressed: {
+        opacity: 0.75,
+    },
+
+    mapLayerButtonText: {
+        color: "#2f4f66",
+        fontWeight: "bold",
+        fontSize: 12,
+    },
+
+    mapLayerButtonTextActive: {
+        color: "#ffffff",
+    },
+
     routeFitButton: {
         marginTop: 8,
         paddingVertical: 9,

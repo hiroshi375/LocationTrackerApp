@@ -407,10 +407,8 @@ export function useForegroundLocationRecorder({
                 return;
             }
 
-            let subscription: Location.LocationSubscription;
-
             try {
-                subscription = await Location.watchPositionAsync(
+                const subscription = await Location.watchPositionAsync(
                     {
                         accuracy: Location.Accuracy.Balanced,
                         timeInterval: intervalMs,
@@ -425,29 +423,16 @@ export function useForegroundLocationRecorder({
                         await saveLocationLog(location);
                     },
                 );
+
+                subscriptionRef.current = subscription;
             } catch (error) {
-                try {
-                    await stopBackgroundLocationRecording();
-                } catch (stopError) {
-                    console.error(
-                        "Stop background after watch error:",
-                        stopError,
-                    );
-                }
+                console.error("Foreground watch position start error:", error);
 
-                resetRecordingState();
-
-                console.error("Watch position start error:", error);
-
-                Alert.alert(
-                    "自動記録を開始できませんでした",
-                    "位置情報の監視を開始できませんでした。位置情報サービスを確認してください。",
-                );
-
-                return;
+                // backgroundLocationRecording はすでに開始済みのため止めない。
+                // foreground の watchPositionAsync に失敗しても、
+                // background task による自動記録は継続させる。
             }
 
-            subscriptionRef.current = subscription;
             setIsRecording(true);
 
             await updateLiveLocation(currentLocation);

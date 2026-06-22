@@ -309,6 +309,14 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
     //
     const handleSignOut = async () => {
+        if (isRecording) {
+            Alert.alert(
+                "自動記録中です",
+                "サインアウトする前に自動記録を停止してください。",
+            );
+            return;
+        }
+
         try {
             await signOut();
         } catch (error) {

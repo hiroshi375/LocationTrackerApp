@@ -33,6 +33,7 @@ export function isBackgroundLocationPermissionError(error: unknown) {
 type StartBackgroundLocationRecordingParams = {
     userId: string;
     recordingSessionId: string;
+    startedAt?: string | null;
     intervalMs: number;
     distanceMeters: number;
     liveShareOwnerValue?: string | null;
@@ -43,9 +44,25 @@ type StartBackgroundLocationRecordingParams = {
     } | null;
 };
 
+export type BackgroundRecordingState = {
+    userId: string;
+    recordingSessionId: string;
+    startedAt?: string | null;
+    liveShareOwnerValue?: string | null;
+    liveLocationId?: string | null;
+    lastSavedLocation?: {
+        latitude: number;
+        longitude: number;
+        recordedAt: number;
+    } | null;
+    intervalMs: number;
+    distanceMeters: number;
+};
+
 export async function startBackgroundLocationRecording({
     userId,
     recordingSessionId,
+    startedAt = null,
     intervalMs,
     distanceMeters,
     liveShareOwnerValue = null,
@@ -57,6 +74,7 @@ export async function startBackgroundLocationRecording({
         JSON.stringify({
             userId,
             recordingSessionId,
+            startedAt,
             intervalMs,
             distanceMeters,
             liveShareOwnerValue,
@@ -91,6 +109,7 @@ export async function startBackgroundLocationRecording({
 }
 
 export async function stopBackgroundLocationRecording() {
+    console.log("stopBackgroundLocationRecording called", new Error().stack);
     const hasStarted = await Location.hasStartedLocationUpdatesAsync(
         BACKGROUND_LOCATION_TASK_NAME,
     );
@@ -188,5 +207,39 @@ export async function updateBackgroundRecordingLiveLocationId(
         );
     } catch (error) {
         console.error("Update background liveLocationId error:", error);
+    }
+}
+
+export async function getBackgroundRecordingStatus(): Promise<{
+    hasStarted: boolean;
+    state: BackgroundRecordingState | null;
+}> {
+    const hasStarted = await Location.hasStartedLocationUpdatesAsync(
+        BACKGROUND_LOCATION_TASK_NAME,
+    );
+
+    const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);
+
+    if (!raw) {
+        return {
+            hasStarted,
+            state: null,
+        };
+    }
+
+    try {
+        const state = JSON.parse(raw) as BackgroundRecordingState;
+
+        return {
+            hasStarted,
+            state,
+        };
+    } catch (error) {
+        console.error("Parse background recording state error:", error);
+
+        return {
+            hasStarted,
+            state: null,
+        };
     }
 }

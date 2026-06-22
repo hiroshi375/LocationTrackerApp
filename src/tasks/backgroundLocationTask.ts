@@ -36,49 +36,64 @@ type LiveLocationMutationResult = {
 TaskManager.defineTask(
     BACKGROUND_LOCATION_TASK_NAME,
     async ({ data, error }) => {
-        if (error) {
-            console.error("Background location task error:", error);
-            return;
-        }
-
-        const locations = (data as { locations?: Location.LocationObject[] })
-            ?.locations;
-
-        if (!locations || locations.length === 0) {
-            return;
-        }
-
-        const state = await getBackgroundRecordingState();
-
-        if (!state?.recordingSessionId || !state.userId) {
-            return;
-        }
-
-        const sortedLocations = [...locations].sort((a, b) => {
-            const aTime =
-                typeof a.timestamp === "number" && Number.isFinite(a.timestamp)
-                    ? a.timestamp
-                    : 0;
-
-            const bTime =
-                typeof b.timestamp === "number" && Number.isFinite(b.timestamp)
-                    ? b.timestamp
-                    : 0;
-
-            return aTime - bTime;
-        });
-
-        let currentState = state;
-
-        for (const location of sortedLocations) {
-            const nextState = await saveBackgroundLocation(
-                location,
-                currentState,
-            );
-
-            if (nextState) {
-                currentState = nextState;
+        try {
+            if (error) {
+                console.error("Background location task error:", error);
+                return;
             }
+
+            const locations = (
+                data as { locations?: Location.LocationObject[] }
+            )?.locations;
+
+            if (!locations || locations.length === 0) {
+                return;
+            }
+
+            const state = await getBackgroundRecordingState();
+
+            if (!state?.recordingSessionId || !state.userId) {
+                console.log("Background recording state not found.");
+                return;
+            }
+
+            const sortedLocations = [...locations].sort((a, b) => {
+                const aTime =
+                    typeof a.timestamp === "number" &&
+                    Number.isFinite(a.timestamp)
+                        ? a.timestamp
+                        : 0;
+
+                const bTime =
+                    typeof b.timestamp === "number" &&
+                    Number.isFinite(b.timestamp)
+                        ? b.timestamp
+                        : 0;
+
+                return aTime - bTime;
+            });
+
+            let currentState = state;
+
+            for (const location of sortedLocations) {
+                try {
+                    const nextState = await saveBackgroundLocation(
+                        location,
+                        currentState,
+                    );
+
+                    if (nextState) {
+                        currentState = nextState;
+                    }
+                } catch (saveError) {
+                    console.error("Background save location error:", saveError);
+                }
+            }
+        } catch (taskError) {
+            console.error(
+                "Background location task unexpected error:",
+                taskError,
+            );
         }
     },
 );
@@ -108,61 +123,72 @@ async function saveBackgroundLocation(
     location: Location.LocationObject,
     state: BackgroundRecordingState,
 ): Promise<BackgroundRecordingState | null> {
-    const latitude = location.coords.latitude;
-    const longitude = location.coords.longitude;
+    try {
+        const latitude = location.coords.latitude;
+        const longitude = location.coords.longitude;
 
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-        return state;
-    }
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+            return state;
+        }
 
-    const recordedAtMs =
-        typeof location.timestamp === "number" &&
-        Number.isFinite(location.timestamp)
-            ? location.timestamp
-            : Date.now();
+        const recordedAtMs =
+            typeof location.timestamp === "number" &&
+            Number.isFinite(location.timestamp)
+                ? location.timestamp
+                : Date.now();
 
-    if (!shouldSaveLocation(latitude, longitude, recordedAtMs, state)) {
-        return state;
-    }
+        if (!shouldSaveLocation(latitude, longitude, recordedAtMs, state)) {
+            return state;
+        }
 
-    const sharedOwners = state.liveShareOwnerValue
-        ? [state.liveShareOwnerValue]
-        : undefined;
+        const sharedOwners = state.liveShareOwnerValue
+            ? [state.liveShareOwnerValue]
+            : undefined;
 
-    const recordedAt = new Date(recordedAtMs).toISOString();
+        const recordedAt = new Date(recordedAtMs).toISOString();
 
-    const result = await client.models.LocationLog.create({
-        userId: state.userId,
-        latitude,
-        longitude,
-        accuracy: location.coords.accuracy ?? null,
-        recordedAt,
-        memo: "自動記録",
-        recordingSessionId: state.recordingSessionId,
-        source: "background",
-        sharedOwners,
-    });
-
-    if (result.errors) {
-        console.error("Background LocationLog create errors:", result.errors);
-        return state;
-    }
-
-    const liveLocationId = await updateBackgroundLiveLocation(location, state);
-
-    const nextState: BackgroundRecordingState = {
-        ...state,
-        liveLocationId: liveLocationId ?? state.liveLocationId ?? null,
-        lastSavedLocation: {
+        const result = await client.models.LocationLog.create({
+            userId: state.userId,
             latitude,
             longitude,
-            recordedAt: recordedAtMs,
-        },
-    };
+            accuracy: location.coords.accuracy ?? null,
+            recordedAt,
+            memo: "自動記録",
+            recordingSessionId: state.recordingSessionId,
+            source: "background",
+            sharedOwners,
+        });
 
-    await setBackgroundRecordingState(nextState);
+        if (result.errors) {
+            console.error(
+                "Background LocationLog create errors:",
+                result.errors,
+            );
+            return state;
+        }
 
-    return nextState;
+        const liveLocationId = await updateBackgroundLiveLocation(
+            location,
+            state,
+        );
+
+        const nextState: BackgroundRecordingState = {
+            ...state,
+            liveLocationId: liveLocationId ?? state.liveLocationId ?? null,
+            lastSavedLocation: {
+                latitude,
+                longitude,
+                recordedAt: recordedAtMs,
+            },
+        };
+
+        await setBackgroundRecordingState(nextState);
+
+        return nextState;
+    } catch (error) {
+        console.error("saveBackgroundLocation unexpected error:", error);
+        return state;
+    }
 }
 
 async function updateBackgroundLiveLocation(

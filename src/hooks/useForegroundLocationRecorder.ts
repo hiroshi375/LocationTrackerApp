@@ -7,6 +7,7 @@ import * as Battery from "expo-battery";
 import { client } from "../lib/client";
 import {
     ensureBackgroundLocationPermission,
+    getBackgroundRecordingStatus,
     isBackgroundLocationPermissionError,
     startBackgroundLocationRecording,
     stopBackgroundLocationRecording,
@@ -299,9 +300,43 @@ export function useForegroundLocationRecorder({
 
     const isStartingRef = useRef(false);
 
+    const restoreRecordingState = useCallback(async () => {
+        if (isRecording || isStartingRef.current) {
+            return;
+        }
+
+        try {
+            const { hasStarted, state } = await getBackgroundRecordingStatus();
+
+            if (!hasStarted) {
+                return;
+            }
+
+            if (!state?.recordingSessionId || !state.userId) {
+                return;
+            }
+
+            recordingSessionIdRef.current = state.recordingSessionId;
+            liveLocationIdRef.current = state.liveLocationId ?? null;
+            lastSavedLocationRef.current = state.lastSavedLocation ?? null;
+
+            setActiveRecordingSessionId(state.recordingSessionId);
+            setRecordingStartedAt(state.startedAt ?? null);
+            setDistanceFromStartMeters(null);
+            setIsRecording(true);
+
+            console.log("Restored background recording state:", {
+                recordingSessionId: state.recordingSessionId,
+                startedAt: state.startedAt,
+            });
+        } catch (error) {
+            console.error("Restore recording state error:", error);
+        }
+    }, [isRecording]);
+
     // 記録開始関数
     const startRecording = useCallback(async () => {
-        if (subscriptionRef.current || isStartingRef.current) {
+        if (isRecording || subscriptionRef.current || isStartingRef.current) {
             return;
         }
 
@@ -370,6 +405,7 @@ export function useForegroundLocationRecorder({
                 await startBackgroundLocationRecording({
                     userId: currentUser.userId,
                     recordingSessionId: newSessionId,
+                    startedAt,
                     intervalMs,
                     distanceMeters,
                     liveShareOwnerValue,
@@ -444,6 +480,7 @@ export function useForegroundLocationRecorder({
             isStartingRef.current = false;
         }
     }, [
+        isRecording,
         saveLocationLog,
         updateLiveLocation,
         intervalMs,
@@ -522,6 +559,10 @@ export function useForegroundLocationRecorder({
             subscription.remove();
         };
     }, []);
+
+    useEffect(() => {
+        void restoreRecordingState();
+    }, [restoreRecordingState]);
 
     return {
         isRecording,

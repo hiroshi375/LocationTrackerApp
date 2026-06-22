@@ -68,13 +68,10 @@ const DEFAULT_LONGITUDE_DELTA = 0.01;
 
 // 現在地を画面中央付近に見せるため、カメラ中心を少し南へずらす
 const CAMERA_CENTER_LATITUDE_OFFSET = 0.0025;
-// ルート全体表示後、現在地への自動追従を一時停止する時間
-const ROUTE_VIEW_HOLD_MS = 5000;
 
 export default function LocationMapScreen({ route }: Props) {
     const mapRef = useRef<MapView | null>(null);
     const hasFittedInitialRouteRef = useRef(false);
-    const keepRouteViewUntilRef = useRef(0);
 
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
     const [recordingSessionSummary, setRecordingSessionSummary] =
@@ -82,6 +79,7 @@ export default function LocationMapScreen({ route }: Props) {
     const [loading, setLoading] = useState(true);
     const [hasLoaded, setHasLoaded] = useState(false);
     const [showPoints, setShowPoints] = useState(false);
+    const [isRouteOverviewMode, setIsRouteOverviewMode] = useState(false);
     const [mapReady, setMapReady] = useState(false);
     const [currentUserIconUrl, setCurrentUserIconUrl] = useState<string | null>(
         null,
@@ -538,8 +536,8 @@ export default function LocationMapScreen({ route }: Props) {
             return;
         }
 
-        // 「ルート全体を表示」直後は、現在地追従でズーム・位置を戻さない
-        if (Date.now() < keepRouteViewUntilRef.current) {
+        // ルート全体表示モード中は、現在地追尾でカメラを戻さない
+        if (isRouteOverviewMode) {
             return;
         }
 
@@ -551,11 +549,11 @@ export default function LocationMapScreen({ route }: Props) {
                 duration: 500,
             },
         );
-    }, [mapReady, isLiveRecordingMap, currentLocation]);
+    }, [mapReady, isLiveRecordingMap, currentLocation, isRouteOverviewMode]);
 
     useEffect(() => {
         hasFittedInitialRouteRef.current = false;
-        keepRouteViewUntilRef.current = 0;
+        setIsRouteOverviewMode(false);
     }, [activeSessionId, isLiveRecordingMap]);
 
     useEffect(() => {
@@ -725,13 +723,14 @@ export default function LocationMapScreen({ route }: Props) {
             ? [...routeCoordinates, currentLocation]
             : routeCoordinates;
 
-    const fitToRoute = () => {
+    const showRouteOverview = () => {
         if (fitTargetCoordinates.length === 0) {
             return;
         }
 
-        // ルート全体表示後、5秒間は現在地追従でカメラを戻さない
-        keepRouteViewUntilRef.current = Date.now() + ROUTE_VIEW_HOLD_MS;
+        if (isLiveRecordingMap) {
+            setIsRouteOverviewMode(true);
+        }
 
         if (fitTargetCoordinates.length === 1) {
             mapRef.current?.animateCamera(
@@ -755,6 +754,38 @@ export default function LocationMapScreen({ route }: Props) {
             animated: true,
         });
     };
+
+    const showCurrentLocation = () => {
+        setIsRouteOverviewMode(false);
+
+        if (!currentLocation) {
+            return;
+        }
+
+        mapRef.current?.animateCamera(
+            {
+                center: getAdjustedMapCenter(currentLocation),
+            },
+            {
+                duration: 500,
+            },
+        );
+    };
+
+    const toggleRouteViewMode = () => {
+        if (isRouteOverviewMode && isLiveRecordingMap) {
+            showCurrentLocation();
+            return;
+        }
+
+        showRouteOverview();
+    };
+
+    const isRouteFitButtonActive = isLiveRecordingMap && isRouteOverviewMode;
+
+    const routeFitButtonText = isRouteFitButtonActive
+        ? "現在地を表示"
+        : "ルート全体を表示";
 
     const routeDistanceMeters =
         activeSessionId && routeLogs.length >= 2
@@ -1070,9 +1101,22 @@ export default function LocationMapScreen({ route }: Props) {
                     </Text>
                 </Pressable>
 
-                <Pressable style={styles.routeFitButton} onPress={fitToRoute}>
-                    <Text style={styles.routeFitButtonText}>
-                        ルート全体を表示
+                <Pressable
+                    style={({ pressed }) => [
+                        styles.routeFitButton,
+                        isRouteFitButtonActive && styles.routeFitButtonActive,
+                        pressed && styles.routeFitButtonPressed,
+                    ]}
+                    onPress={toggleRouteViewMode}
+                >
+                    <Text
+                        style={[
+                            styles.routeFitButtonText,
+                            isRouteFitButtonActive &&
+                                styles.routeFitButtonTextActive,
+                        ]}
+                    >
+                        {routeFitButtonText}
                     </Text>
                 </Pressable>
             </View>
@@ -1518,5 +1562,17 @@ const styles = StyleSheet.create({
         color: "#ffffff",
         fontSize: 18,
         fontWeight: "bold",
+    },
+    routeFitButtonActive: {
+        backgroundColor: "#4b6f8f",
+        borderColor: "#4b6f8f",
+    },
+
+    routeFitButtonPressed: {
+        opacity: 0.75,
+    },
+
+    routeFitButtonTextActive: {
+        color: "#ffffff",
     },
 });

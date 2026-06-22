@@ -729,7 +729,9 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             onPress={handleStartRecording}
                         >
                             <Text style={styles.autoRecordButtonText}>
-                                自動記録開始
+                                {selectedLiveShareUser
+                                    ? "自動記録開始＋共有"
+                                    : "自動記録開始"}
                             </Text>
                         </Pressable>
                     )}

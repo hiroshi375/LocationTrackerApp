@@ -68,10 +68,13 @@ const DEFAULT_LONGITUDE_DELTA = 0.01;
 
 // 現在地を画面中央付近に見せるため、カメラ中心を少し南へずらす
 const CAMERA_CENTER_LATITUDE_OFFSET = 0.0025;
+// ルート全体表示後、現在地への自動追従を一時停止する時間
+const ROUTE_VIEW_HOLD_MS = 5000;
 
 export default function LocationMapScreen({ route }: Props) {
     const mapRef = useRef<MapView | null>(null);
     const hasFittedInitialRouteRef = useRef(false);
+    const keepRouteViewUntilRef = useRef(0);
 
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
     const [recordingSessionSummary, setRecordingSessionSummary] =
@@ -535,6 +538,11 @@ export default function LocationMapScreen({ route }: Props) {
             return;
         }
 
+        // 「ルート全体を表示」直後は、現在地追従でズーム・位置を戻さない
+        if (Date.now() < keepRouteViewUntilRef.current) {
+            return;
+        }
+
         mapRef.current?.animateCamera(
             {
                 center: getAdjustedMapCenter(currentLocation),
@@ -547,6 +555,7 @@ export default function LocationMapScreen({ route }: Props) {
 
     useEffect(() => {
         hasFittedInitialRouteRef.current = false;
+        keepRouteViewUntilRef.current = 0;
     }, [activeSessionId, isLiveRecordingMap]);
 
     useEffect(() => {
@@ -720,6 +729,9 @@ export default function LocationMapScreen({ route }: Props) {
         if (fitTargetCoordinates.length === 0) {
             return;
         }
+
+        // ルート全体表示後、5秒間は現在地追従でカメラを戻さない
+        keepRouteViewUntilRef.current = Date.now() + ROUTE_VIEW_HOLD_MS;
 
         if (fitTargetCoordinates.length === 1) {
             mapRef.current?.animateCamera(

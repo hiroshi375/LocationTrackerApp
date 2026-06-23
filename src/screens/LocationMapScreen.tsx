@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { getCurrentUser } from "aws-amplify/auth";
@@ -72,6 +73,8 @@ type LocationLogListResult = {
 
 const DEFAULT_LATITUDE_DELTA = 0.01;
 const DEFAULT_LONGITUDE_DELTA = 0.01;
+
+const MAP_LAYER_MODE_STORAGE_KEY = "location-map-layer-mode";
 
 const MAP_LAYER_OPTIONS: MapLayerOption[] = [
     {
@@ -407,6 +410,43 @@ export default function LocationMapScreen({ route }: Props) {
             setCurrentUserIconUrl(null);
         }
     }, [sharedLiveUserId]);
+
+    useEffect(() => {
+        const loadMapLayerMode = async () => {
+            try {
+                const savedValue = await AsyncStorage.getItem(
+                    MAP_LAYER_MODE_STORAGE_KEY,
+                );
+
+                if (
+                    savedValue === "standard" ||
+                    savedValue === "satellite" ||
+                    savedValue === "retro"
+                ) {
+                    setMapLayerMode(savedValue);
+                }
+            } catch (error) {
+                console.error("Load map layer mode error:", error);
+            }
+        };
+
+        void loadMapLayerMode();
+    }, []);
+
+    useEffect(() => {
+        const saveMapLayerMode = async () => {
+            try {
+                await AsyncStorage.setItem(
+                    MAP_LAYER_MODE_STORAGE_KEY,
+                    mapLayerMode,
+                );
+            } catch (error) {
+                console.error("Save map layer mode error:", error);
+            }
+        };
+
+        void saveMapLayerMode();
+    }, [mapLayerMode]);
 
     useEffect(() => {
         if (!isOwnLiveRecordingMap) {
@@ -916,6 +956,11 @@ export default function LocationMapScreen({ route }: Props) {
         Boolean(sessionStartAt) &&
         Boolean(sessionEndAt);
 
+    const displayDateTimeText =
+        shouldShowSessionPeriod && sessionStartAt && sessionEndAt
+            ? formatPeriod(sessionStartAt, sessionEndAt)
+            : formatDateTime(displayLocation.recordedAt);
+
     const adjustedInitialCenter = getAdjustedMapCenter(displayLocation);
 
     const selectedMapType =
@@ -1122,24 +1167,38 @@ export default function LocationMapScreen({ route }: Props) {
                 </Text>
 
                 {recordingSessionSummary ? (
-                    <Text style={styles.infoText}>
-                        期間:{" "}
-                        {formatPeriod(
-                            recordingSessionSummary.startedAt,
-                            recordingSessionSummary.endedAt,
-                        )}
-                    </Text>
+                    <>
+                        <Text style={styles.infoText}>
+                            期間:{" "}
+                            {formatPeriod(
+                                recordingSessionSummary.startedAt,
+                                recordingSessionSummary.endedAt,
+                            )}
+                        </Text>
+                        <Text style={styles.infoText}>
+                            距離: {displayDistanceText}
+                        </Text>
+                    </>
+                ) : isSelectedMode ? (
+                    <>
+                        <Text style={styles.infoText}>
+                            {shouldShowSessionPeriod ? "期間: " : "日時: "}
+                            {displayDateTimeText}
+                        </Text>
+                        <Text style={styles.infoText}>
+                            距離: {displayDistanceText}
+                        </Text>
+                    </>
                 ) : (
-                    <Text style={styles.infoText}>
-                        {shouldShowSessionPeriod ? "期間: " : "日時: "}
-                        {shouldShowSessionPeriod &&
-                        sessionStartAt &&
-                        sessionEndAt
-                            ? formatPeriod(sessionStartAt, sessionEndAt)
-                            : formatDateTime(displayLocation.recordedAt)}
-                    </Text>
+                    <View style={styles.latestInfoRow}>
+                        <Text style={[styles.infoText, styles.latestInfoText]}>
+                            日時: {displayDateTimeText}
+                        </Text>
+                        <Text style={[styles.infoText, styles.latestInfoText]}>
+                            距離: {displayDistanceText}
+                        </Text>
+                    </View>
                 )}
-                <Text style={styles.infoText}>距離: {displayDistanceText}</Text>
                 <View style={styles.pointCountRow}>
                     <Text style={[styles.infoText, styles.pointCountText]}>
                         記録ポイント: {recordPointCount}件
@@ -1166,21 +1225,25 @@ export default function LocationMapScreen({ route }: Props) {
                         : "不明"}
                 </Text>
                 */}
-                <View style={styles.memoRow}>
-                    <Text style={[styles.infoText, styles.memoTextInRow]}>
-                        メモ:{" "}
-                        {displayLocation.memo ? displayLocation.memo : "なし"}
-                    </Text>
+                {!isSelectedMode && (
+                    <View style={styles.memoRow}>
+                        <Text style={[styles.infoText, styles.memoTextInRow]}>
+                            メモ:{" "}
+                            {displayLocation.memo
+                                ? displayLocation.memo
+                                : "なし"}
+                        </Text>
 
-                    {shouldShowRecordingSettings && (
-                        <View style={styles.recordingSettingBadge}>
-                            <Text style={styles.recordingSettingBadgeText}>
-                                頻度: {recordingIntervalSeconds}秒 / 距離:{" "}
-                                {recordingDistanceMeters}m
-                            </Text>
-                        </View>
-                    )}
-                </View>
+                        {shouldShowRecordingSettings && (
+                            <View style={styles.recordingSettingBadge}>
+                                <Text style={styles.recordingSettingBadgeText}>
+                                    頻度: {recordingIntervalSeconds}秒 / 距離:{" "}
+                                    {recordingDistanceMeters}m
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+                )}
 
                 <View style={styles.mapLayerRow}>
                     {MAP_LAYER_OPTIONS.map((option) => {
@@ -1533,6 +1596,17 @@ const styles = StyleSheet.create({
         fontSize: 13,
         marginBottom: 2,
         color: "#333",
+    },
+    latestInfoRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+        flexWrap: "wrap",
+        marginBottom: 2,
+    },
+
+    latestInfoText: {
+        marginBottom: 0,
     },
     routeToggleButton: {
         marginTop: 10,

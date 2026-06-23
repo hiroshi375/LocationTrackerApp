@@ -243,3 +243,29 @@ export async function getBackgroundRecordingStatus(): Promise<{
         };
     }
 }
+
+export async function updateBackgroundRecordingLastSavedLocation(lastSavedLocation: {
+    latitude: number;
+    longitude: number;
+    recordedAt: number;
+}) {
+    const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);
+
+    if (!raw) {
+        return;
+    }
+
+    try {
+        const state = JSON.parse(raw);
+
+        await AsyncStorage.setItem(
+            BACKGROUND_RECORDING_STATE_KEY,
+            JSON.stringify({
+                ...state,
+                lastSavedLocation,
+            }),
+        );
+    } catch (error) {
+        console.error("Update background lastSavedLocation error:", error);
+    }
+}

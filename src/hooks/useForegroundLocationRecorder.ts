@@ -11,6 +11,7 @@ import {
     isBackgroundLocationPermissionError,
     startBackgroundLocationRecording,
     stopBackgroundLocationRecording,
+    updateBackgroundRecordingLastSavedLocation,
     updateBackgroundRecordingLiveLocationId,
 } from "../services/backgroundLocationService";
 
@@ -45,6 +46,7 @@ export function useForegroundLocationRecorder({
 
     const subscriptionRef = useRef<Location.LocationSubscription | null>(null);
     const lastSavedLocationRef = useRef<SavedLocation | null>(null);
+    const savingLocationKeyRef = useRef<string | null>(null);
     const recordingSessionIdRef = useRef<string | null>(null);
     const liveLocationIdRef = useRef<string | null>(null);
 
@@ -224,21 +226,45 @@ export function useForegroundLocationRecorder({
 
             updateDistanceFromStart(location);
 
-            const lastSavedLocation = lastSavedLocationRef.current;
+            const duplicateKey = createLocationDuplicateKey(
+                latitude,
+                longitude,
+                recordedAtMs,
+            );
 
-            if (lastSavedLocation) {
-                const elapsedMs = recordedAtMs - lastSavedLocation.recordedAt;
+            if (savingLocationKeyRef.current === duplicateKey) {
+                return;
+            }
 
-                const distanceFromLastSaved = calculateDistanceMeters(
-                    lastSavedLocation.latitude,
-                    lastSavedLocation.longitude,
+            if (
+                isExactDuplicateSavedLocation(
+                    lastSavedLocationRef.current,
                     latitude,
                     longitude,
-                );
+                    recordedAtMs,
+                )
+            ) {
+                return;
+            }
 
-                if (elapsedMs === 0 && distanceFromLastSaved < 1) {
+            try {
+                const { state } = await getBackgroundRecordingStatus();
+
+                if (
+                    isExactDuplicateSavedLocation(
+                        state?.lastSavedLocation ?? null,
+                        latitude,
+                        longitude,
+                        recordedAtMs,
+                    )
+                ) {
                     return;
                 }
+            } catch (error) {
+                console.error(
+                    "Check background duplicate location error:",
+                    error,
+                );
             }
 
             if (
@@ -249,6 +275,8 @@ export function useForegroundLocationRecorder({
             }
 
             try {
+                savingLocationKeyRef.current = duplicateKey;
+
                 const currentUser = await getCurrentUser();
 
                 const batterySnapshot = await getBatterySnapshot();
@@ -282,11 +310,17 @@ export function useForegroundLocationRecorder({
                     return;
                 }
 
-                lastSavedLocationRef.current = {
+                const nextSavedLocation = {
                     latitude,
                     longitude,
                     recordedAt: recordedAtMs,
                 };
+
+                lastSavedLocationRef.current = nextSavedLocation;
+
+                await updateBackgroundRecordingLastSavedLocation(
+                    nextSavedLocation,
+                );
 
                 console.log("Auto location saved:", {
                     latitude,
@@ -295,6 +329,10 @@ export function useForegroundLocationRecorder({
                 });
             } catch (error) {
                 console.error("Auto LocationLog create error:", error);
+            } finally {
+                if (savingLocationKeyRef.current === duplicateKey) {
+                    savingLocationKeyRef.current = null;
+                }
             }
         },
         [shouldSaveLocation, updateDistanceFromStart, liveShareOwnerValue],
@@ -590,6 +628,40 @@ export function useForegroundLocationRecorder({
         startRecording,
         stopRecording,
     };
+}
+
+const EXACT_DUPLICATE_DISTANCE_METERS = 1;
+
+function createLocationDuplicateKey(
+    latitude: number,
+    longitude: number,
+    recordedAtMs: number,
+) {
+    return [recordedAtMs, latitude.toFixed(7), longitude.toFixed(7)].join(":");
+}
+
+function isExactDuplicateSavedLocation(
+    savedLocation: SavedLocation | null,
+    latitude: number,
+    longitude: number,
+    recordedAtMs: number,
+) {
+    if (!savedLocation) {
+        return false;
+    }
+
+    if (savedLocation.recordedAt !== recordedAtMs) {
+        return false;
+    }
+
+    const distance = calculateDistanceMeters(
+        savedLocation.latitude,
+        savedLocation.longitude,
+        latitude,
+        longitude,
+    );
+
+    return distance < EXACT_DUPLICATE_DISTANCE_METERS;
 }
 
 function calculateDistanceMeters(

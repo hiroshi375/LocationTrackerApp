@@ -34,6 +34,8 @@ type LiveLocationMutationResult = {
     errors?: unknown;
 };
 
+let savingBackgroundLocationKey: string | null = null;
+
 TaskManager.defineTask(
     BACKGROUND_LOCATION_TASK_NAME,
     async ({ data, error }) => {
@@ -124,6 +126,7 @@ async function saveBackgroundLocation(
     location: Location.LocationObject,
     state: BackgroundRecordingState,
 ): Promise<BackgroundRecordingState | null> {
+    let duplicateKeyForFinally: string | null = null;
     try {
         const latitude = location.coords.latitude;
         const longitude = location.coords.longitude;
@@ -138,6 +141,16 @@ async function saveBackgroundLocation(
                 ? location.timestamp
                 : Date.now();
 
+        const duplicateKey = createLocationDuplicateKey(
+            latitude,
+            longitude,
+            recordedAtMs,
+        );
+
+        if (savingBackgroundLocationKey === duplicateKey) {
+            return state;
+        }
+
         if (
             isExactDuplicateLocation(latitude, longitude, recordedAtMs, state)
         ) {
@@ -149,7 +162,6 @@ async function saveBackgroundLocation(
 
             return state;
         }
-
         if (!shouldSaveLocation(latitude, longitude, recordedAtMs, state)) {
             return state;
         }
@@ -159,6 +171,9 @@ async function saveBackgroundLocation(
             : undefined;
 
         const recordedAt = new Date(recordedAtMs).toISOString();
+
+        savingBackgroundLocationKey = duplicateKey;
+        duplicateKeyForFinally = duplicateKey;
 
         const result = await client.models.LocationLog.create({
             userId: state.userId,
@@ -201,6 +216,13 @@ async function saveBackgroundLocation(
     } catch (error) {
         console.error("saveBackgroundLocation unexpected error:", error);
         return state;
+    } finally {
+        if (
+            duplicateKeyForFinally &&
+            savingBackgroundLocationKey === duplicateKeyForFinally
+        ) {
+            savingBackgroundLocationKey = null;
+        }
     }
 }
 
@@ -290,6 +312,14 @@ function isExactDuplicateLocation(
     );
 
     return distance < EXACT_DUPLICATE_DISTANCE_METERS;
+}
+
+function createLocationDuplicateKey(
+    latitude: number,
+    longitude: number,
+    recordedAtMs: number,
+) {
+    return [recordedAtMs, latitude.toFixed(7), longitude.toFixed(7)].join(":");
 }
 
 function shouldSaveLocation(

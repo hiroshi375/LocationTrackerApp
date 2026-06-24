@@ -1604,7 +1604,6 @@ const styles = StyleSheet.create({
         flexWrap: "wrap",
         marginBottom: 2,
     },
-
     latestInfoText: {
         marginBottom: 0,
     },

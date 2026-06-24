@@ -218,6 +218,15 @@ export default function LocationMapScreen({ route }: Props) {
 
     const currentLocationOpacity = useRef(new Animated.Value(1)).current;
 
+    const [currentAddress, setCurrentAddress] = useState<string>("");
+    const [addressLoading, setAddressLoading] = useState(false);
+
+    const lastAddressLookupRef = useRef<{
+        latitude: number;
+        longitude: number;
+        lookedUpAt: number;
+    } | null>(null);
+
     const updateCurrentLocationScreenPoint = useCallback(async () => {
         if (
             !mapReady ||
@@ -784,6 +793,83 @@ export default function LocationMapScreen({ route }: Props) {
         }, [loadLogs, loadCurrentUserProfileIcon, isLiveRecordingMap]),
     );
 
+    useEffect(() => {
+        if (!isLiveRecordingMap || !currentLocation) {
+            setCurrentAddress("");
+            setAddressLoading(false);
+            lastAddressLookupRef.current = null;
+            return;
+        }
+
+        const now = Date.now();
+        const lastLookup = lastAddressLookupRef.current;
+
+        if (lastLookup) {
+            const elapsedMs = now - lastLookup.lookedUpAt;
+            const movedMeters = calculateDistanceMeters(
+                lastLookup.latitude,
+                lastLookup.longitude,
+                currentLocation.latitude,
+                currentLocation.longitude,
+            );
+
+            if (
+                elapsedMs < ADDRESS_REFRESH_INTERVAL_MS &&
+                movedMeters < ADDRESS_REFRESH_DISTANCE_METERS
+            ) {
+                return;
+            }
+        }
+
+        let cancelled = false;
+
+        const loadAddress = async () => {
+            try {
+                setAddressLoading(true);
+
+                const results = await Location.reverseGeocodeAsync({
+                    latitude: currentLocation.latitude,
+                    longitude: currentLocation.longitude,
+                });
+
+                if (cancelled) {
+                    return;
+                }
+
+                const address = results[0];
+
+                if (!address) {
+                    setCurrentAddress("住所を取得できませんでした");
+                    return;
+                }
+
+                setCurrentAddress(formatAddress(address));
+
+                lastAddressLookupRef.current = {
+                    latitude: currentLocation.latitude,
+                    longitude: currentLocation.longitude,
+                    lookedUpAt: now,
+                };
+            } catch (error) {
+                console.error("Reverse geocode error:", error);
+
+                if (!cancelled) {
+                    setCurrentAddress("住所取得エラー");
+                }
+            } finally {
+                if (!cancelled) {
+                    setAddressLoading(false);
+                }
+            }
+        };
+
+        void loadAddress();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [isLiveRecordingMap, currentLocation]);
+
     if (!hasLoaded || loading) {
         return (
             <View style={styles.center}>
@@ -1161,6 +1247,36 @@ export default function LocationMapScreen({ route }: Props) {
                 </Animated.View>
             )}
 
+            {isLiveRecordingMap && currentLocationScreenPoint && (
+                <View
+                    pointerEvents="none"
+                    style={[
+                        styles.currentAddressBubble,
+                        {
+                            left: Math.max(
+                                currentLocationScreenPoint.x - 120,
+                                16,
+                            ),
+                            top: Math.max(
+                                currentLocationScreenPoint.y - 105,
+                                16,
+                            ),
+                        },
+                    ]}
+                >
+                    <Text style={styles.currentAddressBubbleTitle}>現在地</Text>
+                    <Text
+                        style={styles.currentAddressBubbleText}
+                        numberOfLines={2}
+                    >
+                        {addressLoading
+                            ? "住所を取得中..."
+                            : currentAddress || "住所未取得"}
+                    </Text>
+                    <View style={styles.currentAddressBubbleArrow} />
+                </View>
+            )}
+
             <View style={styles.infoBox}>
                 <Text style={styles.infoTitle}>
                     {isSelectedMode ? "記録サマリー" : "最新位置"}
@@ -1381,6 +1497,19 @@ function formatDuration(startValue: string, endValue: string) {
     return `${hours}h:${mm}m`;
 }
 
+function formatAddress(address: Location.LocationGeocodedAddress) {
+    const parts = [
+        address.region,
+        address.city,
+        address.district,
+        address.street,
+        address.streetNumber,
+        address.name,
+    ].filter(Boolean);
+
+    return parts.join("");
+}
+
 function calculateRouteDistanceMeters(logs: LocationLogItem[]) {
     if (logs.length < 2) {
         return 0;
@@ -1438,6 +1567,8 @@ function calculateDistanceMeters(
 
 const SAME_SECOND_DISTANCE_THRESHOLD_METERS = 8;
 const MAX_ROUTE_SPEED_METERS_PER_SECOND = 80;
+const ADDRESS_REFRESH_INTERVAL_MS = 30000;
+const ADDRESS_REFRESH_DISTANCE_METERS = 50;
 
 function buildRouteLogs(logs: LocationLogItem[]) {
     const sortedLogs = [...logs]
@@ -1802,5 +1933,43 @@ const styles = StyleSheet.create({
 
     routeFitButtonTextActive: {
         color: "#ffffff",
+    },
+    currentAddressBubble: {
+        position: "absolute",
+        width: 240,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: 12,
+        backgroundColor: "rgba(255, 255, 255, 0.96)",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+        zIndex: 1200,
+        elevation: 1200,
+    },
+
+    currentAddressBubbleTitle: {
+        fontSize: 12,
+        fontWeight: "bold",
+        color: "#2f4f66",
+        marginBottom: 3,
+    },
+
+    currentAddressBubbleText: {
+        fontSize: 12,
+        color: "#333333",
+        lineHeight: 17,
+    },
+
+    currentAddressBubbleArrow: {
+        position: "absolute",
+        left: 112,
+        bottom: -8,
+        width: 16,
+        height: 16,
+        backgroundColor: "rgba(255, 255, 255, 0.96)",
+        borderRightWidth: 1,
+        borderBottomWidth: 1,
+        borderColor: "#c8d6e0",
+        transform: [{ rotate: "45deg" }],
     },
 });

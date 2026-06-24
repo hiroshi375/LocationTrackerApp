@@ -667,9 +667,6 @@ export function useForegroundLocationRecorder({
     };
 }
 
-const NEAR_DUPLICATE_TIME_MS = 3000;
-const NEAR_DUPLICATE_DISTANCE_METERS = 5;
-
 function createLocationDuplicateKey(
     latitude: number,
     longitude: number,

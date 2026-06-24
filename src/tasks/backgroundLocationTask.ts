@@ -5,6 +5,11 @@ import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 
 import { client } from "../lib/client";
+import {
+    calculateDistanceMeters,
+    isExactDuplicateLocation,
+    isNearDuplicateLocation,
+} from "../utils/locationDuplicate";
 
 export const BACKGROUND_LOCATION_TASK_NAME =
     "location-tracker-background-location-task";
@@ -151,10 +156,23 @@ async function saveBackgroundLocation(
             return state;
         }
 
+        const lastSavedLocation = state.lastSavedLocation ?? null;
+
         if (
-            isExactDuplicateLocation(latitude, longitude, recordedAtMs, state)
+            isExactDuplicateLocation(
+                lastSavedLocation,
+                latitude,
+                longitude,
+                recordedAtMs,
+            ) ||
+            isNearDuplicateLocation(
+                lastSavedLocation,
+                latitude,
+                longitude,
+                recordedAtMs,
+            )
         ) {
-            console.log("Skip exact duplicate background location:", {
+            console.log("Skip duplicate background location:", {
                 latitude,
                 longitude,
                 recordedAt: new Date(recordedAtMs).toISOString(),
@@ -286,33 +304,6 @@ async function updateBackgroundLiveLocation(
 }
 
 const FORCE_DISTANCE_METERS = 100;
-const EXACT_DUPLICATE_DISTANCE_METERS = 1;
-
-function isExactDuplicateLocation(
-    latitude: number,
-    longitude: number,
-    recordedAtMs: number,
-    state: BackgroundRecordingState,
-) {
-    const lastSavedLocation = state.lastSavedLocation;
-
-    if (!lastSavedLocation) {
-        return false;
-    }
-
-    if (recordedAtMs !== lastSavedLocation.recordedAt) {
-        return false;
-    }
-
-    const distance = calculateDistanceMeters(
-        lastSavedLocation.latitude,
-        lastSavedLocation.longitude,
-        latitude,
-        longitude,
-    );
-
-    return distance < EXACT_DUPLICATE_DISTANCE_METERS;
-}
 
 function createLocationDuplicateKey(
     latitude: number,
@@ -362,31 +353,4 @@ function shouldSaveLocation(
     }
 
     return false;
-}
-
-function calculateDistanceMeters(
-    lat1: number,
-    lon1: number,
-    lat2: number,
-    lon2: number,
-) {
-    const earthRadiusMeters = 6371000;
-
-    const dLat = toRadians(lat2 - lat1);
-    const dLon = toRadians(lon2 - lon1);
-
-    const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(toRadians(lat1)) *
-            Math.cos(toRadians(lat2)) *
-            Math.sin(dLon / 2) *
-            Math.sin(dLon / 2);
-
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-    return earthRadiusMeters * c;
-}
-
-function toRadians(value: number) {
-    return (value * Math.PI) / 180;
 }

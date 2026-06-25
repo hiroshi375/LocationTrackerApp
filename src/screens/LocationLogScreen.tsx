@@ -938,19 +938,24 @@ export default function LocationLogScreen({ navigation }: Props) {
                                         </Text>
                                     </View>
 
-                                    <View style={styles.actionRow}>
+                                    <View style={styles.sessionActionRow}>
                                         <Pressable
                                             style={({ pressed }) => [
-                                                styles.detailButton,
+                                                styles.sessionActionButton,
                                                 pressed &&
                                                     styles.detailButtonPressed,
                                             ]}
                                             onPress={() =>
                                                 handleOpenSessionMap(item)
                                             }
+                                            disabled={isDeleting}
                                         >
                                             <Text
-                                                style={styles.detailButtonText}
+                                                style={
+                                                    styles.sessionActionButtonText
+                                                }
+                                                numberOfLines={1}
+                                                adjustsFontSizeToFit
                                             >
                                                 地図で表示
                                             </Text>
@@ -958,7 +963,7 @@ export default function LocationLogScreen({ navigation }: Props) {
 
                                         <Pressable
                                             style={({ pressed }) => [
-                                                styles.detailButton,
+                                                styles.sessionActionButton,
                                                 pressed &&
                                                     styles.detailButtonPressed,
                                             ]}
@@ -968,7 +973,11 @@ export default function LocationLogScreen({ navigation }: Props) {
                                             disabled={isDeleting}
                                         >
                                             <Text
-                                                style={styles.detailButtonText}
+                                                style={
+                                                    styles.sessionActionButtonText
+                                                }
+                                                numberOfLines={1}
+                                                adjustsFontSizeToFit
                                             >
                                                 タイトル変更
                                             </Text>
@@ -976,7 +985,27 @@ export default function LocationLogScreen({ navigation }: Props) {
 
                                         <Pressable
                                             style={({ pressed }) => [
-                                                styles.deleteButton,
+                                                styles.sessionActionButton,
+                                                pressed &&
+                                                    styles.detailButtonPressed,
+                                            ]}
+                                            onPress={() => openShareModal(item)}
+                                            disabled={isDeleting}
+                                        >
+                                            <Text
+                                                style={
+                                                    styles.sessionActionButtonText
+                                                }
+                                                numberOfLines={1}
+                                                adjustsFontSizeToFit
+                                            >
+                                                共有
+                                            </Text>
+                                        </Pressable>
+
+                                        <Pressable
+                                            style={({ pressed }) => [
+                                                styles.sessionDeleteButton,
                                                 pressed &&
                                                     !isDeleting &&
                                                     styles.deleteButtonPressed,
@@ -989,7 +1018,11 @@ export default function LocationLogScreen({ navigation }: Props) {
                                             }
                                         >
                                             <Text
-                                                style={styles.deleteButtonText}
+                                                style={
+                                                    styles.sessionDeleteButtonText
+                                                }
+                                                numberOfLines={1}
+                                                adjustsFontSizeToFit
                                             >
                                                 {isDeleting
                                                     ? "削除中..."
@@ -997,19 +1030,6 @@ export default function LocationLogScreen({ navigation }: Props) {
                                             </Text>
                                         </Pressable>
                                     </View>
-
-                                    <Pressable
-                                        style={({ pressed }) => [
-                                            styles.shareButton,
-                                            pressed &&
-                                                styles.detailButtonPressed,
-                                        ]}
-                                        onPress={() => openShareModal(item)}
-                                    >
-                                        <Text style={styles.shareButtonText}>
-                                            共有
-                                        </Text>
-                                    </Pressable>
                                 </View>
                             );
                         }
@@ -1595,6 +1615,47 @@ const styles = StyleSheet.create({
         gap: 8,
         paddingHorizontal: 14,
         paddingBottom: 12,
+    },
+    sessionActionRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        paddingHorizontal: 14,
+        paddingBottom: 12,
+    },
+
+    sessionActionButton: {
+        flex: 1,
+        minWidth: 0,
+        paddingVertical: 9,
+        paddingHorizontal: 4,
+        borderRadius: 8,
+        backgroundColor: "#e6edf3",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    sessionActionButtonText: {
+        color: "#2f4f66",
+        fontSize: 12,
+        fontWeight: "bold",
+    },
+
+    sessionDeleteButton: {
+        flex: 1,
+        minWidth: 0,
+        paddingVertical: 9,
+        paddingHorizontal: 4,
+        borderRadius: 8,
+        backgroundColor: "#4b6f8f",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    sessionDeleteButtonText: {
+        color: "#fff",
+        fontSize: 12,
+        fontWeight: "bold",
     },
     detailButton: {
         flex: 1,

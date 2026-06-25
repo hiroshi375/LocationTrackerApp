@@ -1389,33 +1389,41 @@ export default function LocationMapScreen({ route }: Props) {
                     })}
                 </View>
 
-                <Pressable
-                    style={styles.routeToggleButton}
-                    onPress={() => setShowPoints((current) => !current)}
-                >
-                    <Text style={styles.routeToggleButtonText}>
-                        ポイント表示: {showPoints ? "OFF" : "ON"}
-                    </Text>
-                </Pressable>
-
-                <Pressable
-                    style={({ pressed }) => [
-                        styles.routeFitButton,
-                        isRouteFitButtonActive && styles.routeFitButtonActive,
-                        pressed && styles.routeFitButtonPressed,
-                    ]}
-                    onPress={toggleRouteViewMode}
-                >
-                    <Text
-                        style={[
-                            styles.routeFitButtonText,
-                            isRouteFitButtonActive &&
-                                styles.routeFitButtonTextActive,
+                <View style={styles.mapActionButtonRow}>
+                    <Pressable
+                        style={({ pressed }) => [
+                            styles.mapActionButton,
+                            pressed && styles.mapActionButtonPressed,
                         ]}
+                        onPress={() => setShowPoints((current) => !current)}
                     >
-                        {routeFitButtonText}
-                    </Text>
-                </Pressable>
+                        <Text style={styles.mapActionButtonText}>
+                            ポイント表示: {showPoints ? "OFF" : "ON"}
+                        </Text>
+                    </Pressable>
+
+                    <Pressable
+                        style={({ pressed }) => [
+                            styles.mapActionButton,
+                            isRouteFitButtonActive &&
+                                styles.mapActionButtonActive,
+                            pressed && styles.mapActionButtonPressed,
+                        ]}
+                        onPress={toggleRouteViewMode}
+                    >
+                        <Text
+                            style={[
+                                styles.mapActionButtonText,
+                                isRouteFitButtonActive &&
+                                    styles.mapActionButtonTextActive,
+                            ]}
+                            numberOfLines={1}
+                            adjustsFontSizeToFit
+                        >
+                            {routeFitButtonText}
+                        </Text>
+                    </Pressable>
+                </View>
             </View>
         </View>
     );
@@ -1862,6 +1870,43 @@ const styles = StyleSheet.create({
     },
 
     mapLayerButtonTextActive: {
+        color: "#ffffff",
+    },
+
+    mapActionButtonRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        marginTop: 8,
+    },
+
+    mapActionButton: {
+        flex: 1,
+        paddingVertical: 9,
+        borderRadius: 8,
+        backgroundColor: "#eef3f7",
+        alignItems: "center",
+        justifyContent: "center",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+    },
+
+    mapActionButtonActive: {
+        backgroundColor: "#4b6f8f",
+        borderColor: "#4b6f8f",
+    },
+
+    mapActionButtonPressed: {
+        opacity: 0.75,
+    },
+
+    mapActionButtonText: {
+        color: "#2f4f66",
+        fontWeight: "bold",
+        fontSize: 13,
+    },
+
+    mapActionButtonTextActive: {
         color: "#ffffff",
     },
 

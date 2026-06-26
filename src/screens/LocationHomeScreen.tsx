@@ -80,7 +80,7 @@ const LOCATION_HOME_SETTINGS_STORAGE_KEY = "location-tracker-home-settings";
 type SavedLocationHomeSettings = {
     recordIntervalMs?: number;
     recordDistanceMeters?: number;
-    selectedLiveShareUser?: UserProfileItem | null;
+    selectedLiveShareUsers?: UserProfileItem[];
 };
 
 // 現在地の記録と保存を行うホーム画面コンポーネント
@@ -113,8 +113,9 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [liveShareModalVisible, setLiveShareModalVisible] = useState(false);
     const [liveShareSearchText, setLiveShareSearchText] = useState("");
     const [liveShareUsers, setLiveShareUsers] = useState<UserProfileItem[]>([]);
-    const [selectedLiveShareUser, setSelectedLiveShareUser] =
-        useState<UserProfileItem | null>(null);
+    const [selectedLiveShareUsers, setSelectedLiveShareUsers] = useState<
+        UserProfileItem[]
+    >([]);
     const [loadingLiveShareUsers, setLoadingLiveShareUsers] = useState(false);
     const [liveShareStatusMessage, setLiveShareStatusMessage] = useState("");
     const [openingSharedLiveMap, setOpeningSharedLiveMap] = useState(false);
@@ -152,9 +153,11 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     setRecordDistanceMeters(savedSettings.recordDistanceMeters);
                 }
 
-                if (savedSettings.selectedLiveShareUser?.ownerValue) {
-                    setSelectedLiveShareUser(
-                        savedSettings.selectedLiveShareUser,
+                if (Array.isArray(savedSettings.selectedLiveShareUsers)) {
+                    setSelectedLiveShareUsers(
+                        savedSettings.selectedLiveShareUsers.filter(
+                            (user) => !!user.ownerValue,
+                        ),
                     );
                 }
             } catch (error) {
@@ -177,7 +180,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 const settings: SavedLocationHomeSettings = {
                     recordIntervalMs,
                     recordDistanceMeters,
-                    selectedLiveShareUser,
+                    selectedLiveShareUsers,
                 };
 
                 await AsyncStorage.setItem(
@@ -194,8 +197,14 @@ export default function LocationHomeScreen({ navigation }: Props) {
         hasLoadedSavedHomeSettings,
         recordIntervalMs,
         recordDistanceMeters,
-        selectedLiveShareUser,
+        selectedLiveShareUsers,
     ]);
+
+    const liveShareOwnerValues = useMemo(() => {
+        return selectedLiveShareUsers
+            .map((user) => user.ownerValue)
+            .filter((ownerValue): ownerValue is string => !!ownerValue);
+    }, [selectedLiveShareUsers]);
 
     const {
         isRecording,
@@ -206,7 +215,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
     } = useForegroundLocationRecorder({
         intervalMs: recordIntervalMs,
         distanceMeters: recordDistanceMeters,
-        liveShareOwnerValue: selectedLiveShareUser?.ownerValue ?? null,
+        liveShareOwnerValues,
     });
 
     const recordingBlinkAnim = useRef(new Animated.Value(1)).current;
@@ -218,8 +227,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [pendingSessionId, setPendingSessionId] = useState<string | null>(
         null,
     );
-    const [pendingSessionShareOwnerValue, setPendingSessionShareOwnerValue] =
-        useState<string | null>(null);
+    const [pendingSessionShareOwnerValues, setPendingSessionShareOwnerValues] =
+        useState<string[]>([]);
     const [savingSessionName, setSavingSessionName] = useState(false);
 
     const loadLoginUserName = useCallback(async () => {
@@ -334,7 +343,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
         void loadLiveShareUsers();
     };
 
-    const clearLiveShareUser = () => {
+    const clearLiveShareUsers = () => {
         if (isRecording) {
             Alert.alert(
                 "自動記録中",
@@ -343,14 +352,34 @@ export default function LocationHomeScreen({ navigation }: Props) {
             return;
         }
 
-        setSelectedLiveShareUser(null);
+        setSelectedLiveShareUsers([]);
+        setLiveShareStatusMessage("");
+    };
+
+    const toggleLiveShareUser = (user: UserProfileItem) => {
+        setSelectedLiveShareUsers((currentUsers) => {
+            const exists = currentUsers.some(
+                (currentUser) => currentUser.id === user.id,
+            );
+
+            if (exists) {
+                return currentUsers.filter(
+                    (currentUser) => currentUser.id !== user.id,
+                );
+            }
+
+            return [...currentUsers, user];
+        });
+
         setLiveShareStatusMessage("");
     };
 
     const liveShareUserName =
-        selectedLiveShareUser?.displayName ||
-        selectedLiveShareUser?.email ||
-        "";
+        selectedLiveShareUsers.length === 0
+            ? ""
+            : selectedLiveShareUsers
+                  .map((user) => user.displayName || user.email || "名前未設定")
+                  .join("、");
 
     const handleStartRecording = async () => {
         setLiveShareStatusMessage("");
@@ -530,13 +559,13 @@ export default function LocationHomeScreen({ navigation }: Props) {
             await upsertRecordingSessionSummary(
                 pendingSessionId,
                 sessionName,
-                pendingSessionShareOwnerValue,
+                pendingSessionShareOwnerValues,
             );
 
             setSessionNameModalVisible(false);
             setSessionNameInput("");
             setPendingSessionId(null);
-            setPendingSessionShareOwnerValue(null);
+            setPendingSessionShareOwnerValues([]);
         } catch (error) {
             console.error("Save session name error:", error);
             Alert.alert("保存エラー", "セッション名の保存に失敗しました。");
@@ -548,8 +577,9 @@ export default function LocationHomeScreen({ navigation }: Props) {
     // セッションIDに紐づくLocationLogを全件取得してセッション名を更新する
     const handleStopRecording = async () => {
         const stoppedShareUserName = liveShareUserName;
-        const stoppedShareOwnerValue =
-            selectedLiveShareUser?.ownerValue ?? null;
+        const stoppedShareOwnerValues = selectedLiveShareUsers
+            .map((user) => user.ownerValue)
+            .filter((ownerValue): ownerValue is string => !!ownerValue);
 
         const finishedSessionId = await stopRecording();
 
@@ -569,14 +599,14 @@ export default function LocationHomeScreen({ navigation }: Props) {
             await upsertRecordingSessionSummary(
                 finishedSessionId,
                 null,
-                stoppedShareOwnerValue,
+                stoppedShareOwnerValues,
             );
         } catch (error) {
             console.error("RecordingSession summary save error:", error);
         }
 
         setPendingSessionId(finishedSessionId);
-        setPendingSessionShareOwnerValue(stoppedShareOwnerValue);
+        setPendingSessionShareOwnerValues(stoppedShareOwnerValues);
         setSessionNameInput("");
         setSessionNameModalVisible(true);
     };
@@ -906,32 +936,37 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             disabled={isRecording}
                         >
                             <Text style={styles.liveShareSelectButtonText}>
-                                {selectedLiveShareUser
-                                    ? selectedLiveShareUser.displayName ||
-                                      selectedLiveShareUser.email ||
-                                      "名前未設定ユーザー"
+                                {selectedLiveShareUsers.length > 0
+                                    ? `${selectedLiveShareUsers.length}人を選択中`
                                     : "共有先ユーザーを選択"}
                             </Text>
                         </Pressable>
 
-                        {selectedLiveShareUser?.email && (
+                        {selectedLiveShareUsers.length > 0 && (
                             <Text style={styles.liveShareSelectedEmail}>
-                                {selectedLiveShareUser.email}
+                                {selectedLiveShareUsers
+                                    .map(
+                                        (user) =>
+                                            user.email ||
+                                            user.displayName ||
+                                            "名前未設定",
+                                    )
+                                    .join("、")}
                             </Text>
                         )}
 
-                        {selectedLiveShareUser && !isRecording && (
+                        {selectedLiveShareUsers.length > 0 && !isRecording && (
                             <Pressable
                                 style={styles.liveShareClearButton}
-                                onPress={clearLiveShareUser}
+                                onPress={clearLiveShareUsers}
                             >
                                 <Text style={styles.liveShareClearButtonText}>
-                                    共有先を解除
+                                    共有先をすべて解除
                                 </Text>
                             </Pressable>
                         )}
                     </View>
-                    {isRecording && selectedLiveShareUser && (
+                    {isRecording && selectedLiveShareUsers.length > 0 && (
                         <View style={styles.liveShareStatusActiveBox}>
                             <Text style={styles.liveShareStatusActiveText}>
                                 現在地を共有中: {liveShareUserName}
@@ -973,7 +1008,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             onPress={handleStartRecording}
                         >
                             <Text style={styles.autoRecordButtonText}>
-                                {selectedLiveShareUser
+                                {selectedLiveShareUsers.length > 0
                                     ? "自動記録開始＋共有"
                                     : "自動記録開始"}
                             </Text>
@@ -1112,8 +1147,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 ) : (
                                     filteredLiveShareUsers.map((user) => {
                                         const selected =
-                                            selectedLiveShareUser?.id ===
-                                            user.id;
+                                            selectedLiveShareUsers.some(
+                                                (selectedUser) =>
+                                                    selectedUser.id === user.id,
+                                            );
 
                                         return (
                                             <Pressable
@@ -1123,17 +1160,9 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                                     selected &&
                                                         styles.liveShareUserItemSelected,
                                                 ]}
-                                                onPress={() => {
-                                                    setSelectedLiveShareUser(
-                                                        user,
-                                                    );
-                                                    setLiveShareStatusMessage(
-                                                        "",
-                                                    );
-                                                    setLiveShareModalVisible(
-                                                        false,
-                                                    );
-                                                }}
+                                                onPress={() =>
+                                                    toggleLiveShareUser(user)
+                                                }
                                             >
                                                 <Text
                                                     style={

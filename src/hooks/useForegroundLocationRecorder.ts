@@ -1,6 +1,6 @@
 import { getCurrentUser } from "aws-amplify/auth";
 import * as Location from "expo-location";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AppState } from "react-native";
 
 import * as Battery from "expo-battery";
@@ -29,7 +29,7 @@ type SavedLocation = {
 type RecorderOptions = {
     intervalMs: number;
     distanceMeters: number;
-    liveShareOwnerValue?: string | null;
+    liveShareOwnerValues?: string[];
 };
 
 type LiveLocationMutationResult = {
@@ -42,7 +42,7 @@ type LiveLocationMutationResult = {
 export function useForegroundLocationRecorder({
     intervalMs,
     distanceMeters,
-    liveShareOwnerValue = null,
+    liveShareOwnerValues = [],
 }: RecorderOptions) {
     const [isRecording, setIsRecording] = useState(false);
     const [recordingStartedAt, setRecordingStartedAt] = useState<string | null>(
@@ -71,6 +71,10 @@ export function useForegroundLocationRecorder({
     >(null);
 
     const forceDistanceMeters = Math.max(distanceMeters * 5, 100);
+
+    const normalizedLiveShareOwnerValues = useMemo(() => {
+        return Array.from(new Set(liveShareOwnerValues.filter(Boolean)));
+    }, [liveShareOwnerValues]);
 
     // 位置を保存すべきか判定する関数
     const shouldSaveLocation = useCallback(
@@ -141,7 +145,7 @@ export function useForegroundLocationRecorder({
     //
     const updateLiveLocation = useCallback(
         async (location: Location.LocationObject) => {
-            if (!liveShareOwnerValue) {
+            if (normalizedLiveShareOwnerValues.length === 0) {
                 return;
             }
 
@@ -172,7 +176,7 @@ export function useForegroundLocationRecorder({
                     accuracy: location.coords.accuracy ?? null,
                     updatedAt,
                     isActive: true,
-                    sharedOwners: [liveShareOwnerValue],
+                    sharedOwners: normalizedLiveShareOwnerValues,
                 };
 
                 if (liveLocationIdRef.current) {
@@ -205,7 +209,7 @@ export function useForegroundLocationRecorder({
                 console.error("LiveLocation update error:", error);
             }
         },
-        [liveShareOwnerValue],
+        [normalizedLiveShareOwnerValues],
     );
 
     // 位置を保存する関数
@@ -318,9 +322,10 @@ export function useForegroundLocationRecorder({
 
                 const batterySnapshot = await getBatterySnapshot();
 
-                const sharedOwners = liveShareOwnerValue
-                    ? [liveShareOwnerValue]
-                    : undefined;
+                const sharedOwners =
+                    normalizedLiveShareOwnerValues.length > 0
+                        ? normalizedLiveShareOwnerValues
+                        : undefined;
 
                 const result = await client.models.LocationLog.create({
                     userId: currentUser.userId,
@@ -372,7 +377,11 @@ export function useForegroundLocationRecorder({
                 }
             }
         },
-        [shouldSaveLocation, updateDistanceFromStart, liveShareOwnerValue],
+        [
+            shouldSaveLocation,
+            updateDistanceFromStart,
+            normalizedLiveShareOwnerValues,
+        ],
     );
 
     const resetRecordingState = useCallback(() => {
@@ -500,7 +509,7 @@ export function useForegroundLocationRecorder({
                     startedAt,
                     intervalMs,
                     distanceMeters,
-                    liveShareOwnerValue,
+                    liveShareOwnerValues: normalizedLiveShareOwnerValues,
                     lastSavedLocation: {
                         latitude: currentLocation.coords.latitude,
                         longitude: currentLocation.coords.longitude,
@@ -577,7 +586,7 @@ export function useForegroundLocationRecorder({
         updateLiveLocation,
         intervalMs,
         distanceMeters,
-        liveShareOwnerValue,
+        normalizedLiveShareOwnerValues,
         resetRecordingState,
     ]);
 

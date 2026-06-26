@@ -31,8 +31,8 @@ type SessionLogItem = {
 
 export async function upsertRecordingSessionSummary(
     recordingSessionId: string,
-    recordingSessionName?: string | null,
-    liveShareOwnerValue?: string | null,
+    recordingSessionName: string | null,
+    shareOwnerValues: string[] = [],
 ) {
     const logs = await listLocationLogsBySessionId(recordingSessionId);
 
@@ -95,9 +95,10 @@ export async function upsertRecordingSessionSummary(
           )
         : [];
 
-    const explicitSharedOwners = liveShareOwnerValue
-        ? [liveShareOwnerValue]
-        : [];
+    const explicitSharedOwners = shareOwnerValues.filter(
+        (owner): owner is string =>
+            typeof owner === "string" && owner.length > 0,
+    );
 
     const sharedOwners = Array.from(
         new Set([

@@ -36,7 +36,7 @@ type StartBackgroundLocationRecordingParams = {
     startedAt?: string | null;
     intervalMs: number;
     distanceMeters: number;
-    liveShareOwnerValue?: string | null;
+    liveShareOwnerValues?: string[];
     lastSavedLocation?: {
         latitude: number;
         longitude: number;
@@ -48,7 +48,7 @@ export type BackgroundRecordingState = {
     userId: string;
     recordingSessionId: string;
     startedAt?: string | null;
-    liveShareOwnerValue?: string | null;
+    liveShareOwnerValues?: string[];
     liveLocationId?: string | null;
     lastSavedLocation?: {
         latitude: number;
@@ -65,7 +65,7 @@ export async function startBackgroundLocationRecording({
     startedAt = null,
     intervalMs,
     distanceMeters,
-    liveShareOwnerValue = null,
+    liveShareOwnerValues = [],
     lastSavedLocation = null,
 }: StartBackgroundLocationRecordingParams) {
     await ensureBackgroundLocationPermission();
@@ -77,7 +77,7 @@ export async function startBackgroundLocationRecording({
             startedAt,
             intervalMs,
             distanceMeters,
-            liveShareOwnerValue,
+            liveShareOwnerValues: Array.from(new Set(liveShareOwnerValues)),
             lastSavedLocation,
         }),
     );

@@ -931,7 +931,11 @@ export default function LocationMapScreen({ route }: Props) {
     if (!displayLocation) {
         return (
             <View style={styles.center}>
-                <Text>表示できる位置情報がありません。</Text>
+                <Text>
+                    {isLiveRecordingMap
+                        ? "現在地を取得中です..."
+                        : "表示できる位置情報がありません。"}
+                </Text>
             </View>
         );
     }

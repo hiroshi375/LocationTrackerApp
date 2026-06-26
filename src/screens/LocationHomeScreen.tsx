@@ -684,7 +684,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         onPress={handleOpenSharedLiveLocationMap}
                         disabled={openingSharedLiveMap}
                     />
-                </View>{" "}
+                </View>
                 <View style={styles.autoRecordBox}>
                     <View style={styles.autoRecordHeader}>
                         <Text style={styles.autoRecordTitle}>自動記録</Text>

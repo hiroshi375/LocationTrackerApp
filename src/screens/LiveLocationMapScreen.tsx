@@ -117,16 +117,6 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
             recordingSessionId: liveLocation.recordingSessionId,
             sharedLiveUserId: liveLocation.userId,
             sharedLiveLocationId: liveLocation.id,
-            selectedLocation: {
-                id: liveLocation.id,
-                latitude: liveLocation.latitude,
-                longitude: liveLocation.longitude,
-                accuracy: liveLocation.accuracy ?? null,
-                recordedAt: liveLocation.updatedAt,
-                memo: "共有中の現在地",
-                recordingSessionId: liveLocation.recordingSessionId,
-                recordingSessionName: liveLocation.recordingSessionName ?? null,
-            },
         });
     };
 
@@ -170,11 +160,7 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
                             location.updatedAt,
                         )}`}
                         onPress={() => openLocationMap(location)}
-                    >
-                        <View style={styles.liveMarkerOuter}>
-                            <View style={styles.liveMarkerInner} />
-                        </View>
-                    </Marker>
+                    />
                 ))}
             </MapView>
 

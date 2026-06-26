@@ -17,6 +17,7 @@ import {
     View,
 } from "react-native";
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { getUrl } from "aws-amplify/storage";
 import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRecorder";
@@ -74,6 +75,14 @@ type LiveLocationListResult = {
     nextToken?: string | null;
 };
 
+const LOCATION_HOME_SETTINGS_STORAGE_KEY = "location-tracker-home-settings";
+
+type SavedLocationHomeSettings = {
+    recordIntervalMs?: number;
+    recordDistanceMeters?: number;
+    selectedLiveShareUser?: UserProfileItem | null;
+};
+
 // 現在地の記録と保存を行うホーム画面コンポーネント
 export default function LocationHomeScreen({ navigation }: Props) {
     const [loginUserName, setLoginUserName] = useState("ユーザー");
@@ -98,6 +107,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
     const [recordIntervalMs, setRecordIntervalMs] = useState(30 * 1000);
     const [recordDistanceMeters, setRecordDistanceMeters] = useState(20);
+    const [hasLoadedSavedHomeSettings, setHasLoadedSavedHomeSettings] =
+        useState(false);
 
     const [liveShareModalVisible, setLiveShareModalVisible] = useState(false);
     const [liveShareSearchText, setLiveShareSearchText] = useState("");
@@ -107,6 +118,84 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [loadingLiveShareUsers, setLoadingLiveShareUsers] = useState(false);
     const [liveShareStatusMessage, setLiveShareStatusMessage] = useState("");
     const [openingSharedLiveMap, setOpeningSharedLiveMap] = useState(false);
+
+    useEffect(() => {
+        const loadSavedHomeSettings = async () => {
+            try {
+                const raw = await AsyncStorage.getItem(
+                    LOCATION_HOME_SETTINGS_STORAGE_KEY,
+                );
+
+                if (!raw) {
+                    return;
+                }
+
+                const savedSettings = JSON.parse(
+                    raw,
+                ) as SavedLocationHomeSettings;
+
+                if (
+                    typeof savedSettings.recordIntervalMs === "number" &&
+                    [10000, 30000, 60000, 180000, 300000].includes(
+                        savedSettings.recordIntervalMs,
+                    )
+                ) {
+                    setRecordIntervalMs(savedSettings.recordIntervalMs);
+                }
+
+                if (
+                    typeof savedSettings.recordDistanceMeters === "number" &&
+                    [10, 20, 50, 100].includes(
+                        savedSettings.recordDistanceMeters,
+                    )
+                ) {
+                    setRecordDistanceMeters(savedSettings.recordDistanceMeters);
+                }
+
+                if (savedSettings.selectedLiveShareUser?.ownerValue) {
+                    setSelectedLiveShareUser(
+                        savedSettings.selectedLiveShareUser,
+                    );
+                }
+            } catch (error) {
+                console.error("Load saved home settings error:", error);
+            } finally {
+                setHasLoadedSavedHomeSettings(true);
+            }
+        };
+
+        void loadSavedHomeSettings();
+    }, []);
+
+    useEffect(() => {
+        if (!hasLoadedSavedHomeSettings) {
+            return;
+        }
+
+        const saveHomeSettings = async () => {
+            try {
+                const settings: SavedLocationHomeSettings = {
+                    recordIntervalMs,
+                    recordDistanceMeters,
+                    selectedLiveShareUser,
+                };
+
+                await AsyncStorage.setItem(
+                    LOCATION_HOME_SETTINGS_STORAGE_KEY,
+                    JSON.stringify(settings),
+                );
+            } catch (error) {
+                console.error("Save home settings error:", error);
+            }
+        };
+
+        void saveHomeSettings();
+    }, [
+        hasLoadedSavedHomeSettings,
+        recordIntervalMs,
+        recordDistanceMeters,
+        selectedLiveShareUser,
+    ]);
 
     const {
         isRecording,

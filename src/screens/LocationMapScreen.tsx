@@ -75,6 +75,7 @@ const DEFAULT_LATITUDE_DELTA = 0.01;
 const DEFAULT_LONGITUDE_DELTA = 0.01;
 
 const MAP_LAYER_MODE_STORAGE_KEY = "location-map-layer-mode";
+const ROUTE_OVERVIEW_MODE_STORAGE_KEY = "location-map-route-overview-mode";
 
 const MAP_LAYER_OPTIONS: MapLayerOption[] = [
     {
@@ -463,6 +464,43 @@ export default function LocationMapScreen({ route }: Props) {
     }, [mapLayerMode]);
 
     useEffect(() => {
+        const loadRouteOverviewMode = async () => {
+            try {
+                const savedValue = await AsyncStorage.getItem(
+                    ROUTE_OVERVIEW_MODE_STORAGE_KEY,
+                );
+
+                if (savedValue === "true") {
+                    setIsRouteOverviewMode(true);
+                }
+
+                if (savedValue === "false") {
+                    setIsRouteOverviewMode(false);
+                }
+            } catch (error) {
+                console.error("Load route overview mode error:", error);
+            }
+        };
+
+        void loadRouteOverviewMode();
+    }, []);
+
+    useEffect(() => {
+        const saveRouteOverviewMode = async () => {
+            try {
+                await AsyncStorage.setItem(
+                    ROUTE_OVERVIEW_MODE_STORAGE_KEY,
+                    isRouteOverviewMode ? "true" : "false",
+                );
+            } catch (error) {
+                console.error("Save route overview mode error:", error);
+            }
+        };
+
+        void saveRouteOverviewMode();
+    }, [isRouteOverviewMode]);
+
+    useEffect(() => {
         if (!isOwnLiveRecordingMap) {
             return;
         }
@@ -690,8 +728,80 @@ export default function LocationMapScreen({ route }: Props) {
     }, [mapReady, isLiveRecordingMap, currentLocation, isRouteOverviewMode]);
 
     useEffect(() => {
+        if (!mapReady) {
+            return;
+        }
+
+        if (!isLiveRecordingMap) {
+            return;
+        }
+
+        if (!isRouteOverviewMode) {
+            return;
+        }
+
+        if (!currentLocation) {
+            return;
+        }
+
+        const routeLogsForOverview = activeSessionId
+            ? buildRouteLogs(
+                  logs.filter(
+                      (log) => log.recordingSessionId === activeSessionId,
+                  ),
+              )
+            : [];
+
+        const coordinates = [
+            ...routeLogsForOverview.map((log) => ({
+                latitude: log.latitude,
+                longitude: log.longitude,
+            })),
+            currentLocation,
+        ];
+
+        if (coordinates.length === 0) {
+            return;
+        }
+
+        const timerId = setTimeout(() => {
+            if (coordinates.length === 1) {
+                mapRef.current?.animateCamera(
+                    {
+                        center: getAdjustedMapCenter(coordinates[0]),
+                    },
+                    {
+                        duration: 500,
+                    },
+                );
+                return;
+            }
+
+            mapRef.current?.fitToCoordinates(coordinates, {
+                edgePadding: {
+                    top: 100,
+                    right: 60,
+                    bottom: 320,
+                    left: 60,
+                },
+                animated: true,
+            });
+        }, 300);
+
+        return () => {
+            clearTimeout(timerId);
+        };
+    }, [
+        mapReady,
+        isLiveRecordingMap,
+        isRouteOverviewMode,
+        currentLocation,
+        activeSessionId,
+        logs,
+    ]);
+
+    useEffect(() => {
         hasFittedInitialRouteRef.current = false;
-        setIsRouteOverviewMode(false);
     }, [activeSessionId, isLiveRecordingMap]);
 
     useEffect(() => {

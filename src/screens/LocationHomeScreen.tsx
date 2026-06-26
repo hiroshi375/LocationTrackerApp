@@ -56,6 +56,24 @@ type LocationLogListResult = {
     nextToken?: string | null;
 };
 
+type LiveLocationItem = {
+    id: string;
+    userId: string;
+    recordingSessionId?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
+    updatedAt?: string | null;
+    recordedAt?: string | null;
+    isActive?: boolean | null;
+    sharedOwners?: string[] | null;
+};
+
+type LiveLocationListResult = {
+    data?: any[] | null;
+    errors?: unknown;
+    nextToken?: string | null;
+};
+
 // 現在地の記録と保存を行うホーム画面コンポーネント
 export default function LocationHomeScreen({ navigation }: Props) {
     const [loginUserName, setLoginUserName] = useState("ユーザー");
@@ -88,6 +106,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
         useState<UserProfileItem | null>(null);
     const [loadingLiveShareUsers, setLoadingLiveShareUsers] = useState(false);
     const [liveShareStatusMessage, setLiveShareStatusMessage] = useState("");
+    const [openingSharedLiveMap, setOpeningSharedLiveMap] = useState(false);
 
     const {
         isRecording,
@@ -488,6 +507,138 @@ export default function LocationHomeScreen({ navigation }: Props) {
         });
     };
 
+    const handleOpenSharedLiveLocationMap = async () => {
+        if (openingSharedLiveMap) {
+            return;
+        }
+
+        try {
+            setOpeningSharedLiveMap(true);
+
+            const profile = await getCurrentUserProfile();
+            const ownerValue = profile?.ownerValue;
+
+            if (!ownerValue) {
+                Alert.alert(
+                    "共有情報がありません",
+                    "現在のユーザーの共有用情報を取得できませんでした。",
+                );
+                return;
+            }
+
+            const liveLocationModel = client.models.LiveLocation as any;
+
+            const allData: any[] = [];
+            let nextToken: string | null = null;
+
+            do {
+                const listParams: {
+                    filter: {
+                        isActive: {
+                            eq: boolean;
+                        };
+                    };
+                    limit: number;
+                    nextToken?: string;
+                } = {
+                    filter: {
+                        isActive: {
+                            eq: true,
+                        },
+                    },
+                    limit: 1000,
+                };
+
+                if (nextToken) {
+                    listParams.nextToken = nextToken;
+                }
+
+                const result = (await liveLocationModel.list(
+                    listParams,
+                )) as LiveLocationListResult;
+
+                if (result.errors) {
+                    console.error("LiveLocation list errors:", result.errors);
+                    Alert.alert(
+                        "取得エラー",
+                        "共有中の現在地を取得できませんでした。",
+                    );
+                    return;
+                }
+
+                allData.push(...(result.data ?? []));
+                nextToken = result.nextToken ?? null;
+            } while (nextToken);
+
+            const sharedLiveLocations: LiveLocationItem[] = allData
+                .map((item) => ({
+                    id: item.id,
+                    userId: item.userId,
+                    recordingSessionId: item.recordingSessionId ?? null,
+                    latitude: item.latitude,
+                    longitude: item.longitude,
+                    updatedAt: item.updatedAt ?? null,
+                    recordedAt: item.recordedAt ?? null,
+                    isActive: item.isActive ?? null,
+                    sharedOwners: Array.isArray(item.sharedOwners)
+                        ? item.sharedOwners
+                        : [],
+                }))
+                .filter((item) => {
+                    if (!item.isActive) {
+                        return false;
+                    }
+
+                    if (!item.recordingSessionId) {
+                        return false;
+                    }
+
+                    if (
+                        !Number.isFinite(Number(item.latitude)) ||
+                        !Number.isFinite(Number(item.longitude))
+                    ) {
+                        return false;
+                    }
+
+                    return item.sharedOwners?.includes(ownerValue);
+                })
+                .sort((a, b) => {
+                    const aTime = new Date(
+                        a.updatedAt ?? a.recordedAt ?? 0,
+                    ).getTime();
+                    const bTime = new Date(
+                        b.updatedAt ?? b.recordedAt ?? 0,
+                    ).getTime();
+
+                    return bTime - aTime;
+                });
+
+            const latest = sharedLiveLocations[0];
+
+            if (!latest?.recordingSessionId) {
+                Alert.alert(
+                    "共有中の現在地なし",
+                    "現在共有されているLiveLocationが見つかりませんでした。",
+                );
+                return;
+            }
+
+            navigation.navigate("LocationMap", {
+                sharedLiveUserId: latest.userId,
+                sharedLiveLocationId: latest.id,
+                recordingSessionId: latest.recordingSessionId,
+            });
+        } catch (error) {
+            console.error("Open shared live location map error:", error);
+            Alert.alert(
+                "取得エラー",
+                "共有中の現在地を開く処理に失敗しました。",
+            );
+        } finally {
+            setOpeningSharedLiveMap(false);
+        }
+    };
+
     useEffect(() => {
         void ensureUserProfile();
     }, []);
@@ -523,13 +674,17 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         onPress={() => navigation.navigate("LocationLog")}
                     />
                 </View>
-
                 <View style={styles.buttonSpace}>
                     <AppButton
-                        title="共有中の現在地を見る"
-                        onPress={() => navigation.navigate("LiveLocationMap")}
+                        title={
+                            openingSharedLiveMap
+                                ? "共有中の現在地を取得中..."
+                                : "共有中の現在地を見る"
+                        }
+                        onPress={handleOpenSharedLiveLocationMap}
+                        disabled={openingSharedLiveMap}
                     />
-                </View>
+                </View>{" "}
                 <View style={styles.autoRecordBox}>
                     <View style={styles.autoRecordHeader}>
                         <Text style={styles.autoRecordTitle}>自動記録</Text>
@@ -736,14 +891,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         </Pressable>
                     )}
                 </View>
-
                 <View style={styles.buttonSpace}>
                     <AppButton
                         title="プロフィール"
                         onPress={() => navigation.navigate("Profile")}
                     />
                 </View>
-
                 <View style={styles.signOutButtonSpace}>
                     <Pressable
                         style={({ pressed }) => [
@@ -757,7 +910,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         </Text>
                     </Pressable>
                 </View>
-
                 <Modal
                     visible={sessionNameModalVisible}
                     transparent
@@ -825,7 +977,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         </View>
                     </View>
                 </Modal>
-
                 <Modal
                     visible={liveShareModalVisible}
                     transparent

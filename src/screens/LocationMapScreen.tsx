@@ -259,6 +259,11 @@ export default function LocationMapScreen({ route }: Props) {
                     setLoading(true);
                 }
 
+                if (sharedLiveUserId && !activeSessionId) {
+                    setLogs([]);
+                    return;
+                }
+
                 const allData: any[] = [];
                 let nextToken: string | null = null;
 
@@ -317,7 +322,7 @@ export default function LocationMapScreen({ route }: Props) {
                 setHasLoaded(true);
             }
         },
-        [activeSessionId],
+        [activeSessionId, sharedLiveUserId],
     );
 
     const loadRecordingSessionSummary = useCallback(
@@ -592,6 +597,7 @@ export default function LocationMapScreen({ route }: Props) {
                     const latest = validItems[0];
 
                     if (!latest) {
+                        setCurrentLocation(null);
                         return;
                     }
 
@@ -880,12 +886,18 @@ export default function LocationMapScreen({ route }: Props) {
 
     const visibleLogs = activeSessionId
         ? logs.filter((log) => log.recordingSessionId === activeSessionId)
-        : logs;
+        : isLiveRecordingMap
+          ? []
+          : logs;
 
-    if (visibleLogs.length === 0 && !selectedLocation) {
+    if (visibleLogs.length === 0 && !selectedLocation && !currentLocation) {
         return (
             <View style={styles.center}>
-                <Text>表示できる位置履歴がありません。</Text>
+                <Text>
+                    {isLiveRecordingMap
+                        ? "現在地を取得中です..."
+                        : "表示できる位置履歴がありません。"}
+                </Text>
             </View>
         );
     }
@@ -899,7 +911,22 @@ export default function LocationMapScreen({ route }: Props) {
             ? routeLogs[routeLogs.length - 1]
             : (visibleLogs[0] ?? null);
 
-    const displayLocation = selectedLocation ?? latest;
+    const displayLocation =
+        selectedLocation ??
+        latest ??
+        (isLiveRecordingMap && currentLocation
+            ? {
+                  id: "live-current-location",
+                  latitude: currentLocation.latitude,
+                  longitude: currentLocation.longitude,
+                  accuracy: null,
+                  recordedAt: new Date().toISOString(),
+                  memo: null,
+                  recordingSessionId: activeSessionId,
+                  recordingSessionName: null,
+                  source: "live",
+              }
+            : null);
 
     if (!displayLocation) {
         return (

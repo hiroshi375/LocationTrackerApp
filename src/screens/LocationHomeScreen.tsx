@@ -116,6 +116,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [selectedLiveShareUsers, setSelectedLiveShareUsers] = useState<
         UserProfileItem[]
     >([]);
+    const [draftLiveShareUsers, setDraftLiveShareUsers] = useState<
+        UserProfileItem[]
+    >([]);
+
     const [loadingLiveShareUsers, setLoadingLiveShareUsers] = useState(false);
     const [liveShareStatusMessage, setLiveShareStatusMessage] = useState("");
     const [openingSharedLiveMap, setOpeningSharedLiveMap] = useState(false);
@@ -220,6 +224,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
     const recordingBlinkAnim = useRef(new Animated.Value(1)).current;
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
+    const [stoppingRecording, setStoppingRecording] = useState(false);
 
     const [sessionNameModalVisible, setSessionNameModalVisible] =
         useState(false);
@@ -338,6 +343,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
             return;
         }
 
+        setDraftLiveShareUsers(selectedLiveShareUsers);
         setLiveShareSearchText("");
         setLiveShareModalVisible(true);
         void loadLiveShareUsers();
@@ -357,7 +363,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
     };
 
     const toggleLiveShareUser = (user: UserProfileItem) => {
-        setSelectedLiveShareUsers((currentUsers) => {
+        setDraftLiveShareUsers((currentUsers) => {
             const exists = currentUsers.some(
                 (currentUser) => currentUser.id === user.id,
             );
@@ -370,8 +376,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
             return [...currentUsers, user];
         });
-
-        setLiveShareStatusMessage("");
     };
 
     const liveShareUserName =
@@ -574,41 +578,93 @@ export default function LocationHomeScreen({ navigation }: Props) {
         }
     };
 
+    const handleDiscardSession = async () => {
+        if (!pendingSessionId || savingSessionName) {
+            return;
+        }
+
+        try {
+            setSavingSessionName(true);
+
+            const sessionLogs =
+                await listLocationLogsBySessionId(pendingSessionId);
+
+            const locationLogModel = client.models.LocationLog as any;
+
+            const deleteResults = await Promise.all(
+                sessionLogs.map((log) =>
+                    locationLogModel.delete({
+                        id: log.id,
+                    }),
+                ),
+            );
+
+            const hasErrors = deleteResults.some((deleteResult) => {
+                return deleteResult.errors;
+            });
+
+            if (hasErrors) {
+                console.error(
+                    "LocationLog session delete errors:",
+                    deleteResults,
+                );
+                Alert.alert(
+                    "削除エラー",
+                    "位置情報ログを削除できませんでした。",
+                );
+                return;
+            }
+
+            setSessionNameModalVisible(false);
+            setSessionNameInput("");
+            setPendingSessionId(null);
+            setPendingSessionShareOwnerValues([]);
+        } catch (error) {
+            console.error("Discard session error:", error);
+            Alert.alert("削除エラー", "位置情報ログの削除に失敗しました。");
+        } finally {
+            setSavingSessionName(false);
+        }
+    };
+
     // セッションIDに紐づくLocationLogを全件取得してセッション名を更新する
     const handleStopRecording = async () => {
+        if (stoppingRecording) {
+            return;
+        }
+
+        setStoppingRecording(true);
+
         const stoppedShareUserName = liveShareUserName;
         const stoppedShareOwnerValues = selectedLiveShareUsers
             .map((user) => user.ownerValue)
             .filter((ownerValue): ownerValue is string => !!ownerValue);
 
-        const finishedSessionId = await stopRecording();
-
-        if (stoppedShareUserName) {
-            setLiveShareStatusMessage(
-                `現在地共有を停止しました: ${stoppedShareUserName}`,
-            );
-        } else {
-            setLiveShareStatusMessage("");
-        }
-
-        if (!finishedSessionId) {
-            return;
-        }
-
         try {
-            await upsertRecordingSessionSummary(
-                finishedSessionId,
-                null,
-                stoppedShareOwnerValues,
-            );
-        } catch (error) {
-            console.error("RecordingSession summary save error:", error);
-        }
+            const finishedSessionId = await stopRecording();
 
-        setPendingSessionId(finishedSessionId);
-        setPendingSessionShareOwnerValues(stoppedShareOwnerValues);
-        setSessionNameInput("");
-        setSessionNameModalVisible(true);
+            if (stoppedShareUserName) {
+                setLiveShareStatusMessage(
+                    `現在地共有を停止しました: ${stoppedShareUserName}`,
+                );
+            } else {
+                setLiveShareStatusMessage("");
+            }
+
+            if (!finishedSessionId) {
+                return;
+            }
+
+            setPendingSessionId(finishedSessionId);
+            setPendingSessionShareOwnerValues(stoppedShareOwnerValues);
+            setSessionNameInput("");
+            setSessionNameModalVisible(true);
+        } catch (error) {
+            console.error("Stop recording error:", error);
+            Alert.alert("停止エラー", "自動記録の停止処理に失敗しました。");
+        } finally {
+            setStoppingRecording(false);
+        }
     };
 
     const canOpenRecordingMap =
@@ -844,6 +900,13 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             </Text>
                         </View>
                     )}
+                    {stoppingRecording && (
+                        <View style={styles.stoppingRecordingBox}>
+                            <Text style={styles.stoppingRecordingText}>
+                                自動記録を停止中です。しばらくお待ちください...
+                            </Text>
+                        </View>
+                    )}
                     <View style={styles.settingBlock}>
                         <Text style={styles.settingTitle}>記録頻度</Text>
 
@@ -991,12 +1054,18 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         <Pressable
                             style={({ pressed }) => [
                                 styles.autoRecordStopButton,
-                                pressed && styles.buttonPressed,
+                                pressed &&
+                                    !stoppingRecording &&
+                                    styles.buttonPressed,
+                                stoppingRecording && styles.appButtonDisabled,
                             ]}
                             onPress={handleStopRecording}
+                            disabled={stoppingRecording}
                         >
                             <Text style={styles.autoRecordButtonText}>
-                                自動記録停止
+                                {stoppingRecording
+                                    ? "停止処理中..."
+                                    : "自動記録停止"}
                             </Text>
                         </Pressable>
                     ) : (
@@ -1082,6 +1151,22 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
                                 <Pressable
                                     style={[
+                                        styles.modalSecondaryButton,
+                                        savingSessionName &&
+                                            styles.appButtonDisabled,
+                                    ]}
+                                    disabled={savingSessionName}
+                                    onPress={handleDiscardSession}
+                                >
+                                    <Text
+                                        style={styles.modalSecondaryButtonText}
+                                    >
+                                        保存しない
+                                    </Text>
+                                </Pressable>
+
+                                <Pressable
+                                    style={[
                                         styles.modalPrimaryButton,
                                         savingSessionName &&
                                             styles.appButtonDisabled,
@@ -1105,7 +1190,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     visible={liveShareModalVisible}
                     transparent
                     animationType="fade"
-                    onRequestClose={() => setLiveShareModalVisible(false)}
+                    onRequestClose={() => {
+                        setDraftLiveShareUsers(selectedLiveShareUsers);
+                        setLiveShareModalVisible(false);
+                    }}
                 >
                     <View style={styles.modalOverlay}>
                         <View style={styles.modalContent}>
@@ -1147,7 +1235,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 ) : (
                                     filteredLiveShareUsers.map((user) => {
                                         const selected =
-                                            selectedLiveShareUsers.some(
+                                            draftLiveShareUsers.some(
                                                 (selectedUser) =>
                                                     selectedUser.id === user.id,
                                             );
@@ -1189,14 +1277,32 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             <View style={styles.modalButtonRow}>
                                 <Pressable
                                     style={styles.modalSecondaryButton}
-                                    onPress={() =>
-                                        setLiveShareModalVisible(false)
-                                    }
+                                    onPress={() => {
+                                        setDraftLiveShareUsers(
+                                            selectedLiveShareUsers,
+                                        );
+                                        setLiveShareModalVisible(false);
+                                    }}
                                 >
                                     <Text
                                         style={styles.modalSecondaryButtonText}
                                     >
                                         キャンセル
+                                    </Text>
+                                </Pressable>
+
+                                <Pressable
+                                    style={styles.modalPrimaryButton}
+                                    onPress={() => {
+                                        setSelectedLiveShareUsers(
+                                            draftLiveShareUsers,
+                                        );
+                                        setLiveShareStatusMessage("");
+                                        setLiveShareModalVisible(false);
+                                    }}
+                                >
+                                    <Text style={styles.modalPrimaryButtonText}>
+                                        保存
                                     </Text>
                                 </Pressable>
                             </View>
@@ -1648,5 +1754,19 @@ const styles = StyleSheet.create({
     },
     autoRecordMapButtonSpace: {
         marginTop: 10,
+    },
+    stoppingRecordingBox: {
+        marginTop: 8,
+        padding: 10,
+        borderRadius: 8,
+        backgroundColor: "#eef3f7",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+    },
+
+    stoppingRecordingText: {
+        color: "#2f4f66",
+        fontSize: 13,
+        fontWeight: "bold",
     },
 });

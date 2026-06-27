@@ -79,6 +79,34 @@ const schema = a.schema({
             allow.owner(),
             allow.ownersDefinedIn("sharedOwners").to(["read"]),
         ]),
+    BackgroundLocationDebugLog: a
+        .model({
+            userId: a.string().required(),
+            recordingSessionId: a.string(),
+            eventName: a.string().required(),
+
+            loggedAt: a.datetime().required(),
+
+            taskFiredAt: a.datetime(),
+            locationsLength: a.integer(),
+            saveSuccessCount: a.integer(),
+            saveFailureCount: a.integer(),
+
+            hasStartedLocationUpdates: a.boolean(),
+
+            foregroundPermissionStatus: a.string(),
+            foregroundPermissionGranted: a.boolean(),
+            foregroundPermissionCanAskAgain: a.boolean(),
+
+            backgroundPermissionStatus: a.string(),
+            backgroundPermissionGranted: a.boolean(),
+            backgroundPermissionCanAskAgain: a.boolean(),
+
+            errorMessage: a.string(),
+
+            detailsJson: a.string(),
+        })
+        .authorization((allow) => [allow.owner()]),
 });
 
 export type Schema = ClientSchema<typeof schema>;

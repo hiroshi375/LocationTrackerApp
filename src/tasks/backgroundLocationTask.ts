@@ -6,6 +6,10 @@ import * as TaskManager from "expo-task-manager";
 
 import { client } from "../lib/client";
 import {
+    getErrorMessage,
+    saveBackgroundLocationDebugLog,
+} from "../services/backgroundLocationDebugLogService";
+import {
     calculateDistanceMeters,
     isExactDuplicateLocation,
     isNearDuplicateLocation,
@@ -21,7 +25,7 @@ type BackgroundRecordingState = {
     userId: string;
     recordingSessionId: string;
     startedAt?: string | null;
-    liveShareOwnerValue?: string | null;
+    liveShareOwnerValues?: string[];
     liveLocationId?: string | null;
     lastSavedLocation?: {
         latitude: number;
@@ -39,13 +43,35 @@ type LiveLocationMutationResult = {
     errors?: unknown;
 };
 
+type SaveBackgroundLocationResult = {
+    saved: boolean;
+    nextState: BackgroundRecordingState;
+    errorMessage?: string;
+};
+
 let savingBackgroundLocationKey: string | null = null;
 
 TaskManager.defineTask(
     BACKGROUND_LOCATION_TASK_NAME,
     async ({ data, error }) => {
+        const taskFiredAt = new Date().toISOString();
+
+        let locationsLength = 0;
+        let saveSuccessCount = 0;
+        let saveFailureCount = 0;
+
         try {
+            const state = await getBackgroundRecordingState();
+
             if (error) {
+                await saveBackgroundLocationDebugLog({
+                    userId: state?.userId ?? null,
+                    recordingSessionId: state?.recordingSessionId ?? null,
+                    eventName: "backgroundLocationTaskError",
+                    taskFiredAt,
+                    errorMessage: getErrorMessage(error),
+                });
+
                 console.error("Background location task error:", error);
                 return;
             }
@@ -54,13 +80,44 @@ TaskManager.defineTask(
                 data as { locations?: Location.LocationObject[] }
             )?.locations;
 
+            locationsLength = locations?.length ?? 0;
+
+            await saveBackgroundLocationDebugLog({
+                userId: state?.userId ?? null,
+                recordingSessionId: state?.recordingSessionId ?? null,
+                eventName: "backgroundLocationTaskFired",
+                taskFiredAt,
+                locationsLength,
+            });
+
             if (!locations || locations.length === 0) {
+                await saveBackgroundLocationDebugLog({
+                    userId: state?.userId ?? null,
+                    recordingSessionId: state?.recordingSessionId ?? null,
+                    eventName: "backgroundLocationTaskSkippedNoLocations",
+                    taskFiredAt,
+                    locationsLength,
+                });
+
                 return;
             }
 
-            const state = await getBackgroundRecordingState();
-
             if (!state?.recordingSessionId || !state.userId) {
+                await saveBackgroundLocationDebugLog({
+                    userId: state?.userId ?? null,
+                    recordingSessionId: state?.recordingSessionId ?? null,
+                    eventName: "backgroundLocationTaskSkippedNoState",
+                    taskFiredAt,
+                    locationsLength,
+                    details: {
+                        hasState: Boolean(state),
+                        hasUserId: Boolean(state?.userId),
+                        hasRecordingSessionId: Boolean(
+                            state?.recordingSessionId,
+                        ),
+                    },
+                });
+
                 console.log("Background recording state not found.");
                 return;
             }
@@ -84,20 +141,42 @@ TaskManager.defineTask(
             let currentState = state;
 
             for (const location of sortedLocations) {
-                try {
-                    const nextState = await saveBackgroundLocation(
-                        location,
-                        currentState,
-                    );
+                const result = await saveBackgroundLocation(
+                    location,
+                    currentState,
+                    taskFiredAt,
+                );
 
-                    if (nextState) {
-                        currentState = nextState;
-                    }
-                } catch (saveError) {
-                    console.error("Background save location error:", saveError);
+                if (result.saved) {
+                    saveSuccessCount += 1;
                 }
+
+                if (result.errorMessage) {
+                    saveFailureCount += 1;
+                }
+
+                currentState = result.nextState;
             }
+
+            await saveBackgroundLocationDebugLog({
+                userId: state.userId,
+                recordingSessionId: state.recordingSessionId,
+                eventName: "backgroundLocationTaskCompleted",
+                taskFiredAt,
+                locationsLength,
+                saveSuccessCount,
+                saveFailureCount,
+            });
         } catch (taskError) {
+            await saveBackgroundLocationDebugLog({
+                eventName: "backgroundLocationTaskUnexpectedError",
+                taskFiredAt,
+                locationsLength,
+                saveSuccessCount,
+                saveFailureCount,
+                errorMessage: getErrorMessage(taskError),
+            });
+
             console.error(
                 "Background location task unexpected error:",
                 taskError,
@@ -130,14 +209,19 @@ async function setBackgroundRecordingState(state: BackgroundRecordingState) {
 async function saveBackgroundLocation(
     location: Location.LocationObject,
     state: BackgroundRecordingState,
-): Promise<BackgroundRecordingState | null> {
+    taskFiredAt: string,
+): Promise<SaveBackgroundLocationResult> {
     let duplicateKeyForFinally: string | null = null;
+
     try {
         const latitude = location.coords.latitude;
         const longitude = location.coords.longitude;
 
         if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-            return state;
+            return {
+                saved: false,
+                nextState: state,
+            };
         }
 
         const recordedAtMs =
@@ -153,7 +237,10 @@ async function saveBackgroundLocation(
         );
 
         if (savingBackgroundLocationKey === duplicateKey) {
-            return state;
+            return {
+                saved: false,
+                nextState: state,
+            };
         }
 
         const lastSavedLocation = state.lastSavedLocation ?? null;
@@ -172,21 +259,23 @@ async function saveBackgroundLocation(
                 recordedAtMs,
             )
         ) {
-            console.log("Skip duplicate background location:", {
-                latitude,
-                longitude,
-                recordedAt: new Date(recordedAtMs).toISOString(),
-            });
-
-            return state;
+            return {
+                saved: false,
+                nextState: state,
+            };
         }
+
         if (!shouldSaveLocation(latitude, longitude, recordedAtMs, state)) {
-            return state;
+            return {
+                saved: false,
+                nextState: state,
+            };
         }
 
-        const sharedOwners = state.liveShareOwnerValue
-            ? [state.liveShareOwnerValue]
-            : undefined;
+        const sharedOwners =
+            state.liveShareOwnerValues && state.liveShareOwnerValues.length > 0
+                ? Array.from(new Set(state.liveShareOwnerValues))
+                : undefined;
 
         const recordedAt = new Date(recordedAtMs).toISOString();
 
@@ -206,16 +295,37 @@ async function saveBackgroundLocation(
         });
 
         if (result.errors) {
+            const errorMessage = getErrorMessage(result.errors);
+
             console.error(
                 "Background LocationLog create errors:",
                 result.errors,
             );
-            return state;
+
+            await saveBackgroundLocationDebugLog({
+                userId: state.userId,
+                recordingSessionId: state.recordingSessionId,
+                eventName: "backgroundLocationLogCreateFailed",
+                taskFiredAt,
+                errorMessage,
+                details: {
+                    recordedAt,
+                    latitude,
+                    longitude,
+                },
+            });
+
+            return {
+                saved: false,
+                nextState: state,
+                errorMessage,
+            };
         }
 
         const liveLocationId = await updateBackgroundLiveLocation(
             location,
             state,
+            taskFiredAt,
         );
 
         const nextState: BackgroundRecordingState = {
@@ -230,10 +340,28 @@ async function saveBackgroundLocation(
 
         await setBackgroundRecordingState(nextState);
 
-        return nextState;
+        return {
+            saved: true,
+            nextState,
+        };
     } catch (error) {
+        const errorMessage = getErrorMessage(error);
+
         console.error("saveBackgroundLocation unexpected error:", error);
-        return state;
+
+        await saveBackgroundLocationDebugLog({
+            userId: state.userId,
+            recordingSessionId: state.recordingSessionId,
+            eventName: "saveBackgroundLocationUnexpectedError",
+            taskFiredAt,
+            errorMessage,
+        });
+
+        return {
+            saved: false,
+            nextState: state,
+            errorMessage,
+        };
     } finally {
         if (
             duplicateKeyForFinally &&
@@ -247,8 +375,14 @@ async function saveBackgroundLocation(
 async function updateBackgroundLiveLocation(
     location: Location.LocationObject,
     state: BackgroundRecordingState,
+    taskFiredAt: string,
 ): Promise<string | null | undefined> {
-    if (!state.liveShareOwnerValue) {
+    const sharedOwners =
+        state.liveShareOwnerValues && state.liveShareOwnerValues.length > 0
+            ? Array.from(new Set(state.liveShareOwnerValues))
+            : [];
+
+    if (sharedOwners.length === 0) {
         return state.liveLocationId;
     }
 
@@ -269,7 +403,7 @@ async function updateBackgroundLiveLocation(
         accuracy: location.coords.accuracy ?? null,
         updatedAt: new Date().toISOString(),
         isActive: true,
-        sharedOwners: [state.liveShareOwnerValue],
+        sharedOwners,
     };
 
     if (state.liveLocationId) {
@@ -279,6 +413,14 @@ async function updateBackgroundLiveLocation(
         });
 
         if (updateResult.errors) {
+            await saveBackgroundLocationDebugLog({
+                userId: state.userId,
+                recordingSessionId: state.recordingSessionId,
+                eventName: "backgroundLiveLocationUpdateFailed",
+                taskFiredAt,
+                errorMessage: getErrorMessage(updateResult.errors),
+            });
+
             console.error(
                 "Background LiveLocation update errors:",
                 updateResult.errors,
@@ -293,10 +435,19 @@ async function updateBackgroundLiveLocation(
     )) as LiveLocationMutationResult;
 
     if (createResult.errors) {
+        await saveBackgroundLocationDebugLog({
+            userId: state.userId,
+            recordingSessionId: state.recordingSessionId,
+            eventName: "backgroundLiveLocationCreateFailed",
+            taskFiredAt,
+            errorMessage: getErrorMessage(createResult.errors),
+        });
+
         console.error(
             "Background LiveLocation create errors:",
             createResult.errors,
         );
+
         return state.liveLocationId;
     }
 

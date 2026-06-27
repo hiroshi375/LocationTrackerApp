@@ -9,6 +9,7 @@ import {
     BACKGROUND_LOCATION_TASK_NAME,
     BACKGROUND_RECORDING_STATE_KEY,
 } from "../tasks/backgroundLocationTask";
+import { saveBackgroundLocationDebugLog } from "./backgroundLocationDebugLogService";
 
 export const BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED =
     "BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED";
@@ -68,7 +69,21 @@ export async function startBackgroundLocationRecording({
     liveShareOwnerValues = [],
     lastSavedLocation = null,
 }: StartBackgroundLocationRecordingParams) {
-    await ensureBackgroundLocationPermission();
+    await saveBackgroundLocationDebugLog({
+        userId,
+        recordingSessionId,
+        eventName: "startBackgroundLocationRecordingCalled",
+        details: {
+            startedAt,
+            intervalMs,
+            distanceMeters,
+            liveShareOwnerValues,
+            hasLastSavedLocation: Boolean(lastSavedLocation),
+        },
+    });
+
+    await ensureBackgroundLocationPermission(userId, recordingSessionId);
+
     await AsyncStorage.setItem(
         BACKGROUND_RECORDING_STATE_KEY,
         JSON.stringify({
@@ -86,64 +101,182 @@ export async function startBackgroundLocationRecording({
         BACKGROUND_LOCATION_TASK_NAME,
     );
 
+    await saveBackgroundLocationDebugLog({
+        userId,
+        recordingSessionId,
+        eventName: "hasStartedLocationUpdatesCheckedBeforeStart",
+        hasStartedLocationUpdates: hasStarted,
+    });
+
     if (hasStarted) {
+        await saveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "startBackgroundLocationRecordingSkippedAlreadyStarted",
+            hasStartedLocationUpdates: hasStarted,
+        });
+
         return;
     }
 
-    await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME, {
-        accuracy: Location.Accuracy.Balanced,
-        timeInterval: intervalMs,
-        distanceInterval: distanceMeters,
+    try {
+        await Location.startLocationUpdatesAsync(
+            BACKGROUND_LOCATION_TASK_NAME,
+            {
+                accuracy: Location.Accuracy.Balanced,
+                timeInterval: intervalMs,
+                distanceInterval: distanceMeters,
+                deferredUpdatesInterval: intervalMs,
+                deferredUpdatesDistance: distanceMeters,
+                pausesUpdatesAutomatically: false,
+                showsBackgroundLocationIndicator: true,
+                foregroundService: {
+                    notificationTitle: "位置情報を記録中",
+                    notificationBody:
+                        "自動記録をバックグラウンドで継続しています",
+                    notificationColor: "#4b6f8f",
+                },
+            },
+        );
+    } catch (error) {
+        await saveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "startLocationUpdatesFailed",
+            errorMessage:
+                error instanceof Error ? error.message : String(error),
+        });
 
-        deferredUpdatesInterval: intervalMs,
-        deferredUpdatesDistance: distanceMeters,
+        throw error;
+    }
 
-        pausesUpdatesAutomatically: false,
-        showsBackgroundLocationIndicator: true,
+    const hasStartedAfterStart = await Location.hasStartedLocationUpdatesAsync(
+        BACKGROUND_LOCATION_TASK_NAME,
+    );
 
-        foregroundService: {
-            notificationTitle: "位置情報を記録中",
-            notificationBody: "アプリを閉じていても自動記録を継続しています。",
-        },
+    await saveBackgroundLocationDebugLog({
+        userId,
+        recordingSessionId,
+        eventName: "startBackgroundLocationRecordingCompleted",
+        hasStartedLocationUpdates: hasStartedAfterStart,
     });
 }
 
 export async function stopBackgroundLocationRecording() {
-    console.log("stopBackgroundLocationRecording called", new Error().stack);
+    const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);
+
+    let recordingSessionId: string | null = null;
+    let userId: string | null = null;
+    let liveLocationId: string | null = null;
+
+    if (raw) {
+        try {
+            const state = JSON.parse(raw) as BackgroundRecordingState;
+
+            recordingSessionId = state.recordingSessionId ?? null;
+            userId = state.userId ?? null;
+            liveLocationId = state.liveLocationId ?? null;
+        } catch (error) {
+            console.error(
+                "Parse background recording state on stop error:",
+                error,
+            );
+        }
+    }
+
+    await saveBackgroundLocationDebugLog({
+        userId,
+        recordingSessionId,
+        eventName: "stopBackgroundLocationRecordingCalled",
+    });
+
     const hasStarted = await Location.hasStartedLocationUpdatesAsync(
         BACKGROUND_LOCATION_TASK_NAME,
     );
 
+    await saveBackgroundLocationDebugLog({
+        userId,
+        recordingSessionId,
+        eventName: "hasStartedLocationUpdatesCheckedBeforeStop",
+        hasStartedLocationUpdates: hasStarted,
+    });
+
     if (hasStarted) {
-        await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME);
+        try {
+            await Location.stopLocationUpdatesAsync(
+                BACKGROUND_LOCATION_TASK_NAME,
+            );
+        } catch (error) {
+            await saveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName: "stopLocationUpdatesFailed",
+                errorMessage:
+                    error instanceof Error ? error.message : String(error),
+            });
+
+            throw error;
+        }
     }
 
-    const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);
+    const hasStartedAfterStop = await Location.hasStartedLocationUpdatesAsync(
+        BACKGROUND_LOCATION_TASK_NAME,
+    );
 
-    if (raw) {
+    await saveBackgroundLocationDebugLog({
+        userId,
+        recordingSessionId,
+        eventName: "stopBackgroundLocationRecordingCompleted",
+        hasStartedLocationUpdates: hasStartedAfterStop,
+        details: {
+            hasStartedBeforeStop: hasStarted,
+        },
+    });
+
+    if (liveLocationId) {
         try {
-            const state = JSON.parse(raw) as {
-                liveLocationId?: string | null;
-            };
-
-            if (state.liveLocationId) {
-                await client.models.LiveLocation.update({
-                    id: state.liveLocationId,
-                    isActive: false,
-                    updatedAt: new Date().toISOString(),
-                });
-            }
+            await client.models.LiveLocation.update({
+                id: liveLocationId,
+                isActive: false,
+                updatedAt: new Date().toISOString(),
+            });
         } catch (error) {
             console.error("Background LiveLocation stop update error:", error);
+
+            await saveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName: "backgroundLiveLocationStopUpdateFailed",
+                errorMessage:
+                    error instanceof Error ? error.message : String(error),
+            });
         }
     }
 
     await AsyncStorage.removeItem(BACKGROUND_RECORDING_STATE_KEY);
+
+    await saveBackgroundLocationDebugLog({
+        userId,
+        recordingSessionId,
+        eventName: "backgroundRecordingStateRemoved",
+    });
 }
 
-export async function ensureBackgroundLocationPermission() {
+export async function ensureBackgroundLocationPermission(
+    userId?: string | null,
+    recordingSessionId?: string | null,
+) {
     const foregroundPermission =
         await Location.requestForegroundPermissionsAsync();
+
+    await saveBackgroundLocationDebugLog({
+        userId,
+        recordingSessionId,
+        eventName: "foregroundPermissionChecked",
+        foregroundPermissionStatus: foregroundPermission.status,
+        foregroundPermissionGranted: foregroundPermission.granted,
+        foregroundPermissionCanAskAgain: foregroundPermission.canAskAgain,
+    });
 
     if (foregroundPermission.status !== Location.PermissionStatus.GRANTED) {
         Alert.alert(
@@ -156,11 +289,29 @@ export async function ensureBackgroundLocationPermission() {
 
     let backgroundPermission = await Location.getBackgroundPermissionsAsync();
 
+    await saveBackgroundLocationDebugLog({
+        userId,
+        recordingSessionId,
+        eventName: "backgroundPermissionChecked",
+        backgroundPermissionStatus: backgroundPermission.status,
+        backgroundPermissionGranted: backgroundPermission.granted,
+        backgroundPermissionCanAskAgain: backgroundPermission.canAskAgain,
+    });
+
     if (backgroundPermission.status === Location.PermissionStatus.GRANTED) {
         return;
     }
 
     backgroundPermission = await Location.requestBackgroundPermissionsAsync();
+
+    await saveBackgroundLocationDebugLog({
+        userId,
+        recordingSessionId,
+        eventName: "backgroundPermissionRequested",
+        backgroundPermissionStatus: backgroundPermission.status,
+        backgroundPermissionGranted: backgroundPermission.granted,
+        backgroundPermissionCanAskAgain: backgroundPermission.canAskAgain,
+    });
 
     if (backgroundPermission.status === Location.PermissionStatus.GRANTED) {
         return;

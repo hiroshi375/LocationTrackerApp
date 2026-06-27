@@ -91,7 +91,8 @@
         "extra": {
             "eas": {
                 "projectId": "f2148044-38b4-4da0-bc10-82d3b87398b3"
-            }
+            },
+            "googleGeocodingApiKey": "AIzaSyCMeVlKpNhO-NAEpy5wPnbWLp68Ueo9OO8"
         }
     }
 }

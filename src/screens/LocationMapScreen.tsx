@@ -3,6 +3,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { getCurrentUser } from "aws-amplify/auth";
 import { getUrl } from "aws-amplify/storage";
+import Constants from "expo-constants";
 import * as Location from "expo-location";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -943,23 +944,16 @@ export default function LocationMapScreen({ route }: Props) {
             try {
                 setAddressLoading(true);
 
-                const results = await Location.reverseGeocodeAsync({
-                    latitude: currentLocation.latitude,
-                    longitude: currentLocation.longitude,
-                });
+                const addressText = await getBestAddressText(
+                    currentLocation.latitude,
+                    currentLocation.longitude,
+                );
 
                 if (cancelled) {
                     return;
                 }
 
-                const address = results[0];
-
-                if (!address) {
-                    setCurrentAddress("住所を取得できませんでした");
-                    return;
-                }
-
-                setCurrentAddress(formatAddress(address));
+                setCurrentAddress(addressText);
 
                 lastAddressLookupRef.current = {
                     latitude: currentLocation.latitude,
@@ -1646,17 +1640,125 @@ function formatDuration(startValue: string, endValue: string) {
     return `${hours}h:${mm}m`;
 }
 
-function formatAddress(address: Location.LocationGeocodedAddress) {
-    const parts = [
-        address.region,
-        address.city,
-        address.district,
-        address.street,
-        address.streetNumber,
-        address.name,
-    ].filter(Boolean);
+async function getBestAddressText(latitude: number, longitude: number) {
+    const googleAddress = await fetchGoogleFormattedAddress(
+        latitude,
+        longitude,
+    );
 
-    return parts.join("");
+    if (googleAddress) {
+        return googleAddress;
+    }
+
+    const results = await Location.reverseGeocodeAsync({
+        latitude,
+        longitude,
+    });
+
+    console.log("Reverse geocode results:", results);
+
+    const address = results[0];
+
+    if (!address) {
+        return "住所を取得できませんでした";
+    }
+
+    return formatAddress(address);
+}
+
+async function fetchGoogleFormattedAddress(
+    latitude: number,
+    longitude: number,
+) {
+    if (
+        !GOOGLE_GEOCODING_API_KEY ||
+        GOOGLE_GEOCODING_API_KEY === "YOUR_GOOGLE_MAPS_API_KEY"
+    ) {
+        return null;
+    }
+
+    try {
+        const url =
+            "https://maps.googleapis.com/maps/api/geocode/json" +
+            `?latlng=${latitude},${longitude}` +
+            "&language=ja" +
+            "&region=jp" +
+            `&key=${GOOGLE_GEOCODING_API_KEY}`;
+
+        const response = await fetch(url);
+        const json = await response.json();
+
+        if (json.status !== "OK") {
+            console.log("Google geocoding status:", json.status);
+            return null;
+        }
+
+        const formattedAddress = json.results?.[0]?.formatted_address;
+
+        if (
+            typeof formattedAddress !== "string" ||
+            formattedAddress.length === 0
+        ) {
+            return null;
+        }
+
+        return cleanupJapaneseFormattedAddress(formattedAddress);
+    } catch (error) {
+        console.error("Google reverse geocode error:", error);
+        return null;
+    }
+}
+
+function cleanupJapaneseFormattedAddress(value: string) {
+    return value
+        .replace(/^日本、?/, "")
+        .replace(/^〒\d{3}-\d{4}\s*/, "")
+        .trim();
+}
+
+function formatAddress(address: Location.LocationGeocodedAddress) {
+    const region = address.region ?? "";
+    const city = address.city ?? "";
+    const district = address.district ?? "";
+    const street = address.street ?? "";
+    const streetNumber = address.streetNumber ?? "";
+    const name = address.name ?? "";
+
+    const areaText = [region, city, district || street]
+        .filter(Boolean)
+        .join("");
+
+    const numberText = buildJapaneseBlockNumber(street, streetNumber, name);
+
+    const addressText = [areaText, numberText].filter(Boolean).join("");
+
+    return addressText || "住所を取得できませんでした";
+}
+
+function buildJapaneseBlockNumber(
+    street: string,
+    streetNumber: string,
+    name: string,
+) {
+    const candidates = [street, streetNumber, name].filter(Boolean);
+
+    const numericParts = candidates
+        .flatMap((value) => value.match(/\d+/g) ?? [])
+        .filter(Boolean);
+
+    if (numericParts.length >= 3) {
+        return `${numericParts[0]}丁目${numericParts[1]}-${numericParts[2]}`;
+    }
+
+    if (numericParts.length === 2) {
+        return `${numericParts[0]}-${numericParts[1]}`;
+    }
+
+    if (numericParts.length === 1) {
+        return numericParts[0];
+    }
+
+    return "";
 }
 
 function calculateRouteDistanceMeters(logs: LocationLogItem[]) {
@@ -1718,6 +1820,9 @@ const SAME_SECOND_DISTANCE_THRESHOLD_METERS = 8;
 const MAX_ROUTE_SPEED_METERS_PER_SECOND = 80;
 const ADDRESS_REFRESH_INTERVAL_MS = 30000;
 const ADDRESS_REFRESH_DISTANCE_METERS = 50;
+
+const GOOGLE_GEOCODING_API_KEY =
+    Constants.expoConfig?.extra?.googleGeocodingApiKey ?? "";
 
 function buildRouteLogs(logs: LocationLogItem[]) {
     const sortedLogs = [...logs]

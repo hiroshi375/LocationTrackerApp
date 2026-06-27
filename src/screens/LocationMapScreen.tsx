@@ -16,7 +16,12 @@ import {
     Text,
     View,
 } from "react-native";
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
+import MapView, {
+    Marker,
+    Polyline,
+    PROVIDER_GOOGLE,
+    UrlTile,
+} from "react-native-maps";
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 
@@ -54,7 +59,7 @@ type UserProfileItem = {
     iconImagePath?: string | null;
 };
 
-type MapLayerMode = "standard" | "satellite" | "retro";
+type MapLayerMode = "standard" | "satellite" | "retro" | "pixel";
 
 type MapLayerOption = {
     value: MapLayerMode;
@@ -90,6 +95,10 @@ const MAP_LAYER_OPTIONS: MapLayerOption[] = [
     {
         value: "retro",
         label: "レトロ風",
+    },
+    {
+        value: "pixel",
+        label: "ドット絵風",
     },
 ];
 
@@ -155,6 +164,14 @@ const retroMapStyle = [
 
 // 現在地を画面中央付近に見せるため、カメラ中心を少し南へずらす
 const CAMERA_CENTER_LATITUDE_OFFSET = 0.0025;
+
+const MAPTILER_API_KEY = process.env.EXPO_PUBLIC_MAPTILER_API_KEY;
+const MAPTILER_MAP_ID = process.env.EXPO_PUBLIC_MAPTILER_MAP_ID;
+
+const mapTilerPixelTileUrl =
+    MAPTILER_API_KEY && MAPTILER_MAP_ID
+        ? `https://api.maptiler.com/maps/${MAPTILER_MAP_ID}/256/{z}/{x}/{y}.png?key=${MAPTILER_API_KEY}`
+        : undefined;
 
 export default function LocationMapScreen({ route }: Props) {
     const mapRef = useRef<MapView | null>(null);
@@ -437,7 +454,8 @@ export default function LocationMapScreen({ route }: Props) {
                 if (
                     savedValue === "standard" ||
                     savedValue === "satellite" ||
-                    savedValue === "retro"
+                    savedValue === "retro" ||
+                    savedValue === "pixel"
                 ) {
                     setMapLayerMode(savedValue);
                 }
@@ -1184,8 +1202,13 @@ export default function LocationMapScreen({ route }: Props) {
 
     const adjustedInitialCenter = getAdjustedMapCenter(displayLocation);
 
-    const selectedMapType =
-        mapLayerMode === "satellite" ? "satellite" : "standard";
+    const isPixelMapLayer = mapLayerMode === "pixel";
+
+    const selectedMapType = isPixelMapLayer
+        ? "none"
+        : mapLayerMode === "satellite"
+          ? "satellite"
+          : "standard";
 
     const selectedCustomMapStyle =
         mapLayerMode === "retro" ? retroMapStyle : [];
@@ -1216,6 +1239,15 @@ export default function LocationMapScreen({ route }: Props) {
                     longitudeDelta: DEFAULT_LONGITUDE_DELTA,
                 }}
             >
+                {isPixelMapLayer && mapTilerPixelTileUrl && (
+                    <UrlTile
+                        urlTemplate={mapTilerPixelTileUrl}
+                        maximumZ={20}
+                        flipY={false}
+                        zIndex={-1}
+                    />
+                )}
+
                 {routeCoordinates.length >= 2 && (
                     <Polyline
                         coordinates={routeCoordinates}

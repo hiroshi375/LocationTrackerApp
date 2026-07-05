@@ -60,6 +60,7 @@ type UserProfileItem = {
 };
 
 type MapLayerMode = "standard" | "satellite" | "retro" | "pixel";
+type RouteViewMode = "current" | "route" | "none";
 
 type MapLayerOption = {
     value: MapLayerMode;
@@ -80,8 +81,11 @@ type LocationLogListResult = {
 const DEFAULT_LATITUDE_DELTA = 0.01;
 const DEFAULT_LONGITUDE_DELTA = 0.01;
 
+const CURRENT_LOCATION_LATITUDE_DELTA = 0.005;
+const CURRENT_LOCATION_LONGITUDE_DELTA = 0.005;
+
 const MAP_LAYER_MODE_STORAGE_KEY = "location-map-layer-mode";
-const ROUTE_OVERVIEW_MODE_STORAGE_KEY = "location-map-route-overview-mode";
+const ROUTE_VIEW_MODE_STORAGE_KEY = "location-map-route-view-mode";
 
 const MAP_LAYER_OPTIONS: MapLayerOption[] = [
     {
@@ -184,7 +188,8 @@ export default function LocationMapScreen({ route }: Props) {
     const [hasLoaded, setHasLoaded] = useState(false);
     const [showPoints, setShowPoints] = useState(false);
     const [mapLayerMode, setMapLayerMode] = useState<MapLayerMode>("standard");
-    const [isRouteOverviewMode, setIsRouteOverviewMode] = useState(false);
+    const [routeViewMode, setRouteViewMode] =
+        useState<RouteViewMode>("current");
     const [mapReady, setMapReady] = useState(false);
     const [currentUserIconUrl, setCurrentUserIconUrl] = useState<string | null>(
         null,
@@ -483,41 +488,41 @@ export default function LocationMapScreen({ route }: Props) {
     }, [mapLayerMode]);
 
     useEffect(() => {
-        const loadRouteOverviewMode = async () => {
+        const loadRouteViewMode = async () => {
             try {
                 const savedValue = await AsyncStorage.getItem(
-                    ROUTE_OVERVIEW_MODE_STORAGE_KEY,
+                    ROUTE_VIEW_MODE_STORAGE_KEY,
                 );
 
-                if (savedValue === "true") {
-                    setIsRouteOverviewMode(true);
-                }
-
-                if (savedValue === "false") {
-                    setIsRouteOverviewMode(false);
+                if (
+                    savedValue === "current" ||
+                    savedValue === "route" ||
+                    savedValue === "none"
+                ) {
+                    setRouteViewMode(savedValue);
                 }
             } catch (error) {
-                console.error("Load route overview mode error:", error);
+                console.error("Load route view mode error:", error);
             }
         };
 
-        void loadRouteOverviewMode();
+        void loadRouteViewMode();
     }, []);
 
     useEffect(() => {
-        const saveRouteOverviewMode = async () => {
+        const saveRouteViewMode = async () => {
             try {
                 await AsyncStorage.setItem(
-                    ROUTE_OVERVIEW_MODE_STORAGE_KEY,
-                    isRouteOverviewMode ? "true" : "false",
+                    ROUTE_VIEW_MODE_STORAGE_KEY,
+                    routeViewMode,
                 );
             } catch (error) {
-                console.error("Save route overview mode error:", error);
+                console.error("Save route view mode error:", error);
             }
         };
 
-        void saveRouteOverviewMode();
-    }, [isRouteOverviewMode]);
+        void saveRouteViewMode();
+    }, [routeViewMode]);
 
     useEffect(() => {
         if (!isOwnLiveRecordingMap) {
@@ -731,20 +736,16 @@ export default function LocationMapScreen({ route }: Props) {
             return;
         }
 
-        // ルート全体表示モード中は、現在地追尾でカメラを戻さない
-        if (isRouteOverviewMode) {
+        // 「現在地を表示」モード以外では、自動でカメラを追跡しない
+        if (routeViewMode !== "current") {
             return;
         }
 
-        mapRef.current?.animateCamera(
-            {
-                center: getAdjustedMapCenter(currentLocation),
-            },
-            {
-                duration: 500,
-            },
+        mapRef.current?.animateToRegion(
+            getCurrentLocationRegion(currentLocation),
+            500,
         );
-    }, [mapReady, isLiveRecordingMap, currentLocation, isRouteOverviewMode]);
+    }, [mapReady, isLiveRecordingMap, currentLocation, routeViewMode]);
 
     useEffect(() => {
         if (!mapReady) {
@@ -755,7 +756,7 @@ export default function LocationMapScreen({ route }: Props) {
             return;
         }
 
-        if (!isRouteOverviewMode) {
+        if (routeViewMode !== "route") {
             return;
         }
 
@@ -813,7 +814,7 @@ export default function LocationMapScreen({ route }: Props) {
     }, [
         mapReady,
         isLiveRecordingMap,
-        isRouteOverviewMode,
+        routeViewMode,
         currentLocation,
         activeSessionId,
         logs,
@@ -1091,7 +1092,7 @@ export default function LocationMapScreen({ route }: Props) {
         }
 
         if (isLiveRecordingMap) {
-            setIsRouteOverviewMode(true);
+            setRouteViewMode("route");
         }
 
         if (fitTargetCoordinates.length === 1) {
@@ -1118,36 +1119,45 @@ export default function LocationMapScreen({ route }: Props) {
     };
 
     const showCurrentLocation = () => {
-        setIsRouteOverviewMode(false);
+        setRouteViewMode("current");
 
         if (!currentLocation) {
             return;
         }
 
-        mapRef.current?.animateCamera(
-            {
-                center: getAdjustedMapCenter(currentLocation),
-            },
-            {
-                duration: 500,
-            },
+        mapRef.current?.animateToRegion(
+            getCurrentLocationRegion(currentLocation),
+            500,
         );
     };
 
+    const disableTracking = () => {
+        setRouteViewMode("none");
+    };
+
     const toggleRouteViewMode = () => {
-        if (isRouteOverviewMode && isLiveRecordingMap) {
-            showCurrentLocation();
+        if (routeViewMode === "current") {
+            showRouteOverview();
             return;
         }
 
-        showRouteOverview();
+        if (routeViewMode === "route") {
+            disableTracking();
+            return;
+        }
+
+        showCurrentLocation();
     };
 
-    const isRouteFitButtonActive = isLiveRecordingMap && isRouteOverviewMode;
+    const isRouteFitButtonActive =
+        isLiveRecordingMap && routeViewMode !== "none";
 
-    const routeFitButtonText = isRouteFitButtonActive
-        ? "現在地を表示"
-        : "ルート全体を表示";
+    const routeFitButtonText =
+        routeViewMode === "current"
+            ? "ルート全体を表示"
+            : routeViewMode === "route"
+              ? "追跡しない"
+              : "現在地を表示";
 
     const routeDistanceMeters =
         activeSessionId && routeLogs.length >= 2
@@ -1603,6 +1613,20 @@ function getAdjustedMapCenter(location: {
     return {
         latitude: location.latitude - CAMERA_CENTER_LATITUDE_OFFSET,
         longitude: location.longitude,
+    };
+}
+
+function getCurrentLocationRegion(location: {
+    latitude: number;
+    longitude: number;
+}) {
+    const center = getAdjustedMapCenter(location);
+
+    return {
+        latitude: center.latitude,
+        longitude: center.longitude,
+        latitudeDelta: CURRENT_LOCATION_LATITUDE_DELTA,
+        longitudeDelta: CURRENT_LOCATION_LONGITUDE_DELTA,
     };
 }
 

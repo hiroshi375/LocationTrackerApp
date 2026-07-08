@@ -1,12 +1,14 @@
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { getCurrentUser } from "aws-amplify/auth";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
     FlatList,
+    KeyboardAvoidingView,
     Modal,
+    Platform,
     Pressable,
     RefreshControl,
     ScrollView,
@@ -107,6 +109,8 @@ export default function LocationLogScreen({ navigation }: Props) {
         useState<LocationLogSessionDisplayItem | null>(null);
     const [editSessionNameInput, setEditSessionNameInput] = useState("");
     const [savingEditSessionName, setSavingEditSessionName] = useState(false);
+
+    const editSessionNameInputRef = useRef<TextInput | null>(null);
 
     const loadLogs = useCallback(async () => {
         try {
@@ -828,6 +832,20 @@ export default function LocationLogScreen({ navigation }: Props) {
         }
     };
 
+    useEffect(() => {
+        if (!editNameModalVisible) {
+            return;
+        }
+
+        const timerId = setTimeout(() => {
+            editSessionNameInputRef.current?.focus();
+        }, 300);
+
+        return () => {
+            clearTimeout(timerId);
+        };
+    }, [editNameModalVisible]);
+
     useFocusEffect(
         useCallback(() => {
             void loadLogs();
@@ -1208,59 +1226,70 @@ export default function LocationLogScreen({ navigation }: Props) {
                 animationType="fade"
                 onRequestClose={closeEditNameModal}
             >
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContent}>
-                        <Text style={styles.modalTitle}>
-                            セッション名を編集
-                        </Text>
+                <KeyboardAvoidingView
+                    style={styles.modalKeyboardAvoidingView}
+                    behavior={Platform.OS === "ios" ? "padding" : "height"}
+                >
+                    <View style={styles.modalOverlay}>
+                        <View style={styles.modalContent}>
+                            <Text style={styles.modalTitle}>
+                                セッション名を編集
+                            </Text>
 
-                        <Text style={styles.modalDescription}>
-                            この自動記録セッションの名前を変更します。
-                        </Text>
+                            <Text style={styles.modalDescription}>
+                                この自動記録セッションの名前を変更します。
+                            </Text>
 
-                        <TextInput
-                            style={styles.sessionNameInput}
-                            value={editSessionNameInput}
-                            onChangeText={setEditSessionNameInput}
-                            placeholder="例：朝のランニング"
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            editable={!savingEditSessionName}
-                        />
+                            <TextInput
+                                ref={editSessionNameInputRef}
+                                style={styles.sessionNameInput}
+                                value={editSessionNameInput}
+                                onChangeText={setEditSessionNameInput}
+                                placeholder="例：朝のランニング"
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                editable={!savingEditSessionName}
+                                autoFocus
+                                returnKeyType="done"
+                                onSubmitEditing={saveEditedSessionName}
+                            />
 
-                        <View style={styles.modalButtonRow}>
-                            <Pressable
-                                style={[
-                                    styles.modalSecondaryButton,
-                                    savingEditSessionName &&
-                                        styles.deleteButtonDisabled,
-                                ]}
-                                onPress={closeEditNameModal}
-                                disabled={savingEditSessionName}
-                            >
-                                <Text style={styles.modalSecondaryButtonText}>
-                                    キャンセル
-                                </Text>
-                            </Pressable>
+                            <View style={styles.modalButtonRow}>
+                                <Pressable
+                                    style={[
+                                        styles.modalSecondaryButton,
+                                        savingEditSessionName &&
+                                            styles.deleteButtonDisabled,
+                                    ]}
+                                    onPress={closeEditNameModal}
+                                    disabled={savingEditSessionName}
+                                >
+                                    <Text
+                                        style={styles.modalSecondaryButtonText}
+                                    >
+                                        キャンセル
+                                    </Text>
+                                </Pressable>
 
-                            <Pressable
-                                style={[
-                                    styles.modalPrimaryButton,
-                                    savingEditSessionName &&
-                                        styles.deleteButtonDisabled,
-                                ]}
-                                onPress={saveEditedSessionName}
-                                disabled={savingEditSessionName}
-                            >
-                                <Text style={styles.modalPrimaryButtonText}>
-                                    {savingEditSessionName
-                                        ? "保存中..."
-                                        : "保存"}
-                                </Text>
-                            </Pressable>
+                                <Pressable
+                                    style={[
+                                        styles.modalPrimaryButton,
+                                        savingEditSessionName &&
+                                            styles.deleteButtonDisabled,
+                                    ]}
+                                    onPress={saveEditedSessionName}
+                                    disabled={savingEditSessionName}
+                                >
+                                    <Text style={styles.modalPrimaryButtonText}>
+                                        {savingEditSessionName
+                                            ? "保存中..."
+                                            : "保存"}
+                                    </Text>
+                                </Pressable>
+                            </View>
                         </View>
                     </View>
-                </View>
+                </KeyboardAvoidingView>
             </Modal>
         </View>
     );
@@ -1834,5 +1863,8 @@ const styles = StyleSheet.create({
         paddingVertical: 0,
         fontSize: 16,
         backgroundColor: "#fff",
+    },
+    modalKeyboardAvoidingView: {
+        flex: 1,
     },
 });

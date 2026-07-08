@@ -429,7 +429,15 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
     useEffect(() => {
         if (!isRecording || !recordingStartedAt) {
-            setElapsedSeconds(0);
+            if (!stoppingRecording) {
+                setElapsedSeconds(0);
+            }
+
+            return;
+        }
+
+        // 停止ボタン押下後は、保存処理中でもカウントアップしない
+        if (stoppingRecording) {
             return;
         }
 
@@ -446,7 +454,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
         return () => {
             clearInterval(timerId);
         };
-    }, [isRecording, recordingStartedAt]);
+    }, [isRecording, recordingStartedAt, stoppingRecording]);
 
     //
     const handleSignOut = async () => {
@@ -631,6 +639,14 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const handleStopRecording = async () => {
         if (stoppingRecording) {
             return;
+        }
+
+        if (recordingStartedAt) {
+            const startedAtTime = new Date(recordingStartedAt).getTime();
+            const stoppedSeconds = Math.floor(
+                (Date.now() - startedAtTime) / 1000,
+            );
+            setElapsedSeconds(stoppedSeconds);
         }
 
         setStoppingRecording(true);

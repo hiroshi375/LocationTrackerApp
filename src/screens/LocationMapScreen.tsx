@@ -166,8 +166,8 @@ const retroMapStyle = [
     },
 ];
 
-// 現在地を画面中央付近に見せるため、カメラ中心を少し南へずらす
-const CAMERA_CENTER_LATITUDE_OFFSET = 0.0025;
+// 現在地を画面中央より少し上に見せるため、カメラ中心を少し南へずらす
+const CAMERA_CENTER_LATITUDE_OFFSET = 0.0015;
 
 const MAPTILER_API_KEY = process.env.EXPO_PUBLIC_MAPTILER_API_KEY;
 const MAPTILER_MAP_ID = process.env.EXPO_PUBLIC_MAPTILER_MAP_ID;

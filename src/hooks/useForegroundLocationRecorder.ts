@@ -205,6 +205,10 @@ export function useForegroundLocationRecorder({
                 }
 
                 liveLocationIdRef.current = result.data?.id ?? null;
+
+                await updateBackgroundRecordingLiveLocationId(
+                    liveLocationIdRef.current,
+                );
             } catch (error) {
                 console.error("LiveLocation update error:", error);
             }

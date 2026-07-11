@@ -230,6 +230,8 @@ async function saveBackgroundLocation(
                 ? location.timestamp
                 : Date.now();
 
+        const recordedAt = new Date(recordedAtMs).toISOString();
+
         const duplicateKey = createLocationDuplicateKey(
             latitude,
             longitude,
@@ -265,31 +267,63 @@ async function saveBackgroundLocation(
             };
         }
 
-        if (!shouldSaveLocation(latitude, longitude, recordedAtMs, state)) {
+        /*
+         * 重要:
+         * LocationLog を保存するかどうかとは別に、
+         * 共有中なら LiveLocation は更新する。
+         */
+        const liveLocationId = await updateBackgroundLiveLocation(
+            location,
+            state,
+            taskFiredAt,
+        );
+
+        const stateAfterLiveLocationUpdate: BackgroundRecordingState = {
+            ...state,
+            liveLocationId: liveLocationId ?? state.liveLocationId ?? null,
+        };
+
+        /*
+         * ここから下は LocationLog 保存判定。
+         * 保存条件を満たさなくても、LiveLocation はすでに更新済み。
+         */
+        if (
+            !shouldSaveLocation(
+                latitude,
+                longitude,
+                recordedAtMs,
+                stateAfterLiveLocationUpdate,
+            )
+        ) {
+            await setBackgroundRecordingState(stateAfterLiveLocationUpdate);
+
             return {
                 saved: false,
-                nextState: state,
+                nextState: stateAfterLiveLocationUpdate,
             };
         }
 
         const sharedOwners =
-            state.liveShareOwnerValues && state.liveShareOwnerValues.length > 0
-                ? Array.from(new Set(state.liveShareOwnerValues))
+            stateAfterLiveLocationUpdate.liveShareOwnerValues &&
+            stateAfterLiveLocationUpdate.liveShareOwnerValues.length > 0
+                ? Array.from(
+                      new Set(
+                          stateAfterLiveLocationUpdate.liveShareOwnerValues,
+                      ),
+                  )
                 : undefined;
-
-        const recordedAt = new Date(recordedAtMs).toISOString();
 
         savingBackgroundLocationKey = duplicateKey;
         duplicateKeyForFinally = duplicateKey;
 
         const result = await client.models.LocationLog.create({
-            userId: state.userId,
+            userId: stateAfterLiveLocationUpdate.userId,
             latitude,
             longitude,
             accuracy: location.coords.accuracy ?? null,
             recordedAt,
             memo: "自動記録",
-            recordingSessionId: state.recordingSessionId,
+            recordingSessionId: stateAfterLiveLocationUpdate.recordingSessionId,
             source: "background",
             sharedOwners,
         });
@@ -303,8 +337,9 @@ async function saveBackgroundLocation(
             );
 
             await saveBackgroundLocationDebugLog({
-                userId: state.userId,
-                recordingSessionId: state.recordingSessionId,
+                userId: stateAfterLiveLocationUpdate.userId,
+                recordingSessionId:
+                    stateAfterLiveLocationUpdate.recordingSessionId,
                 eventName: "backgroundLocationLogCreateFailed",
                 taskFiredAt,
                 errorMessage,
@@ -317,20 +352,13 @@ async function saveBackgroundLocation(
 
             return {
                 saved: false,
-                nextState: state,
+                nextState: stateAfterLiveLocationUpdate,
                 errorMessage,
             };
         }
 
-        const liveLocationId = await updateBackgroundLiveLocation(
-            location,
-            state,
-            taskFiredAt,
-        );
-
         const nextState: BackgroundRecordingState = {
-            ...state,
-            liveLocationId: liveLocationId ?? state.liveLocationId ?? null,
+            ...stateAfterLiveLocationUpdate,
             lastSavedLocation: {
                 latitude,
                 longitude,
@@ -393,6 +421,14 @@ async function updateBackgroundLiveLocation(
         return state.liveLocationId;
     }
 
+    const recordedAtMs =
+        typeof location.timestamp === "number" &&
+        Number.isFinite(location.timestamp)
+            ? location.timestamp
+            : Date.now();
+
+    const recordedAt = new Date(recordedAtMs).toISOString();
+
     const liveLocationModel = client.models.LiveLocation as any;
 
     const payload = {
@@ -401,6 +437,7 @@ async function updateBackgroundLiveLocation(
         latitude,
         longitude,
         accuracy: location.coords.accuracy ?? null,
+        recordedAt,
         updatedAt: new Date().toISOString(),
         isActive: true,
         sharedOwners,

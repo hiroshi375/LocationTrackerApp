@@ -11,7 +11,10 @@ import {
 } from "../services/backgroundLocationDebugLogService";
 import {
     calculateDistanceMeters,
+    calculateSpeedMetersPerSecond,
+    isAbnormalSpeedLocation,
     isExactDuplicateLocation,
+    isLowAccuracyLocation,
     isNearDuplicateLocation,
 } from "../utils/locationDuplicate";
 
@@ -43,9 +46,19 @@ type LiveLocationMutationResult = {
     errors?: unknown;
 };
 
+type BackgroundLocationSkipReason =
+    | "invalidCoordinate"
+    | "lowAccuracy"
+    | "abnormalSpeed"
+    | "inProgressDuplicate"
+    | "exactDuplicate"
+    | "nearDuplicate"
+    | "saveConditionNotMet";
+
 type SaveBackgroundLocationResult = {
     saved: boolean;
     nextState: BackgroundRecordingState;
+    skippedReason?: BackgroundLocationSkipReason;
     errorMessage?: string;
 };
 
@@ -59,6 +72,15 @@ TaskManager.defineTask(
         let locationsLength = 0;
         let saveSuccessCount = 0;
         let saveFailureCount = 0;
+
+        let skippedCount = 0;
+        let invalidCoordinateSkippedCount = 0;
+        let lowAccuracySkippedCount = 0;
+        let abnormalSpeedSkippedCount = 0;
+        let inProgressDuplicateSkippedCount = 0;
+        let exactDuplicateSkippedCount = 0;
+        let nearDuplicateSkippedCount = 0;
+        let saveConditionSkippedCount = 0;
 
         try {
             const state = await getBackgroundRecordingState();
@@ -97,6 +119,7 @@ TaskManager.defineTask(
                     eventName: "backgroundLocationTaskSkippedNoLocations",
                     taskFiredAt,
                     locationsLength,
+                    skippedCount: 1,
                 });
 
                 return;
@@ -109,6 +132,7 @@ TaskManager.defineTask(
                     eventName: "backgroundLocationTaskSkippedNoState",
                     taskFiredAt,
                     locationsLength,
+                    skippedCount: locationsLength,
                     details: {
                         hasState: Boolean(state),
                         hasUserId: Boolean(state?.userId),
@@ -155,6 +179,36 @@ TaskManager.defineTask(
                     saveFailureCount += 1;
                 }
 
+                if (result.skippedReason) {
+                    skippedCount += 1;
+
+                    switch (result.skippedReason) {
+                        case "invalidCoordinate":
+                            invalidCoordinateSkippedCount += 1;
+                            break;
+                        case "lowAccuracy":
+                            lowAccuracySkippedCount += 1;
+                            break;
+                        case "abnormalSpeed":
+                            abnormalSpeedSkippedCount += 1;
+                            break;
+                        case "inProgressDuplicate":
+                            inProgressDuplicateSkippedCount += 1;
+                            break;
+                        case "exactDuplicate":
+                            exactDuplicateSkippedCount += 1;
+                            break;
+                        case "nearDuplicate":
+                            nearDuplicateSkippedCount += 1;
+                            break;
+                        case "saveConditionNotMet":
+                            saveConditionSkippedCount += 1;
+                            break;
+                        default:
+                            break;
+                    }
+                }
+
                 currentState = result.nextState;
             }
 
@@ -166,6 +220,15 @@ TaskManager.defineTask(
                 locationsLength,
                 saveSuccessCount,
                 saveFailureCount,
+
+                skippedCount,
+                invalidCoordinateSkippedCount,
+                lowAccuracySkippedCount,
+                abnormalSpeedSkippedCount,
+                inProgressDuplicateSkippedCount,
+                exactDuplicateSkippedCount,
+                nearDuplicateSkippedCount,
+                saveConditionSkippedCount,
             });
         } catch (taskError) {
             await saveBackgroundLocationDebugLog({
@@ -174,6 +237,16 @@ TaskManager.defineTask(
                 locationsLength,
                 saveSuccessCount,
                 saveFailureCount,
+
+                skippedCount,
+                invalidCoordinateSkippedCount,
+                lowAccuracySkippedCount,
+                abnormalSpeedSkippedCount,
+                inProgressDuplicateSkippedCount,
+                exactDuplicateSkippedCount,
+                nearDuplicateSkippedCount,
+                saveConditionSkippedCount,
+
                 errorMessage: getErrorMessage(taskError),
             });
 
@@ -221,6 +294,7 @@ async function saveBackgroundLocation(
             return {
                 saved: false,
                 nextState: state,
+                skippedReason: "invalidCoordinate",
             };
         }
 
@@ -231,6 +305,57 @@ async function saveBackgroundLocation(
                 : Date.now();
 
         const recordedAt = new Date(recordedAtMs).toISOString();
+        const accuracy = location.coords.accuracy ?? null;
+
+        if (isLowAccuracyLocation(accuracy)) {
+            return {
+                saved: false,
+                nextState: state,
+                skippedReason: "lowAccuracy",
+            };
+        }
+
+        const lastSavedLocation = state.lastSavedLocation ?? null;
+
+        if (
+            isAbnormalSpeedLocation(
+                lastSavedLocation,
+                latitude,
+                longitude,
+                recordedAtMs,
+            )
+        ) {
+            const speedMetersPerSecond = calculateSpeedMetersPerSecond(
+                lastSavedLocation,
+                latitude,
+                longitude,
+                recordedAtMs,
+            );
+
+            await saveBackgroundLocationDebugLog({
+                userId: state.userId,
+                recordingSessionId: state.recordingSessionId,
+                eventName: "backgroundLocationLogSkippedAbnormalSpeed",
+                taskFiredAt,
+                details: {
+                    recordedAt,
+                    latitude,
+                    longitude,
+                    accuracy,
+                    speedMetersPerSecond,
+                    speedKmPerHour:
+                        speedMetersPerSecond == null
+                            ? null
+                            : speedMetersPerSecond * 3.6,
+                },
+            });
+
+            return {
+                saved: false,
+                nextState: state,
+                skippedReason: "abnormalSpeed",
+            };
+        }
 
         const duplicateKey = createLocationDuplicateKey(
             latitude,
@@ -242,10 +367,9 @@ async function saveBackgroundLocation(
             return {
                 saved: false,
                 nextState: state,
+                skippedReason: "inProgressDuplicate",
             };
         }
-
-        const lastSavedLocation = state.lastSavedLocation ?? null;
 
         if (
             isExactDuplicateLocation(
@@ -253,7 +377,16 @@ async function saveBackgroundLocation(
                 latitude,
                 longitude,
                 recordedAtMs,
-            ) ||
+            )
+        ) {
+            return {
+                saved: false,
+                nextState: state,
+                skippedReason: "exactDuplicate",
+            };
+        }
+
+        if (
             isNearDuplicateLocation(
                 lastSavedLocation,
                 latitude,
@@ -264,6 +397,7 @@ async function saveBackgroundLocation(
             return {
                 saved: false,
                 nextState: state,
+                skippedReason: "nearDuplicate",
             };
         }
 
@@ -300,6 +434,7 @@ async function saveBackgroundLocation(
             return {
                 saved: false,
                 nextState: stateAfterLiveLocationUpdate,
+                skippedReason: "saveConditionNotMet",
             };
         }
 
@@ -320,7 +455,7 @@ async function saveBackgroundLocation(
             userId: stateAfterLiveLocationUpdate.userId,
             latitude,
             longitude,
-            accuracy: location.coords.accuracy ?? null,
+            accuracy,
             recordedAt,
             memo: "自動記録",
             recordingSessionId: stateAfterLiveLocationUpdate.recordingSessionId,
@@ -421,14 +556,6 @@ async function updateBackgroundLiveLocation(
         return state.liveLocationId;
     }
 
-    const recordedAtMs =
-        typeof location.timestamp === "number" &&
-        Number.isFinite(location.timestamp)
-            ? location.timestamp
-            : Date.now();
-
-    const recordedAt = new Date(recordedAtMs).toISOString();
-
     const liveLocationModel = client.models.LiveLocation as any;
 
     const payload = {
@@ -437,7 +564,6 @@ async function updateBackgroundLiveLocation(
         latitude,
         longitude,
         accuracy: location.coords.accuracy ?? null,
-        recordedAt,
         updatedAt: new Date().toISOString(),
         isActive: true,
         sharedOwners,

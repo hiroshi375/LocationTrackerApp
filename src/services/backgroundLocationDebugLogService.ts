@@ -1,5 +1,3 @@
-import { getCurrentUser } from "aws-amplify/auth";
-
 import { client } from "../lib/client";
 
 type BackgroundLocationDebugLogInput = {
@@ -11,6 +9,15 @@ type BackgroundLocationDebugLogInput = {
     locationsLength?: number | null;
     saveSuccessCount?: number | null;
     saveFailureCount?: number | null;
+
+    skippedCount?: number | null;
+    lowAccuracySkippedCount?: number | null;
+    abnormalSpeedSkippedCount?: number | null;
+    invalidCoordinateSkippedCount?: number | null;
+    inProgressDuplicateSkippedCount?: number | null;
+    exactDuplicateSkippedCount?: number | null;
+    nearDuplicateSkippedCount?: number | null;
+    saveConditionSkippedCount?: number | null;
 
     hasStartedLocationUpdates?: boolean | null;
 
@@ -26,6 +33,10 @@ type BackgroundLocationDebugLogInput = {
 
     details?: Record<string, unknown>;
 };
+
+const UNKNOWN_USER_ID = "unknown";
+const MAX_ERROR_MESSAGE_LENGTH = 1000;
+const MAX_DETAILS_JSON_LENGTH = 4000;
 
 export function getErrorMessage(error: unknown) {
     if (error instanceof Error) {
@@ -47,18 +58,11 @@ export async function saveBackgroundLocationDebugLog(
     input: BackgroundLocationDebugLogInput,
 ) {
     try {
-        let userId = input.userId ?? null;
-
-        if (!userId) {
-            try {
-                const currentUser = await getCurrentUser();
-                userId = currentUser.userId;
-            } catch {
-                userId = "unknown";
-            }
-        }
+        const userId = input.userId ?? UNKNOWN_USER_ID;
 
         const debugLogModel = client.models.BackgroundLocationDebugLog as any;
+
+        const detailsJson = stringifyDetails(input.details);
 
         const result = await debugLogModel.create({
             userId,
@@ -70,6 +74,18 @@ export async function saveBackgroundLocationDebugLog(
             locationsLength: input.locationsLength ?? null,
             saveSuccessCount: input.saveSuccessCount ?? null,
             saveFailureCount: input.saveFailureCount ?? null,
+
+            skippedCount: input.skippedCount ?? null,
+            invalidCoordinateSkippedCount:
+                input.invalidCoordinateSkippedCount ?? null,
+            lowAccuracySkippedCount: input.lowAccuracySkippedCount ?? null,
+            abnormalSpeedSkippedCount: input.abnormalSpeedSkippedCount ?? null,
+            inProgressDuplicateSkippedCount:
+                input.inProgressDuplicateSkippedCount ?? null,
+            exactDuplicateSkippedCount:
+                input.exactDuplicateSkippedCount ?? null,
+            nearDuplicateSkippedCount: input.nearDuplicateSkippedCount ?? null,
+            saveConditionSkippedCount: input.saveConditionSkippedCount ?? null,
 
             hasStartedLocationUpdates: input.hasStartedLocationUpdates ?? null,
 
@@ -87,18 +103,56 @@ export async function saveBackgroundLocationDebugLog(
             backgroundPermissionCanAskAgain:
                 input.backgroundPermissionCanAskAgain ?? null,
 
-            errorMessage: input.errorMessage ?? null,
-            detailsJson: input.details ? JSON.stringify(input.details) : null,
+            errorMessage: truncateText(
+                input.errorMessage,
+                MAX_ERROR_MESSAGE_LENGTH,
+            ),
+            detailsJson: truncateText(detailsJson, MAX_DETAILS_JSON_LENGTH),
         });
 
         if (result.errors) {
             console.error(
                 "BackgroundLocationDebugLog create errors:",
                 result.errors,
+                {
+                    eventName: input.eventName,
+                    userId,
+                    recordingSessionId: input.recordingSessionId ?? null,
+                },
             );
         }
     } catch (error) {
         // 診断ログ保存の失敗で本体処理を止めない
-        console.error("Save background debug log error:", error);
+        console.error("Save background debug log error:", error, {
+            eventName: input.eventName,
+            userId: input.userId ?? UNKNOWN_USER_ID,
+            recordingSessionId: input.recordingSessionId ?? null,
+        });
     }
+}
+
+function stringifyDetails(details?: Record<string, unknown>) {
+    if (!details) {
+        return null;
+    }
+
+    try {
+        return JSON.stringify(details);
+    } catch {
+        return JSON.stringify({
+            stringifyError: true,
+        });
+    }
+}
+
+function truncateText(value: string | null | undefined, maxLength: number) {
+    if (!value) {
+        return null;
+    }
+
+    if (value.length <= maxLength) {
+        return value;
+    }
+
+    return `${value.slice(0, maxLength)}...`;
 }

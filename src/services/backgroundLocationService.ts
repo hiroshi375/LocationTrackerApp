@@ -55,6 +55,7 @@ export type BackgroundRecordingState = {
         latitude: number;
         longitude: number;
         recordedAt: number;
+        accuracy?: number | null;
     } | null;
     intervalMs: number;
     distanceMeters: number;
@@ -93,6 +94,7 @@ export async function startBackgroundLocationRecording({
             intervalMs,
             distanceMeters,
             liveShareOwnerValues: Array.from(new Set(liveShareOwnerValues)),
+            liveLocationId: null,
             lastSavedLocation,
         }),
     );

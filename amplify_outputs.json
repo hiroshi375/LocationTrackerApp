@@ -614,6 +614,62 @@
               "isRequired": false,
               "attributes": []
             },
+            "skippedCount": {
+              "name": "skippedCount",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "invalidCoordinateSkippedCount": {
+              "name": "invalidCoordinateSkippedCount",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "lowAccuracySkippedCount": {
+              "name": "lowAccuracySkippedCount",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "abnormalSpeedSkippedCount": {
+              "name": "abnormalSpeedSkippedCount",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "inProgressDuplicateSkippedCount": {
+              "name": "inProgressDuplicateSkippedCount",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "exactDuplicateSkippedCount": {
+              "name": "exactDuplicateSkippedCount",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "nearDuplicateSkippedCount": {
+              "name": "nearDuplicateSkippedCount",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "saveConditionSkippedCount": {
+              "name": "saveConditionSkippedCount",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
             "hasStartedLocationUpdates": {
               "name": "hasStartedLocationUpdates",
               "isArray": false,

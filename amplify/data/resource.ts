@@ -92,6 +92,15 @@ const schema = a.schema({
             saveSuccessCount: a.integer(),
             saveFailureCount: a.integer(),
 
+            skippedCount: a.integer(),
+            invalidCoordinateSkippedCount: a.integer(),
+            lowAccuracySkippedCount: a.integer(),
+            abnormalSpeedSkippedCount: a.integer(),
+            inProgressDuplicateSkippedCount: a.integer(),
+            exactDuplicateSkippedCount: a.integer(),
+            nearDuplicateSkippedCount: a.integer(),
+            saveConditionSkippedCount: a.integer(),
+
             hasStartedLocationUpdates: a.boolean(),
 
             foregroundPermissionStatus: a.string(),

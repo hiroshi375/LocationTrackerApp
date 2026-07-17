@@ -6,6 +6,10 @@ import { Alert, AppState } from "react-native";
 import * as Battery from "expo-battery";
 import { client } from "../lib/client";
 import {
+    getErrorMessage,
+    saveBackgroundLocationDebugLog,
+} from "../services/backgroundLocationDebugLogService";
+import {
     ensureBackgroundLocationPermission,
     getBackgroundRecordingStatus,
     isBackgroundLocationPermissionError,
@@ -16,7 +20,10 @@ import {
 } from "../services/backgroundLocationService";
 import {
     calculateDistanceMeters,
+    calculateSpeedMetersPerSecond,
+    isAbnormalSpeedLocation,
     isExactDuplicateLocation,
+    isLowAccuracyLocation,
     isNearDuplicateLocation,
 } from "../utils/locationDuplicate";
 
@@ -54,6 +61,7 @@ export function useForegroundLocationRecorder({
     const savingLocationKeyRef = useRef<string | null>(null);
     const recordingSessionIdRef = useRef<string | null>(null);
     const liveLocationIdRef = useRef<string | null>(null);
+    const recordingUserIdRef = useRef<string | null>(null);
 
     const [activeRecordingSessionId, setActiveRecordingSessionId] = useState<
         string | null
@@ -150,8 +158,9 @@ export function useForegroundLocationRecorder({
             }
 
             const recordingSessionId = recordingSessionIdRef.current;
+            const userId = recordingUserIdRef.current;
 
-            if (!recordingSessionId) {
+            if (!recordingSessionId || !userId) {
                 return;
             }
 
@@ -164,12 +173,10 @@ export function useForegroundLocationRecorder({
 
             try {
                 const liveLocationModel = client.models.LiveLocation as any;
-
-                const currentUser = await getCurrentUser();
                 const updatedAt = new Date().toISOString();
 
                 const payload = {
-                    userId: currentUser.userId,
+                    userId,
                     recordingSessionId,
                     latitude,
                     longitude,
@@ -186,10 +193,27 @@ export function useForegroundLocationRecorder({
                     })) as LiveLocationMutationResult;
 
                     if (result.errors) {
+                        const errorMessage = getErrorMessage(result.errors);
+
                         console.error(
                             "LiveLocation update errors:",
                             result.errors,
                         );
+
+                        await saveBackgroundLocationDebugLog({
+                            userId,
+                            recordingSessionId,
+                            eventName: "foregroundLiveLocationUpdateFailed",
+                            errorMessage,
+                            details: {
+                                liveLocationId: liveLocationIdRef.current,
+                                sharedOwnersCount:
+                                    normalizedLiveShareOwnerValues.length,
+                                payloadKeys: Object.keys(payload),
+                            },
+                        });
+
+                        return;
                     }
 
                     return;
@@ -200,7 +224,22 @@ export function useForegroundLocationRecorder({
                 )) as LiveLocationMutationResult;
 
                 if (result.errors) {
+                    const errorMessage = getErrorMessage(result.errors);
+
                     console.error("LiveLocation create errors:", result.errors);
+
+                    await saveBackgroundLocationDebugLog({
+                        userId,
+                        recordingSessionId,
+                        eventName: "foregroundLiveLocationCreateFailed",
+                        errorMessage,
+                        details: {
+                            sharedOwnersCount:
+                                normalizedLiveShareOwnerValues.length,
+                            payloadKeys: Object.keys(payload),
+                        },
+                    });
+
                     return;
                 }
 
@@ -211,6 +250,18 @@ export function useForegroundLocationRecorder({
                 );
             } catch (error) {
                 console.error("LiveLocation update error:", error);
+
+                await saveBackgroundLocationDebugLog({
+                    userId,
+                    recordingSessionId,
+                    eventName: "foregroundLiveLocationUnexpectedError",
+                    errorMessage: getErrorMessage(error),
+                    details: {
+                        liveLocationId: liveLocationIdRef.current,
+                        sharedOwnersCount:
+                            normalizedLiveShareOwnerValues.length,
+                    },
+                });
             }
         },
         [normalizedLiveShareOwnerValues],
@@ -236,6 +287,58 @@ export function useForegroundLocationRecorder({
                     : Date.now();
 
             const recordedAt = new Date(recordedAtMs).toISOString();
+            const accuracy = location.coords.accuracy ?? null;
+
+            if (isLowAccuracyLocation(accuracy)) {
+                await saveBackgroundLocationDebugLog({
+                    userId: recordingUserIdRef.current,
+                    recordingSessionId: recordingSessionIdRef.current,
+                    eventName: "foregroundLocationLogSkippedLowAccuracy",
+                    details: {
+                        recordedAt,
+                        latitude,
+                        longitude,
+                        accuracy,
+                    },
+                });
+
+                return;
+            }
+
+            if (
+                isAbnormalSpeedLocation(
+                    lastSavedLocationRef.current,
+                    latitude,
+                    longitude,
+                    recordedAtMs,
+                )
+            ) {
+                const speedMetersPerSecond = calculateSpeedMetersPerSecond(
+                    lastSavedLocationRef.current,
+                    latitude,
+                    longitude,
+                    recordedAtMs,
+                );
+
+                await saveBackgroundLocationDebugLog({
+                    userId: recordingUserIdRef.current,
+                    recordingSessionId: recordingSessionIdRef.current,
+                    eventName: "foregroundLocationLogSkippedAbnormalSpeed",
+                    details: {
+                        recordedAt,
+                        latitude,
+                        longitude,
+                        accuracy,
+                        speedMetersPerSecond,
+                        speedKmPerHour:
+                            speedMetersPerSecond == null
+                                ? null
+                                : speedMetersPerSecond * 3.6,
+                    },
+                });
+
+                return;
+            }
 
             updateDistanceFromStart(location);
 
@@ -322,7 +425,26 @@ export function useForegroundLocationRecorder({
             try {
                 savingLocationKeyRef.current = duplicateKey;
 
-                const currentUser = await getCurrentUser();
+                const userId = recordingUserIdRef.current;
+
+                if (!userId) {
+                    console.error(
+                        "Skip foreground LocationLog create: userId is missing",
+                    );
+
+                    await saveBackgroundLocationDebugLog({
+                        userId: null,
+                        recordingSessionId: recordingSessionIdRef.current,
+                        eventName: "foregroundLocationLogSkippedNoUserId",
+                        details: {
+                            recordedAt,
+                            latitude,
+                            longitude,
+                        },
+                    });
+
+                    return;
+                }
 
                 const batterySnapshot = await getBatterySnapshot();
 
@@ -332,10 +454,10 @@ export function useForegroundLocationRecorder({
                         : undefined;
 
                 const result = await client.models.LocationLog.create({
-                    userId: currentUser.userId,
+                    userId,
                     latitude,
                     longitude,
-                    accuracy: location.coords.accuracy ?? null,
+                    accuracy,
                     recordedAt,
                     memo: "自動記録",
                     recordingSessionId: recordingSessionIdRef.current,
@@ -349,10 +471,26 @@ export function useForegroundLocationRecorder({
                 });
 
                 if (result.errors) {
+                    const errorMessage = getErrorMessage(result.errors);
+
                     console.error(
                         "Auto LocationLog create errors:",
                         result.errors,
                     );
+
+                    await saveBackgroundLocationDebugLog({
+                        userId,
+                        recordingSessionId: recordingSessionIdRef.current,
+                        eventName: "foregroundLocationLogCreateFailed",
+                        errorMessage,
+                        details: {
+                            recordedAt,
+                            latitude,
+                            longitude,
+                            source: "foreground",
+                        },
+                    });
+
                     return;
                 }
 
@@ -394,6 +532,7 @@ export function useForegroundLocationRecorder({
 
         liveLocationIdRef.current = null;
         recordingSessionIdRef.current = null;
+        recordingUserIdRef.current = null;
         startLocationRef.current = null;
         lastSavedLocationRef.current = null;
 
@@ -422,6 +561,7 @@ export function useForegroundLocationRecorder({
             }
 
             recordingSessionIdRef.current = state.recordingSessionId;
+            recordingUserIdRef.current = state.userId;
             liveLocationIdRef.current = state.liveLocationId ?? null;
             lastSavedLocationRef.current = state.lastSavedLocation ?? null;
 
@@ -465,6 +605,25 @@ export function useForegroundLocationRecorder({
             }
 
             const newSessionId = createRecordingSessionId();
+            let recordingUserId: string;
+
+            try {
+                const currentUser = await getCurrentUser();
+                recordingUserId = currentUser.userId;
+            } catch (error) {
+                resetRecordingState();
+
+                console.error("Get current user for recording error:", error);
+
+                Alert.alert(
+                    "ユーザー情報の取得に失敗しました",
+                    "ログイン状態を確認してから、もう一度自動記録を開始してください。",
+                );
+
+                return;
+            }
+
+            recordingUserIdRef.current = recordingUserId;
 
             recordingSessionIdRef.current = newSessionId;
             setActiveRecordingSessionId(newSessionId);
@@ -505,10 +664,8 @@ export function useForegroundLocationRecorder({
             setDistanceFromStartMeters(0);
 
             try {
-                const currentUser = await getCurrentUser();
-
                 await startBackgroundLocationRecording({
-                    userId: currentUser.userId,
+                    userId: recordingUserId,
                     recordingSessionId: newSessionId,
                     startedAt,
                     intervalMs,
@@ -577,9 +734,6 @@ export function useForegroundLocationRecorder({
             setIsRecording(true);
 
             await updateLiveLocation(currentLocation);
-            await updateBackgroundRecordingLiveLocationId(
-                liveLocationIdRef.current,
-            );
             await saveLocationLog(currentLocation, true);
         } finally {
             isStartingRef.current = false;
@@ -629,11 +783,22 @@ export function useForegroundLocationRecorder({
                 });
             } catch (error) {
                 console.error("LiveLocation stop update error:", error);
+
+                await saveBackgroundLocationDebugLog({
+                    userId: recordingUserIdRef.current,
+                    recordingSessionId: recordingSessionIdRef.current,
+                    eventName: "foregroundLiveLocationStopUpdateFailed",
+                    errorMessage: getErrorMessage(error),
+                    details: {
+                        liveLocationId: liveLocationIdRef.current,
+                    },
+                });
             }
         }
 
         liveLocationIdRef.current = null;
         recordingSessionIdRef.current = null;
+        recordingUserIdRef.current = null;
         setActiveRecordingSessionId(null);
         setRecordingStartedAt(null);
         setIsRecording(false);

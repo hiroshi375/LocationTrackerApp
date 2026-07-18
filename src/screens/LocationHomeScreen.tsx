@@ -169,11 +169,75 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 }
 
                 if (Array.isArray(savedSettings.selectedLiveShareUsers)) {
-                    setSelectedLiveShareUsers(
+                    const savedUsers =
                         savedSettings.selectedLiveShareUsers.filter(
                             (user) => !!user.ownerValue,
-                        ),
-                    );
+                        );
+
+                    try {
+                        const userProfileModel = client.models
+                            .UserProfile as any;
+
+                        const profileResult = (await userProfileModel.list({
+                            limit: 1000,
+                        })) as UserProfileListResult;
+
+                        if (profileResult.errors) {
+                            console.error(
+                                "Restore live share users profile errors:",
+                                profileResult.errors,
+                            );
+
+                            setSelectedLiveShareUsers(savedUsers);
+                        } else {
+                            const latestProfileMap = new Map(
+                                (profileResult.data ?? [])
+                                    .filter(
+                                        (profile: any) =>
+                                            profile?.id && profile?.userId,
+                                    )
+                                    .map((profile: any) => [
+                                        profile.userId,
+                                        profile,
+                                    ]),
+                            );
+
+                            const restoredUsers: UserProfileItem[] =
+                                savedUsers.map((savedUser) => {
+                                    const latestProfile = latestProfileMap.get(
+                                        savedUser.userId,
+                                    );
+
+                                    if (!latestProfile) {
+                                        return savedUser;
+                                    }
+
+                                    return {
+                                        id: latestProfile.id,
+                                        userId: latestProfile.userId,
+                                        email: latestProfile.email ?? null,
+                                        displayName:
+                                            latestProfile.displayName ?? null,
+                                        ownerValue:
+                                            latestProfile.ownerValue ?? null,
+                                        searchText:
+                                            latestProfile.searchText ?? null,
+                                        iconImagePath:
+                                            latestProfile.iconImagePath ?? null,
+                                    };
+                                });
+
+                            setSelectedLiveShareUsers(
+                                restoredUsers.filter(
+                                    (user) => !!user.ownerValue,
+                                ),
+                            );
+                        }
+                    } catch (error) {
+                        console.error("Restore live share users error:", error);
+
+                        setSelectedLiveShareUsers(savedUsers);
+                    }
                 }
             } catch (error) {
                 console.error("Load saved home settings error:", error);
@@ -225,6 +289,15 @@ export default function LocationHomeScreen({ navigation }: Props) {
         let cancelled = false;
 
         const loadSelectedLiveShareUserIcons = async () => {
+            console.log(
+                "[LiveShareIcon] selected users:",
+                selectedLiveShareUsers.map((user) => ({
+                    id: user.id,
+                    userId: user.userId,
+                    displayName: user.displayName,
+                    iconImagePath: user.iconImagePath,
+                })),
+            );
             const iconEntries = await Promise.all(
                 selectedLiveShareUsers.map(async (user) => {
                     if (!user.iconImagePath) {
@@ -1078,15 +1151,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
                     {selectedLiveShareUsers.length > 0 && (
                         <Text style={styles.liveShareSelectedUserName}>
-                            共有先ユーザー名:{" "}
-                            {selectedLiveShareUsers
-                                .map(
-                                    (user) =>
-                                        user.displayName ||
-                                        user.email ||
-                                        "名前未設定",
-                                )
-                                .join("、")}
+                            共有先ユーザー
                         </Text>
                     )}
 

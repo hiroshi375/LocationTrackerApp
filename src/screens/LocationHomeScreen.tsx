@@ -64,6 +64,7 @@ type LiveLocationItem = {
     id: string;
     userId: string;
     recordingSessionId?: string | null;
+    isRecording?: boolean | null;
     latitude?: number | null;
     longitude?: number | null;
     updatedAt?: string | null;
@@ -339,14 +340,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
     }, [liveShareUsers, liveShareSearchText]);
 
     const openLiveShareModal = () => {
-        if (isRecording) {
-            Alert.alert(
-                "自動記録中",
-                "共有先ユーザーは自動記録開始前に選択してください。",
-            );
-            return;
-        }
-
         setDraftLiveShareUsers(selectedLiveShareUsers);
         setLiveShareSearchText("");
         setLiveShareModalVisible(true);
@@ -354,14 +347,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
     };
 
     const clearLiveShareUsers = () => {
-        if (isRecording) {
-            Alert.alert(
-                "自動記録中",
-                "共有先ユーザーは自動記録停止後に変更してください。",
-            );
-            return;
-        }
-
         setSelectedLiveShareUsers([]);
         setLiveShareStatusMessage("");
     };
@@ -466,6 +451,14 @@ export default function LocationHomeScreen({ navigation }: Props) {
             Alert.alert(
                 "自動記録中です",
                 "サインアウトする前に自動記録を停止してください。",
+            );
+            return;
+        }
+
+        if (selectedLiveShareUsers.length > 0) {
+            Alert.alert(
+                "現在地を共有中です",
+                "サインアウトする前に「共有先をすべて解除」してください。",
             );
             return;
         }
@@ -689,10 +682,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
             if (stoppedShareUserName) {
                 setLiveShareStatusMessage(
-                    `現在地共有を停止しました: ${stoppedShareUserName}`,
+                    `自動記録を停止しました。現在地共有は継続中です: ${stoppedShareUserName}`,
                 );
             } else {
-                setLiveShareStatusMessage("");
+                setLiveShareStatusMessage("自動記録を停止しました。");
             }
 
             if (!finishedSessionId) {
@@ -794,6 +787,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     id: item.id,
                     userId: item.userId,
                     recordingSessionId: item.recordingSessionId ?? null,
+                    isRecording:
+                        typeof item.isRecording === "boolean"
+                            ? item.isRecording
+                            : Boolean(item.recordingSessionId),
                     latitude: item.latitude,
                     longitude: item.longitude,
                     updatedAt: item.updatedAt ?? null,
@@ -805,10 +802,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 }))
                 .filter((item) => {
                     if (!item.isActive) {
-                        return false;
-                    }
-
-                    if (!item.recordingSessionId) {
                         return false;
                     }
 
@@ -834,18 +827,22 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
             const latest = sharedLiveLocations[0];
 
-            if (!latest?.recordingSessionId) {
+            if (!latest) {
                 Alert.alert(
                     "共有中の現在地なし",
                     "現在共有されているLiveLocationが見つかりませんでした。",
                 );
                 return;
             }
+            const sharedLiveIsRecording =
+                latest.isRecording === true &&
+                Boolean(latest.recordingSessionId);
 
             navigation.navigate("LocationMap", {
                 sharedLiveUserId: latest.userId,
                 sharedLiveLocationId: latest.id,
-                recordingSessionId: latest.recordingSessionId,
+                recordingSessionId: latest.recordingSessionId ?? null,
+                sharedLiveIsRecording,
             });
         } catch (error) {
             console.error("Open shared live location map error:", error);
@@ -955,6 +952,66 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         disabled={openingSharedLiveMap}
                     />
                 </View>
+
+                <View style={styles.liveShareBox}>
+                    <Text style={styles.liveShareTitle}>
+                        リアルタイム共有先
+                    </Text>
+
+                    <Pressable
+                        style={styles.liveShareSelectButton}
+                        onPress={openLiveShareModal}
+                    >
+                        <Text style={styles.liveShareSelectButtonText}>
+                            {selectedLiveShareUsers.length > 0
+                                ? `${selectedLiveShareUsers.length}人を選択中`
+                                : "共有先ユーザーを選択"}
+                        </Text>
+                    </Pressable>
+
+                    {selectedLiveShareUsers.length > 0 && (
+                        <Text style={styles.liveShareSelectedUserName}>
+                            共有先ユーザー名:{" "}
+                            {selectedLiveShareUsers
+                                .map(
+                                    (user) =>
+                                        user.displayName ||
+                                        user.email ||
+                                        "名前未設定",
+                                )
+                                .join("、")}
+                        </Text>
+                    )}
+
+                    {selectedLiveShareUsers.length > 0 && (
+                        <Pressable
+                            style={styles.liveShareClearButton}
+                            onPress={clearLiveShareUsers}
+                        >
+                            <Text style={styles.liveShareClearButtonText}>
+                                共有先をすべて解除
+                            </Text>
+                        </Pressable>
+                    )}
+
+                    {selectedLiveShareUsers.length > 0 && (
+                        <View style={styles.liveShareStatusActiveBox}>
+                            <Text style={styles.liveShareStatusActiveText}>
+                                現在地を共有中: {liveShareUserName}
+                            </Text>
+                        </View>
+                    )}
+
+                    {selectedLiveShareUsers.length === 0 &&
+                        liveShareStatusMessage.length > 0 && (
+                            <View style={styles.liveShareStatusStoppedBox}>
+                                <Text style={styles.liveShareStatusStoppedText}>
+                                    {liveShareStatusMessage}
+                                </Text>
+                            </View>
+                        )}
+                </View>
+
                 <View style={styles.autoRecordBox}>
                     <View style={styles.autoRecordHeader}>
                         <Text style={styles.autoRecordTitle}>自動記録</Text>
@@ -1080,64 +1137,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             })}
                         </View>
                     </View>
-                    <View style={styles.settingBlock}>
-                        <Text style={styles.settingTitle}>
-                            リアルタイム共有先
-                        </Text>
 
-                        <Pressable
-                            style={[
-                                styles.liveShareSelectButton,
-                                isRecording && styles.appButtonDisabled,
-                            ]}
-                            onPress={openLiveShareModal}
-                            disabled={isRecording}
-                        >
-                            <Text style={styles.liveShareSelectButtonText}>
-                                {selectedLiveShareUsers.length > 0
-                                    ? `${selectedLiveShareUsers.length}人を選択中`
-                                    : "共有先ユーザーを選択"}
-                            </Text>
-                        </Pressable>
-
-                        {selectedLiveShareUsers.length > 0 && (
-                            <Text style={styles.liveShareSelectedEmail}>
-                                {selectedLiveShareUsers
-                                    .map(
-                                        (user) =>
-                                            user.email ||
-                                            user.displayName ||
-                                            "名前未設定",
-                                    )
-                                    .join("、")}
-                            </Text>
-                        )}
-
-                        {selectedLiveShareUsers.length > 0 && !isRecording && (
-                            <Pressable
-                                style={styles.liveShareClearButton}
-                                onPress={clearLiveShareUsers}
-                            >
-                                <Text style={styles.liveShareClearButtonText}>
-                                    共有先をすべて解除
-                                </Text>
-                            </Pressable>
-                        )}
-                    </View>
-                    {isRecording && selectedLiveShareUsers.length > 0 && (
-                        <View style={styles.liveShareStatusActiveBox}>
-                            <Text style={styles.liveShareStatusActiveText}>
-                                現在地を共有中: {liveShareUserName}
-                            </Text>
-                        </View>
-                    )}
-                    {!isRecording && liveShareStatusMessage.length > 0 && (
-                        <View style={styles.liveShareStatusStoppedBox}>
-                            <Text style={styles.liveShareStatusStoppedText}>
-                                {liveShareStatusMessage}
-                            </Text>
-                        </View>
-                    )}
                     <View style={styles.autoRecordMapButtonSpace}>
                         <AppButton
                             title="地図で見る"
@@ -1186,12 +1186,14 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         </Pressable>
                     )}
                 </View>
+
                 <View style={styles.buttonSpace}>
                     <AppButton
                         title="プロフィール"
                         onPress={() => navigation.navigate("Profile")}
                     />
                 </View>
+
                 <View style={styles.buttonSpace}>
                     <AppButton
                         title={
@@ -1315,7 +1317,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             </Text>
 
                             <Text style={styles.modalDescription}>
-                                自動記録中の現在地を共有するユーザーを選択してください。
+                                現在地をリアルタイム共有するユーザーを選択してください。
+                                自動記録中でなくても共有できます。
                             </Text>
 
                             <TextInput
@@ -1881,5 +1884,27 @@ const styles = StyleSheet.create({
         color: "#2f4f66",
         fontSize: 13,
         fontWeight: "bold",
+    },
+    liveShareBox: {
+        marginTop: 4,
+        padding: 14,
+        borderWidth: 1,
+        borderColor: "#ddd",
+        borderRadius: 10,
+        backgroundColor: "#fff",
+    },
+
+    liveShareTitle: {
+        fontSize: 16,
+        fontWeight: "bold",
+        color: "#333",
+        marginBottom: 10,
+    },
+
+    liveShareSelectedUserName: {
+        marginTop: 8,
+        fontSize: 13,
+        color: "#555",
+        lineHeight: 19,
     },
 });

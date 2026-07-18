@@ -199,6 +199,7 @@ export default function LocationMapScreen({ route }: Props) {
     const routeRecordingSessionId = route.params?.recordingSessionId ?? null;
     const sharedLiveUserId = route.params?.sharedLiveUserId ?? null;
     const sharedLiveLocationId = route.params?.sharedLiveLocationId ?? null;
+    const sharedLiveIsRecording = route.params?.sharedLiveIsRecording ?? false;
 
     const recordingIntervalMs = route.params?.recordingIntervalMs ?? null;
     const recordingDistanceMeters =
@@ -209,12 +210,29 @@ export default function LocationMapScreen({ route }: Props) {
 
     /*
      * 共有中の現在地画面から開いた地図。
-     * sharedLiveUserId、sharedLiveLocationId、recordingSessionIdが
-     * すべて渡された場合だけ共有中の地図と判定する。
+     *
+     * 非記録中の共有ではrecordingSessionIdが存在しないため、
+     * sharedLiveUserIdとsharedLiveLocationIdだけで共有地図と判定する。
      */
     const isSharedLiveLocationMap = Boolean(
-        sharedLiveUserId && sharedLiveLocationId && routeRecordingSessionId,
+        sharedLiveUserId && sharedLiveLocationId,
     );
+
+    /*
+     * 共有元が自動記録中で、かつセッションIDを持つ場合だけ
+     * 共有ルートを取得・表示する。
+     */
+    const shouldShowSharedRoute =
+        isSharedLiveLocationMap &&
+        sharedLiveIsRecording &&
+        Boolean(routeRecordingSessionId);
+
+    /*
+     * 非記録中の現在地共有。
+     * 現在地だけを表示し、LocationLogやルート関連UIは表示しない。
+     */
+    const isSharedCurrentLocationOnlyMap =
+        isSharedLiveLocationMap && !shouldShowSharedRoute;
 
     /*
      * ホーム画面の自動記録欄にある「地図で見る」から開いた場合。
@@ -237,7 +255,11 @@ export default function LocationMapScreen({ route }: Props) {
     const shouldShowLiveCurrentLocation =
         isOwnLiveRecordingMap || isSharedLiveLocationMap;
 
-    const isLiveRecordingMap = shouldShowLiveCurrentLocation;
+    /*
+     * ルートを伴うライブ地図。
+     * 非記録中の共有は現在地表示だけなので含めない。
+     */
+    const isLiveRecordingMap = isOwnLiveRecordingMap || shouldShowSharedRoute;
 
     const recordingIntervalSeconds =
         typeof recordingIntervalMs === "number"
@@ -273,7 +295,7 @@ export default function LocationMapScreen({ route }: Props) {
     const updateCurrentLocationScreenPoint = useCallback(async () => {
         if (
             !mapReady ||
-            !isLiveRecordingMap ||
+            !shouldShowLiveCurrentLocation ||
             !currentLocation ||
             !mapRef.current
         ) {
@@ -293,7 +315,7 @@ export default function LocationMapScreen({ route }: Props) {
             console.error("Current location screen point error:", error);
             setCurrentLocationScreenPoint(null);
         }
-    }, [mapReady, isLiveRecordingMap, currentLocation]);
+    }, [mapReady, shouldShowLiveCurrentLocation, currentLocation]);
 
     const loadLogs = useCallback(
         async (showLoading: boolean = true) => {
@@ -302,7 +324,16 @@ export default function LocationMapScreen({ route }: Props) {
                     setLoading(true);
                 }
 
-                if (sharedLiveUserId && !activeSessionId) {
+                /*
+                 * 非記録中の共有ではLocationLogを取得しない。
+                 * 共有元が自動記録中でも、セッションIDがない場合は取得しない。
+                 */
+                if (isSharedLiveLocationMap && !shouldShowSharedRoute) {
+                    setLogs([]);
+                    return;
+                }
+
+                if (isSharedLiveLocationMap && !activeSessionId) {
                     setLogs([]);
                     return;
                 }
@@ -365,7 +396,7 @@ export default function LocationMapScreen({ route }: Props) {
                 setHasLoaded(true);
             }
         },
-        [activeSessionId, sharedLiveUserId],
+        [activeSessionId, isSharedLiveLocationMap, shouldShowSharedRoute],
     );
 
     const loadRecordingSessionSummary = useCallback(
@@ -628,7 +659,7 @@ export default function LocationMapScreen({ route }: Props) {
         if (
             !isSharedLiveLocationMap ||
             !sharedLiveUserId ||
-            !routeRecordingSessionId
+            !sharedLiveLocationId
         ) {
             return;
         }
@@ -640,9 +671,6 @@ export default function LocationMapScreen({ route }: Props) {
                 filter: {
                     userId: {
                         eq: sharedLiveUserId,
-                    },
-                    recordingSessionId: {
-                        eq: routeRecordingSessionId,
                     },
                     isActive: {
                         eq: true,
@@ -695,12 +723,7 @@ export default function LocationMapScreen({ route }: Props) {
         return () => {
             subscription.unsubscribe();
         };
-    }, [
-        isSharedLiveLocationMap,
-        sharedLiveUserId,
-        sharedLiveLocationId,
-        routeRecordingSessionId,
-    ]);
+    }, [isSharedLiveLocationMap, sharedLiveUserId, sharedLiveLocationId]);
 
     useEffect(() => {
         if (!shouldShowLiveCurrentLocation) {
@@ -710,7 +733,7 @@ export default function LocationMapScreen({ route }: Props) {
     }, [shouldShowLiveCurrentLocation]);
 
     useEffect(() => {
-        if (!isLiveRecordingMap || !currentLocationScreenPoint) {
+        if (!shouldShowLiveCurrentLocation || !currentLocationScreenPoint) {
             currentLocationOpacity.setValue(1);
             return;
         }
@@ -737,7 +760,7 @@ export default function LocationMapScreen({ route }: Props) {
             currentLocationOpacity.setValue(1);
         };
     }, [
-        isLiveRecordingMap,
+        shouldShowLiveCurrentLocation,
         currentLocationScreenPoint,
         currentLocationOpacity,
     ]);
@@ -747,7 +770,7 @@ export default function LocationMapScreen({ route }: Props) {
             return;
         }
 
-        if (!isLiveRecordingMap) {
+        if (!shouldShowLiveCurrentLocation) {
             return;
         }
 
@@ -764,7 +787,12 @@ export default function LocationMapScreen({ route }: Props) {
             getCurrentLocationRegion(currentLocation),
             500,
         );
-    }, [mapReady, isLiveRecordingMap, currentLocation, routeViewMode]);
+    }, [
+        mapReady,
+        shouldShowLiveCurrentLocation,
+        currentLocation,
+        routeViewMode,
+    ]);
 
     useEffect(() => {
         if (!mapReady) {
@@ -917,13 +945,17 @@ export default function LocationMapScreen({ route }: Props) {
     ]);
 
     useEffect(() => {
-        if (!activeSessionId) {
+        if (!activeSessionId || isSharedCurrentLocationOnlyMap) {
             setRecordingSessionSummary(null);
             return;
         }
 
         void loadRecordingSessionSummary(activeSessionId);
-    }, [activeSessionId, loadRecordingSessionSummary]);
+    }, [
+        activeSessionId,
+        isSharedCurrentLocationOnlyMap,
+        loadRecordingSessionSummary,
+    ]);
 
     useEffect(() => {
         void updateCurrentLocationScreenPoint();
@@ -949,7 +981,7 @@ export default function LocationMapScreen({ route }: Props) {
     );
 
     useEffect(() => {
-        if (!isLiveRecordingMap || !currentLocation) {
+        if (!shouldShowLiveCurrentLocation || !currentLocation) {
             setCurrentAddress("");
             setAddressLoading(false);
             lastAddressLookupRef.current = null;
@@ -1016,7 +1048,7 @@ export default function LocationMapScreen({ route }: Props) {
         return () => {
             cancelled = true;
         };
-    }, [isLiveRecordingMap, currentLocation]);
+    }, [shouldShowLiveCurrentLocation, currentLocation]);
 
     if (!hasLoaded || loading) {
         return (
@@ -1026,17 +1058,19 @@ export default function LocationMapScreen({ route }: Props) {
         );
     }
 
-    const visibleLogs = activeSessionId
-        ? logs.filter((log) => log.recordingSessionId === activeSessionId)
-        : isLiveRecordingMap
-          ? []
-          : logs;
+    const visibleLogs = isSharedCurrentLocationOnlyMap
+        ? []
+        : activeSessionId
+          ? logs.filter((log) => log.recordingSessionId === activeSessionId)
+          : isLiveRecordingMap
+            ? []
+            : logs;
 
     if (visibleLogs.length === 0 && !selectedLocation && !currentLocation) {
         return (
             <View style={styles.center}>
                 <Text>
-                    {isLiveRecordingMap
+                    {shouldShowLiveCurrentLocation
                         ? "現在地を取得中です..."
                         : "表示できる位置履歴がありません。"}
                 </Text>
@@ -1056,7 +1090,7 @@ export default function LocationMapScreen({ route }: Props) {
     const displayLocation =
         selectedLocation ??
         latest ??
-        (isLiveRecordingMap && currentLocation
+        (shouldShowLiveCurrentLocation && currentLocation
             ? {
                   id: "live-current-location",
                   latitude: currentLocation.latitude,
@@ -1074,7 +1108,7 @@ export default function LocationMapScreen({ route }: Props) {
         return (
             <View style={styles.center}>
                 <Text>
-                    {isLiveRecordingMap
+                    {shouldShowLiveCurrentLocation
                         ? "現在地を取得中です..."
                         : "表示できる位置情報がありません。"}
                 </Text>
@@ -1090,7 +1124,10 @@ export default function LocationMapScreen({ route }: Props) {
         routeLogs.length > 0 ? routeLogs[routeLogs.length - 1] : null;
 
     const currentLocationLineCoordinates =
-        isLiveRecordingMap && latestRecordedLog && currentLocation
+        isLiveRecordingMap &&
+        !isSharedCurrentLocationOnlyMap &&
+        latestRecordedLog &&
+        currentLocation
             ? [
                   {
                       latitude: latestRecordedLog.latitude,
@@ -1100,10 +1137,13 @@ export default function LocationMapScreen({ route }: Props) {
               ]
             : [];
 
-    const fitTargetCoordinates =
-        isLiveRecordingMap && currentLocation
-            ? [...routeCoordinates, currentLocation]
-            : routeCoordinates;
+    const fitTargetCoordinates = isSharedCurrentLocationOnlyMap
+        ? currentLocation
+            ? [currentLocation]
+            : []
+        : isLiveRecordingMap && currentLocation
+          ? [...routeCoordinates, currentLocation]
+          : routeCoordinates;
 
     const showRouteOverview = () => {
         if (fitTargetCoordinates.length === 0) {
@@ -1277,24 +1317,27 @@ export default function LocationMapScreen({ route }: Props) {
                     />
                 )}
 
-                {routeCoordinates.length >= 2 && (
-                    <Polyline
-                        coordinates={routeCoordinates}
-                        strokeColor="rgba(22, 91, 112, 0.85)"
-                        strokeWidth={6}
-                    />
-                )}
+                {!isSharedCurrentLocationOnlyMap &&
+                    routeCoordinates.length >= 2 && (
+                        <Polyline
+                            coordinates={routeCoordinates}
+                            strokeColor="rgba(22, 91, 112, 0.85)"
+                            strokeWidth={6}
+                        />
+                    )}
 
-                {currentLocationLineCoordinates.length === 2 && (
-                    <Polyline
-                        coordinates={currentLocationLineCoordinates}
-                        strokeColor="rgba(22, 91, 112, 0.85)"
-                        strokeWidth={6}
-                        lineDashPattern={[8, 6]}
-                    />
-                )}
+                {!isSharedCurrentLocationOnlyMap &&
+                    currentLocationLineCoordinates.length === 2 && (
+                        <Polyline
+                            coordinates={currentLocationLineCoordinates}
+                            strokeColor="rgba(22, 91, 112, 0.85)"
+                            strokeWidth={6}
+                            lineDashPattern={[8, 6]}
+                        />
+                    )}
 
-                {showPoints &&
+                {!isSharedCurrentLocationOnlyMap &&
+                    showPoints &&
                     routeLogs.map((log) => {
                         const isSelected = selectedLocation?.id === log.id;
                         const isStartOrEnd =
@@ -1334,7 +1377,7 @@ export default function LocationMapScreen({ route }: Props) {
                         );
                     })}
 
-                {startLog && (
+                {!isSharedCurrentLocationOnlyMap && startLog && (
                     <Marker
                         coordinate={{
                             latitude: startLog.latitude,
@@ -1361,7 +1404,7 @@ export default function LocationMapScreen({ route }: Props) {
                     </Marker>
                 )}
 
-                {endLog && (
+                {!isSharedCurrentLocationOnlyMap && endLog && (
                     <Marker
                         coordinate={{
                             latitude: endLog.latitude,
@@ -1388,7 +1431,8 @@ export default function LocationMapScreen({ route }: Props) {
                     </Marker>
                 )}
 
-                {showPoints &&
+                {!isSharedCurrentLocationOnlyMap &&
+                    showPoints &&
                     selectedLocation &&
                     !routeLogs.some(
                         (log) => log.id === selectedLocation.id,
@@ -1410,7 +1454,7 @@ export default function LocationMapScreen({ route }: Props) {
                     )}
             </MapView>
 
-            {isLiveRecordingMap && currentLocationScreenPoint && (
+            {shouldShowLiveCurrentLocation && currentLocationScreenPoint && (
                 <Animated.View
                     pointerEvents="none"
                     style={[
@@ -1443,7 +1487,7 @@ export default function LocationMapScreen({ route }: Props) {
                 </Animated.View>
             )}
 
-            {isLiveRecordingMap && currentLocationScreenPoint && (
+            {shouldShowLiveCurrentLocation && currentLocationScreenPoint && (
                 <View
                     pointerEvents="none"
                     style={[
@@ -1475,51 +1519,83 @@ export default function LocationMapScreen({ route }: Props) {
 
             <View style={styles.infoBox}>
                 <Text style={styles.infoTitle}>
-                    {isSelectedMode ? "記録サマリー" : "最新位置"}
+                    {isSharedCurrentLocationOnlyMap
+                        ? "共有中の現在地"
+                        : isSelectedMode
+                          ? "記録サマリー"
+                          : "最新位置"}
                 </Text>
 
-                {recordingSessionSummary ? (
+                {isSharedCurrentLocationOnlyMap ? (
                     <>
                         <Text style={styles.infoText}>
-                            期間:{" "}
-                            {formatPeriod(
-                                recordingSessionSummary.startedAt,
-                                recordingSessionSummary.endedAt,
-                            )}
-                        </Text>
-                        <Text style={styles.infoText}>
-                            距離: {displayDistanceText}
-                        </Text>
-                    </>
-                ) : isSelectedMode ? (
-                    <>
-                        <Text style={styles.infoText}>
-                            {shouldShowSessionPeriod ? "期間: " : "日時: "}
-                            {displayDateTimeText}
-                        </Text>
-                        <Text style={styles.infoText}>
-                            距離: {displayDistanceText}
-                        </Text>
-                    </>
-                ) : (
-                    <View style={styles.latestInfoRow}>
-                        <Text style={[styles.infoText, styles.latestInfoText]}>
                             日時: {displayDateTimeText}
                         </Text>
-                        <Text style={[styles.infoText, styles.latestInfoText]}>
-                            距離: {displayDistanceText}
-                        </Text>
-                    </View>
-                )}
-                <View style={styles.pointCountRow}>
-                    <Text style={[styles.infoText, styles.pointCountText]}>
-                        記録ポイント: {recordPointCount}件
-                    </Text>
+                        <Text style={styles.infoText}>ルート記録: なし</Text>
+                    </>
+                ) : (
+                    <>
+                        {recordingSessionSummary ? (
+                            <>
+                                <Text style={styles.infoText}>
+                                    期間:{" "}
+                                    {formatPeriod(
+                                        recordingSessionSummary.startedAt,
+                                        recordingSessionSummary.endedAt,
+                                    )}
+                                </Text>
+                                <Text style={styles.infoText}>
+                                    距離: {displayDistanceText}
+                                </Text>
+                            </>
+                        ) : isSelectedMode ? (
+                            <>
+                                <Text style={styles.infoText}>
+                                    {shouldShowSessionPeriod
+                                        ? "期間: "
+                                        : "日時: "}
+                                    {displayDateTimeText}
+                                </Text>
+                                <Text style={styles.infoText}>
+                                    距離: {displayDistanceText}
+                                </Text>
+                            </>
+                        ) : (
+                            <View style={styles.latestInfoRow}>
+                                <Text
+                                    style={[
+                                        styles.infoText,
+                                        styles.latestInfoText,
+                                    ]}
+                                >
+                                    日時: {displayDateTimeText}
+                                </Text>
+                                <Text
+                                    style={[
+                                        styles.infoText,
+                                        styles.latestInfoText,
+                                    ]}
+                                >
+                                    距離: {displayDistanceText}
+                                </Text>
+                            </View>
+                        )}
 
-                    <Text style={[styles.infoText, styles.pointCountText]}>
-                        表示ポイント: {displayedPointCount}件
-                    </Text>
-                </View>
+                        <View style={styles.pointCountRow}>
+                            <Text
+                                style={[styles.infoText, styles.pointCountText]}
+                            >
+                                記録ポイント: {recordPointCount}件
+                            </Text>
+
+                            <Text
+                                style={[styles.infoText, styles.pointCountText]}
+                            >
+                                表示ポイント: {displayedPointCount}件
+                            </Text>
+                        </View>
+                    </>
+                )}
                 {/*
                 <Text style={styles.infoText}>
                     緯度: {displayLocation.latitude.toFixed(6)}
@@ -1537,7 +1613,7 @@ export default function LocationMapScreen({ route }: Props) {
                         : "不明"}
                 </Text>
                 */}
-                {!isSelectedMode && (
+                {!isSharedCurrentLocationOnlyMap && !isSelectedMode && (
                     <View style={styles.memoRow}>
                         <Text style={[styles.infoText, styles.memoTextInRow]}>
                             メモ:{" "}
@@ -1585,41 +1661,43 @@ export default function LocationMapScreen({ route }: Props) {
                     })}
                 </View>
 
-                <View style={styles.mapActionButtonRow}>
-                    <Pressable
-                        style={({ pressed }) => [
-                            styles.mapActionButton,
-                            pressed && styles.mapActionButtonPressed,
-                        ]}
-                        onPress={() => setShowPoints((current) => !current)}
-                    >
-                        <Text style={styles.mapActionButtonText}>
-                            ポイント表示: {showPoints ? "OFF" : "ON"}
-                        </Text>
-                    </Pressable>
-
-                    <Pressable
-                        style={({ pressed }) => [
-                            styles.mapActionButton,
-                            isRouteFitButtonActive &&
-                                styles.mapActionButtonActive,
-                            pressed && styles.mapActionButtonPressed,
-                        ]}
-                        onPress={toggleRouteViewMode}
-                    >
-                        <Text
-                            style={[
-                                styles.mapActionButtonText,
-                                isRouteFitButtonActive &&
-                                    styles.mapActionButtonTextActive,
+                {!isSharedCurrentLocationOnlyMap && (
+                    <View style={styles.mapActionButtonRow}>
+                        <Pressable
+                            style={({ pressed }) => [
+                                styles.mapActionButton,
+                                pressed && styles.mapActionButtonPressed,
                             ]}
-                            numberOfLines={1}
-                            adjustsFontSizeToFit
+                            onPress={() => setShowPoints((current) => !current)}
                         >
-                            {routeFitButtonText}
-                        </Text>
-                    </Pressable>
-                </View>
+                            <Text style={styles.mapActionButtonText}>
+                                ポイント表示: {showPoints ? "OFF" : "ON"}
+                            </Text>
+                        </Pressable>
+
+                        <Pressable
+                            style={({ pressed }) => [
+                                styles.mapActionButton,
+                                isRouteFitButtonActive &&
+                                    styles.mapActionButtonActive,
+                                pressed && styles.mapActionButtonPressed,
+                            ]}
+                            onPress={toggleRouteViewMode}
+                        >
+                            <Text
+                                style={[
+                                    styles.mapActionButtonText,
+                                    isRouteFitButtonActive &&
+                                        styles.mapActionButtonTextActive,
+                                ]}
+                                numberOfLines={1}
+                                adjustsFontSizeToFit
+                            >
+                                {routeFitButtonText}
+                            </Text>
+                        </Pressable>
+                    </View>
+                )}
             </View>
         </View>
     );

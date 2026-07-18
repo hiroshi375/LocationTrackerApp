@@ -476,6 +476,13 @@
               "name": "recordingSessionId",
               "isArray": false,
               "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "isRecording": {
+              "name": "isRecording",
+              "isArray": false,
+              "type": "Boolean",
               "isRequired": true,
               "attributes": []
             },

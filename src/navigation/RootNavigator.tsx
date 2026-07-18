@@ -19,6 +19,12 @@ export type RootStackParamList = {
         sharedLiveUserId?: string | null;
         sharedLiveLocationId?: string | null;
 
+        /**
+         * true: 共有中の現在地と記録ルートを表示
+         * false: 共有中の現在地のみ表示
+         */
+        sharedLiveIsRecording?: boolean;
+
         selectedLocation?: {
             id: string;
             latitude: number;

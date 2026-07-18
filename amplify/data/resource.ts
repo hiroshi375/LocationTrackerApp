@@ -72,7 +72,21 @@ const schema = a.schema({
     LiveLocation: a
         .model({
             userId: a.string().required(),
-            recordingSessionId: a.string().required(),
+
+            /*
+             * 自動記録していない位置共有ではnullになるため、
+             * required()を付けない。
+             */
+            recordingSessionId: a.string(),
+
+            /*
+             * true:
+             *   自動記録中。現在地とPolylineを表示する。
+             *
+             * false:
+             *   現在地共有のみ。現在地マーカーだけを表示する。
+             */
+            isRecording: a.boolean().required(),
 
             latitude: a.float().required(),
             longitude: a.float().required(),

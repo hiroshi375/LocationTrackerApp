@@ -1,10 +1,7 @@
-// src/screens/LiveLocationMapScreen.tsx
-
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
-    Alert,
     Pressable,
     StyleSheet,
     Text,
@@ -14,14 +11,16 @@ import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
+import { getCurrentUserProfile } from "../services/userProfileService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LiveLocationMap">;
 
 type LiveLocationItem = {
     id: string;
     userId: string;
-    recordingSessionId: string | null;
+    recordingSessionId?: string | null;
     recordingSessionName?: string | null;
+    isRecording?: boolean | null;
     latitude: number;
     longitude: number;
     accuracy?: number | null;
@@ -34,8 +33,45 @@ type LiveLocationItem = {
 export default function LiveLocationMapScreen({ navigation }: Props) {
     const [liveLocations, setLiveLocations] = useState<LiveLocationItem[]>([]);
     const [loading, setLoading] = useState(true);
+    const [currentOwnerValue, setCurrentOwnerValue] = useState<string | null>(
+        null,
+    );
 
     useEffect(() => {
+        let mounted = true;
+
+        const loadCurrentOwnerValue = async () => {
+            try {
+                const profile = await getCurrentUserProfile();
+
+                if (mounted) {
+                    setCurrentOwnerValue(profile?.ownerValue ?? null);
+                }
+            } catch (error) {
+                console.error("Load current user owner value error:", error);
+
+                if (mounted) {
+                    setCurrentOwnerValue(null);
+                }
+            }
+        };
+
+        void loadCurrentOwnerValue();
+
+        return () => {
+            mounted = false;
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!currentOwnerValue) {
+            setLiveLocations([]);
+            setLoading(false);
+            return;
+        }
+
+        setLoading(true);
+
         const liveLocationModel = client.models.LiveLocation as any;
 
         const subscription = liveLocationModel
@@ -55,6 +91,10 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
                             recordingSessionId: item.recordingSessionId ?? null,
                             recordingSessionName:
                                 item.recordingSessionName ?? null,
+                            isRecording:
+                                typeof item.isRecording === "boolean"
+                                    ? item.isRecording
+                                    : Boolean(item.recordingSessionId),
                             latitude: Number(item.latitude),
                             longitude: Number(item.longitude),
                             accuracy: item.accuracy ?? null,
@@ -68,13 +108,26 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
                                 ? item.sharedOwners
                                 : [],
                         }))
-                        .filter(
-                            (item) =>
-                                item.isActive &&
-                                item.userId.length > 0 &&
-                                Number.isFinite(item.latitude) &&
-                                Number.isFinite(item.longitude),
-                        )
+                        .filter((item) => {
+                            if (!item.isActive) {
+                                return false;
+                            }
+
+                            if (!item.userId) {
+                                return false;
+                            }
+
+                            if (
+                                !Number.isFinite(item.latitude) ||
+                                !Number.isFinite(item.longitude)
+                            ) {
+                                return false;
+                            }
+
+                            return item.sharedOwners?.includes(
+                                currentOwnerValue,
+                            );
+                        })
                         .sort((a, b) => {
                             return (
                                 new Date(b.updatedAt).getTime() -
@@ -94,7 +147,7 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
         return () => {
             subscription.unsubscribe();
         };
-    }, []);
+    }, [currentOwnerValue]);
 
     const latestLiveLocation = useMemo(() => {
         if (liveLocations.length === 0) {
@@ -105,18 +158,15 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
     }, [liveLocations]);
 
     const openLocationMap = (liveLocation: LiveLocationItem) => {
-        if (!liveLocation.recordingSessionId) {
-            Alert.alert(
-                "表示できません",
-                "共有中の現在地にセッションIDがありません。",
-            );
-            return;
-        }
+        const sharedLiveIsRecording =
+            liveLocation.isRecording === true &&
+            Boolean(liveLocation.recordingSessionId);
 
         navigation.navigate("LocationMap", {
-            recordingSessionId: liveLocation.recordingSessionId,
+            recordingSessionId: liveLocation.recordingSessionId ?? null,
             sharedLiveUserId: liveLocation.userId,
             sharedLiveLocationId: liveLocation.id,
+            sharedLiveIsRecording,
         });
     };
 
@@ -128,10 +178,22 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
         );
     }
 
+    if (!currentOwnerValue) {
+        return (
+            <View style={styles.center}>
+                <Text style={styles.emptyText}>
+                    共有用ユーザー情報を取得できませんでした。
+                </Text>
+            </View>
+        );
+    }
+
     if (!latestLiveLocation) {
         return (
             <View style={styles.center}>
-                <Text>共有中の現在地はありません。</Text>
+                <Text style={styles.emptyText}>
+                    共有中の現在地はありません。
+                </Text>
             </View>
         );
     }
@@ -155,7 +217,11 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
                             latitude: location.latitude,
                             longitude: location.longitude,
                         }}
-                        title="共有中の現在地"
+                        title={
+                            location.isRecording
+                                ? "自動記録中の現在地"
+                                : "共有中の現在地"
+                        }
                         description={`更新: ${formatDateTime(
                             location.updatedAt,
                         )}`}
@@ -165,10 +231,21 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
             </MapView>
 
             <View style={styles.infoBox}>
-                <Text style={styles.infoTitle}>共有中の現在地</Text>
+                <Text style={styles.infoTitle}>
+                    {latestLiveLocation.isRecording
+                        ? "自動記録中の現在地"
+                        : "共有中の現在地"}
+                </Text>
 
                 <Text style={styles.infoText}>
                     更新日時: {formatDateTime(latestLiveLocation.updatedAt)}
+                </Text>
+
+                <Text style={styles.infoText}>
+                    記録状態:{" "}
+                    {latestLiveLocation.isRecording
+                        ? "自動記録中"
+                        : "現在地共有のみ"}
                 </Text>
 
                 <Text style={styles.infoText}>
@@ -197,7 +274,9 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
                     onPress={() => openLocationMap(latestLiveLocation)}
                 >
                     <Text style={styles.openMapButtonText}>
-                        ルート地図を表示
+                        {latestLiveLocation.isRecording
+                            ? "ルート地図を表示"
+                            : "現在地を地図で表示"}
                     </Text>
                 </Pressable>
             </View>
@@ -207,6 +286,10 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
 
 function formatDateTime(value: string) {
     const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+        return "日時不明";
+    }
 
     const yyyy = date.getFullYear();
     const mm = String(date.getMonth() + 1).padStart(2, "0");
@@ -229,22 +312,12 @@ const styles = StyleSheet.create({
         flex: 1,
         alignItems: "center",
         justifyContent: "center",
+        padding: 24,
     },
-    liveMarkerOuter: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
-        backgroundColor: "rgba(0, 122, 255, 0.25)",
-        alignItems: "center",
-        justifyContent: "center",
-        borderWidth: 2,
-        borderColor: "rgba(0, 122, 255, 0.9)",
-    },
-    liveMarkerInner: {
-        width: 12,
-        height: 12,
-        borderRadius: 6,
-        backgroundColor: "rgba(0, 122, 255, 1)",
+    emptyText: {
+        color: "#555",
+        fontSize: 14,
+        textAlign: "center",
     },
     infoBox: {
         position: "absolute",

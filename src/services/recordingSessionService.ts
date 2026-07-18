@@ -230,3 +230,142 @@ async function listLocationLogsBySessionId(recordingSessionId: string) {
 
     return logs;
 }
+
+type RecordingSessionBackfillResult = {
+    locationLogCount: number;
+    targetSessionCount: number;
+    createdOrUpdatedCount: number;
+    failedCount: number;
+    skippedLogCount: number;
+    failures: {
+        recordingSessionId: string;
+        errorMessage: string;
+    }[];
+};
+
+export async function backfillRecordingSessionsFromLocationLogs(): Promise<RecordingSessionBackfillResult> {
+    const currentUser = await getCurrentUser();
+    const locationLogModel = client.models.LocationLog as any;
+
+    const allLogs: any[] = [];
+    let nextToken: string | null = null;
+
+    do {
+        const result = (await locationLogModel.list({
+            limit: 1000,
+            nextToken: nextToken ?? undefined,
+        })) as LocationLogListResult;
+
+        if (result.errors) {
+            throw new Error(
+                `LocationLog list failed: ${JSON.stringify(result.errors)}`,
+            );
+        }
+
+        allLogs.push(...(result.data ?? []));
+        nextToken = result.nextToken ?? null;
+    } while (nextToken);
+
+    const sessionMap = new Map<
+        string,
+        {
+            recordingSessionName: string | null;
+            sharedOwners: string[];
+        }
+    >();
+
+    let skippedLogCount = 0;
+
+    for (const log of allLogs) {
+        /*
+         * 共有された他ユーザーのLocationLogを、
+         * 現在ユーザーのRecordingSessionとして登録しない。
+         */
+        if (log.userId !== currentUser.userId) {
+            skippedLogCount += 1;
+            continue;
+        }
+
+        const recordingSessionId =
+            typeof log.recordingSessionId === "string"
+                ? log.recordingSessionId.trim()
+                : "";
+
+        if (!recordingSessionId) {
+            skippedLogCount += 1;
+            continue;
+        }
+
+        const currentSession = sessionMap.get(recordingSessionId);
+
+        const sharedOwners = Array.isArray(log.sharedOwners)
+            ? log.sharedOwners.filter(
+                  (owner: unknown): owner is string =>
+                      typeof owner === "string" && owner.length > 0,
+              )
+            : [];
+
+        sessionMap.set(recordingSessionId, {
+            recordingSessionName:
+                currentSession?.recordingSessionName ??
+                log.recordingSessionName ??
+                null,
+
+            sharedOwners: Array.from(
+                new Set([
+                    ...(currentSession?.sharedOwners ?? []),
+                    ...sharedOwners,
+                ]),
+            ),
+        });
+    }
+
+    let createdOrUpdatedCount = 0;
+    let failedCount = 0;
+
+    const failures: RecordingSessionBackfillResult["failures"] = [];
+
+    for (const [recordingSessionId, sessionInfo] of sessionMap.entries()) {
+        try {
+            await upsertRecordingSessionSummary(
+                recordingSessionId,
+                sessionInfo.recordingSessionName,
+                sessionInfo.sharedOwners,
+            );
+
+            createdOrUpdatedCount += 1;
+
+            console.log("RecordingSession backfill success:", {
+                recordingSessionId,
+            });
+        } catch (error) {
+            failedCount += 1;
+
+            const errorMessage =
+                error instanceof Error ? error.message : String(error);
+
+            failures.push({
+                recordingSessionId,
+                errorMessage,
+            });
+
+            console.error("RecordingSession backfill failed:", {
+                recordingSessionId,
+                error,
+            });
+        }
+    }
+
+    const result: RecordingSessionBackfillResult = {
+        locationLogCount: allLogs.length,
+        targetSessionCount: sessionMap.size,
+        createdOrUpdatedCount,
+        failedCount,
+        skippedLogCount,
+        failures,
+    };
+
+    console.log("RecordingSession backfill completed:", result);
+
+    return result;
+}

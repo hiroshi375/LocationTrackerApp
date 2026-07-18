@@ -23,7 +23,10 @@ import { getUrl } from "aws-amplify/storage";
 import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRecorder";
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
-import { upsertRecordingSessionSummary } from "../services/recordingSessionService";
+import {
+    backfillRecordingSessionsFromLocationLogs,
+    upsertRecordingSessionSummary,
+} from "../services/recordingSessionService";
 import {
     ensureUserProfile,
     getCurrentUserProfile,
@@ -123,6 +126,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [loadingLiveShareUsers, setLoadingLiveShareUsers] = useState(false);
     const [liveShareStatusMessage, setLiveShareStatusMessage] = useState("");
     const [openingSharedLiveMap, setOpeningSharedLiveMap] = useState(false);
+    const [backfillingSessions, setBackfillingSessions] = useState(false);
 
     useEffect(() => {
         const loadSavedHomeSettings = async () => {
@@ -834,6 +838,57 @@ export default function LocationHomeScreen({ navigation }: Props) {
         void ensureUserProfile();
     }, []);
 
+    const handleBackfillRecordingSessions = async () => {
+        if (backfillingSessions || isRecording) {
+            return;
+        }
+
+        Alert.alert(
+            "セッション履歴を作成",
+            "過去の位置情報ログからセッション履歴を作成しますか？",
+            [
+                {
+                    text: "キャンセル",
+                    style: "cancel",
+                },
+                {
+                    text: "実行",
+                    onPress: async () => {
+                        try {
+                            setBackfillingSessions(true);
+
+                            const result =
+                                await backfillRecordingSessionsFromLocationLogs();
+
+                            Alert.alert(
+                                "作成完了",
+                                [
+                                    `LocationLog: ${result.locationLogCount}件`,
+                                    `対象セッション: ${result.targetSessionCount}件`,
+                                    `作成・更新: ${result.createdOrUpdatedCount}件`,
+                                    `失敗: ${result.failedCount}件`,
+                                    `対象外ログ: ${result.skippedLogCount}件`,
+                                ].join("\n"),
+                            );
+                        } catch (error) {
+                            console.error(
+                                "RecordingSession backfill error:",
+                                error,
+                            );
+
+                            Alert.alert(
+                                "作成エラー",
+                                "過去ログからセッション履歴を作成できませんでした。",
+                            );
+                        } finally {
+                            setBackfillingSessions(false);
+                        }
+                    },
+                },
+            ],
+        );
+    };
+
     return (
         <KeyboardAvoidingView
             style={styles.keyboardAvoiding}
@@ -1111,6 +1166,17 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     <AppButton
                         title="プロフィール"
                         onPress={() => navigation.navigate("Profile")}
+                    />
+                </View>
+                <View style={styles.buttonSpace}>
+                    <AppButton
+                        title={
+                            backfillingSessions
+                                ? "セッション履歴を作成中..."
+                                : "過去ログからセッション履歴を作成"
+                        }
+                        onPress={handleBackfillRecordingSessions}
+                        disabled={backfillingSessions || isRecording}
                     />
                 </View>
                 <View style={styles.signOutButtonSpace}>

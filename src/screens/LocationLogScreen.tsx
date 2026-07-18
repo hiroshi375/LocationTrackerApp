@@ -123,37 +123,39 @@ export default function LocationLogScreen({ navigation }: Props) {
             try {
                 if (reset) {
                     setLoading(true);
+                    setRecordingSessionNextToken(null);
                 } else {
                     setLoadingMore(true);
                 }
 
+                const currentUser = await getCurrentUser();
+
                 const recordingSessionModel = client.models
                     .RecordingSession as any;
 
-                const listParams: {
-                    limit: number;
-                    nextToken?: string;
-                } = {
-                    limit: SESSION_PAGE_SIZE,
-                };
-
-                if (!reset && nextToken) {
-                    listParams.nextToken = nextToken;
-                }
-
-                const result = (await recordingSessionModel.list(
-                    listParams,
-                )) as RecordingSessionListResult;
+                const result =
+                    (await recordingSessionModel.listRecordingSessionsByUserAndEndedAt(
+                        {
+                            userId: currentUser.userId,
+                            sortDirection: "DESC",
+                            limit: SESSION_PAGE_SIZE,
+                            nextToken: reset
+                                ? undefined
+                                : (nextToken ?? undefined),
+                        },
+                    )) as RecordingSessionListResult;
 
                 if (result.errors) {
                     console.error(
-                        "RecordingSession list errors:",
+                        "RecordingSession index query errors:",
                         result.errors,
                     );
+
                     Alert.alert(
                         "取得エラー",
                         "セッション履歴を取得できませんでした。",
                     );
+
                     return;
                 }
 
@@ -171,6 +173,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                         endAt: item.endedAt,
                         distanceMeters: Number(item.distanceMeters ?? 0),
                         pointCount: Number(item.pointCount ?? 0),
+
                         startBatteryLevel:
                             item.startBatteryLevel !== null &&
                             item.startBatteryLevel !== undefined &&
@@ -184,6 +187,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                             Number.isFinite(Number(item.endBatteryLevel))
                                 ? Number(item.endBatteryLevel)
                                 : null,
+
                         sharedOwners: Array.isArray(item.sharedOwners)
                             ? item.sharedOwners.filter(
                                   (owner: unknown): owner is string =>
@@ -191,6 +195,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                                       owner.length > 0,
                               )
                             : [],
+
                         sortAt: item.endedAt,
                     }))
                     .filter(
@@ -198,20 +203,41 @@ export default function LocationLogScreen({ navigation }: Props) {
                             !!item.recordingSessionId &&
                             !!item.startAt &&
                             !!item.endAt,
-                    )
-                    .sort(
+                    );
+
+                setRecordingSessions((currentItems) => {
+                    if (reset) {
+                        return nextItems;
+                    }
+
+                    /*
+                     * nextToken再読込などで同じデータが返った場合に備え、
+                     * id単位で重複を除外する。
+                     */
+                    const itemMap = new Map<
+                        string,
+                        RecordingSessionDisplayItem
+                    >();
+
+                    currentItems.forEach((item) => {
+                        itemMap.set(item.id, item);
+                    });
+
+                    nextItems.forEach((item) => {
+                        itemMap.set(item.id, item);
+                    });
+
+                    return Array.from(itemMap.values()).sort(
                         (a, b) =>
                             new Date(b.endAt).getTime() -
                             new Date(a.endAt).getTime(),
                     );
-
-                setRecordingSessions((current) =>
-                    reset ? nextItems : [...current, ...nextItems],
-                );
+                });
 
                 setRecordingSessionNextToken(result.nextToken ?? null);
             } catch (error) {
-                console.error("RecordingSession load error:", error);
+                console.error("RecordingSession index query error:", error);
+
                 Alert.alert(
                     "取得エラー",
                     "セッション履歴の取得に失敗しました。",
@@ -226,30 +252,27 @@ export default function LocationLogScreen({ navigation }: Props) {
 
     const loadRecordingSessionTotalCount = useCallback(async () => {
         try {
+            const currentUser = await getCurrentUser();
+
             const recordingSessionModel = client.models.RecordingSession as any;
 
             let nextToken: string | null = null;
             let totalCount = 0;
 
             do {
-                const listParams: {
-                    limit: number;
-                    nextToken?: string;
-                } = {
-                    limit: 1000,
-                };
-
-                if (nextToken) {
-                    listParams.nextToken = nextToken;
-                }
-
-                const result = (await recordingSessionModel.list(
-                    listParams,
-                )) as RecordingSessionListResult;
+                const result =
+                    (await recordingSessionModel.listRecordingSessionsByUserAndEndedAt(
+                        {
+                            userId: currentUser.userId,
+                            sortDirection: "DESC",
+                            limit: 1000,
+                            nextToken: nextToken ?? undefined,
+                        },
+                    )) as RecordingSessionListResult;
 
                 if (result.errors) {
                     console.error(
-                        "RecordingSession total count errors:",
+                        "RecordingSession total count index errors:",
                         result.errors,
                     );
                     return;
@@ -368,7 +391,12 @@ export default function LocationLogScreen({ navigation }: Props) {
         });
 
         void loadRecordingSessionTotalCount();
-    }, [loadRecordingSessions, loadRecordingSessionTotalCount]);
+        void loadUserProfiles();
+    }, [
+        loadRecordingSessions,
+        loadRecordingSessionTotalCount,
+        loadUserProfiles,
+    ]);
 
     const filteredShareUsers = useMemo(() => {
         const keyword = shareSearchText.trim().toLowerCase();
@@ -906,7 +934,9 @@ export default function LocationLogScreen({ navigation }: Props) {
                             <Pressable
                                 style={({ pressed }) => [
                                     styles.loadMoreButton,
-                                    pressed && styles.loadMoreButtonPressed,
+                                    pressed &&
+                                        !loadingMore &&
+                                        styles.loadMoreButtonPressed,
                                     loadingMore && styles.deleteButtonDisabled,
                                 ]}
                                 onPress={loadMoreItems}

@@ -47,6 +47,11 @@ const schema = a.schema({
 
             sharedOwners: a.string().array(),
         })
+        .secondaryIndexes((index) => [
+            index("userId")
+                .sortKeys(["endedAt"])
+                .queryField("listRecordingSessionsByUserAndEndedAt"),
+        ])
         .authorization((allow) => [
             allow.owner(),
             allow.ownersDefinedIn("sharedOwners").to(["read"]),

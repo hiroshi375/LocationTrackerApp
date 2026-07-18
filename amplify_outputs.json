@@ -302,6 +302,17 @@
               "properties": {}
             },
             {
+              "type": "key",
+              "properties": {
+                "name": "recordingSessionsByUserIdAndEndedAt",
+                "queryField": "listRecordingSessionsByUserAndEndedAt",
+                "fields": [
+                  "userId",
+                  "endedAt"
+                ]
+              }
+            },
+            {
               "type": "auth",
               "properties": {
                 "rules": [

@@ -24,6 +24,16 @@ export const BACKGROUND_LOCATION_TASK_NAME =
 export const BACKGROUND_RECORDING_STATE_KEY =
     "location-tracker-background-recording-state";
 
+/*
+ * BackgroundLocationDebugLog の保存を一括で制御する。
+ *
+ * false:
+ *   DynamoDB の BackgroundLocationDebugLog に新しいレコードを作成しない。
+ *
+ * 再調査が必要になった場合だけ、一時的に true に戻す。
+ */
+const ENABLE_BACKGROUND_LOCATION_DEBUG_LOG = true;
+
 type BackgroundRecordingState = {
     userId: string;
     recordingSessionId: string;
@@ -80,6 +90,10 @@ type BackgroundDebugLogInput = Parameters<
 async function safeSaveBackgroundLocationDebugLog(
     input: BackgroundDebugLogInput,
 ): Promise<void> {
+    if (!ENABLE_BACKGROUND_LOCATION_DEBUG_LOG) {
+        return;
+    }
+
     try {
         await saveBackgroundLocationDebugLog(input);
     } catch (debugLogError) {
@@ -108,13 +122,28 @@ TaskManager.defineTask(
         let nearDuplicateSkippedCount = 0;
         let saveConditionSkippedCount = 0;
 
+        let activeState: BackgroundRecordingState | null = null;
+
         try {
             const state = await getBackgroundRecordingState();
 
+            /*
+             * 自動記録状態がない場合は、OSから遅れてタスクが呼ばれても
+             * DebugLog・LocationLog・LiveLocationを一切作成／更新しない。
+             */
+            if (!isValidBackgroundRecordingState(state)) {
+                console.log(
+                    "Background recording state not found. Skip background task.",
+                );
+                return;
+            }
+
+            activeState = state;
+
             if (error) {
                 await safeSaveBackgroundLocationDebugLog({
-                    userId: state?.userId ?? null,
-                    recordingSessionId: state?.recordingSessionId ?? null,
+                    userId: state.userId,
+                    recordingSessionId: state.recordingSessionId,
                     eventName: "backgroundLocationTaskError",
                     taskFiredAt,
                     errorMessage: getErrorMessage(error),
@@ -131,8 +160,8 @@ TaskManager.defineTask(
             locationsLength = locations?.length ?? 0;
 
             await safeSaveBackgroundLocationDebugLog({
-                userId: state?.userId ?? null,
-                recordingSessionId: state?.recordingSessionId ?? null,
+                userId: state.userId,
+                recordingSessionId: state.recordingSessionId,
                 eventName: "backgroundLocationTaskFired",
                 taskFiredAt,
                 locationsLength,
@@ -140,35 +169,14 @@ TaskManager.defineTask(
 
             if (!locations || locations.length === 0) {
                 await safeSaveBackgroundLocationDebugLog({
-                    userId: state?.userId ?? null,
-                    recordingSessionId: state?.recordingSessionId ?? null,
+                    userId: state.userId,
+                    recordingSessionId: state.recordingSessionId,
                     eventName: "backgroundLocationTaskSkippedNoLocations",
                     taskFiredAt,
                     locationsLength,
                     skippedCount: 1,
                 });
 
-                return;
-            }
-
-            if (!state?.recordingSessionId || !state.userId) {
-                await safeSaveBackgroundLocationDebugLog({
-                    userId: state?.userId ?? null,
-                    recordingSessionId: state?.recordingSessionId ?? null,
-                    eventName: "backgroundLocationTaskSkippedNoState",
-                    taskFiredAt,
-                    locationsLength,
-                    skippedCount: locationsLength,
-                    details: {
-                        hasState: Boolean(state),
-                        hasUserId: Boolean(state?.userId),
-                        hasRecordingSessionId: Boolean(
-                            state?.recordingSessionId,
-                        ),
-                    },
-                });
-
-                console.log("Background recording state not found.");
                 return;
             }
 
@@ -257,24 +265,32 @@ TaskManager.defineTask(
                 saveConditionSkippedCount,
             });
         } catch (taskError) {
-            await safeSaveBackgroundLocationDebugLog({
-                eventName: "backgroundLocationTaskUnexpectedError",
-                taskFiredAt,
-                locationsLength,
-                saveSuccessCount,
-                saveFailureCount,
+            /*
+             * 有効な自動記録状態を読み込めた場合だけデバッグログを保存する。
+             * 状態なしで呼ばれた古いOSタスクからレコードを復活させない。
+             */
+            if (activeState) {
+                await safeSaveBackgroundLocationDebugLog({
+                    userId: activeState.userId,
+                    recordingSessionId: activeState.recordingSessionId,
+                    eventName: "backgroundLocationTaskUnexpectedError",
+                    taskFiredAt,
+                    locationsLength,
+                    saveSuccessCount,
+                    saveFailureCount,
 
-                skippedCount,
-                invalidCoordinateSkippedCount,
-                lowAccuracySkippedCount,
-                abnormalSpeedSkippedCount,
-                inProgressDuplicateSkippedCount,
-                exactDuplicateSkippedCount,
-                nearDuplicateSkippedCount,
-                saveConditionSkippedCount,
+                    skippedCount,
+                    invalidCoordinateSkippedCount,
+                    lowAccuracySkippedCount,
+                    abnormalSpeedSkippedCount,
+                    inProgressDuplicateSkippedCount,
+                    exactDuplicateSkippedCount,
+                    nearDuplicateSkippedCount,
+                    saveConditionSkippedCount,
 
-                errorMessage: getErrorMessage(taskError),
-            });
+                    errorMessage: getErrorMessage(taskError),
+                });
+            }
 
             console.error(
                 "Background location task unexpected error:",
@@ -296,6 +312,18 @@ async function getBackgroundRecordingState() {
     } catch {
         return null;
     }
+}
+
+function isValidBackgroundRecordingState(
+    state: BackgroundRecordingState | null,
+): state is BackgroundRecordingState {
+    return Boolean(
+        state &&
+        typeof state.userId === "string" &&
+        state.userId.length > 0 &&
+        typeof state.recordingSessionId === "string" &&
+        state.recordingSessionId.length > 0,
+    );
 }
 
 async function setBackgroundRecordingState(state: BackgroundRecordingState) {

@@ -738,6 +738,11 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 return;
             }
 
+            console.log(
+                "[SharedLive] viewer ownerValue:",
+                JSON.stringify(ownerValue),
+            );
+
             const liveLocationModel = client.models.LiveLocation as any;
 
             const allData: any[] = [];
@@ -768,6 +773,27 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 const result = (await liveLocationModel.list(
                     listParams,
                 )) as LiveLocationListResult;
+
+                console.log("[SharedLive] list result:", {
+                    dataCount: result.data?.length ?? 0,
+                    errors: result.errors,
+                    nextToken: result.nextToken,
+                });
+
+                console.log(
+                    "[SharedLive] records:",
+                    (result.data ?? []).map((item) => ({
+                        id: item.id,
+                        userId: item.userId,
+                        owner: item.owner,
+                        sharedOwners: item.sharedOwners,
+                        isActive: item.isActive,
+                        isRecording: item.isRecording,
+                        recordingSessionId: item.recordingSessionId,
+                        latitude: item.latitude,
+                        longitude: item.longitude,
+                    })),
+                );
 
                 if (result.errors) {
                     console.error("LiveLocation list errors:", result.errors);
@@ -824,6 +850,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
                     return bTime - aTime;
                 });
+
+            console.log("[SharedLive] fetched count:", allData.length);
+            console.log(
+                "[SharedLive] matched count:",
+                sharedLiveLocations.length,
+            );
 
             const latest = sharedLiveLocations[0];
 

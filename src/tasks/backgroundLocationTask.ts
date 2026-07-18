@@ -46,6 +46,15 @@ type LiveLocationMutationResult = {
     errors?: unknown;
 };
 
+type LiveLocationModel = {
+    create?: (
+        input: Record<string, unknown>,
+    ) => Promise<LiveLocationMutationResult>;
+    update?: (
+        input: Record<string, unknown>,
+    ) => Promise<LiveLocationMutationResult>;
+};
+
 type BackgroundLocationSkipReason =
     | "invalidCoordinate"
     | "lowAccuracy"
@@ -63,6 +72,23 @@ type SaveBackgroundLocationResult = {
 };
 
 let savingBackgroundLocationKey: string | null = null;
+
+type BackgroundDebugLogInput = Parameters<
+    typeof saveBackgroundLocationDebugLog
+>[0];
+
+async function safeSaveBackgroundLocationDebugLog(
+    input: BackgroundDebugLogInput,
+): Promise<void> {
+    try {
+        await saveBackgroundLocationDebugLog(input);
+    } catch (debugLogError) {
+        console.error(
+            "Failed to save background location debug log:",
+            debugLogError,
+        );
+    }
+}
 
 TaskManager.defineTask(
     BACKGROUND_LOCATION_TASK_NAME,
@@ -86,7 +112,7 @@ TaskManager.defineTask(
             const state = await getBackgroundRecordingState();
 
             if (error) {
-                await saveBackgroundLocationDebugLog({
+                await safeSaveBackgroundLocationDebugLog({
                     userId: state?.userId ?? null,
                     recordingSessionId: state?.recordingSessionId ?? null,
                     eventName: "backgroundLocationTaskError",
@@ -104,7 +130,7 @@ TaskManager.defineTask(
 
             locationsLength = locations?.length ?? 0;
 
-            await saveBackgroundLocationDebugLog({
+            await safeSaveBackgroundLocationDebugLog({
                 userId: state?.userId ?? null,
                 recordingSessionId: state?.recordingSessionId ?? null,
                 eventName: "backgroundLocationTaskFired",
@@ -113,7 +139,7 @@ TaskManager.defineTask(
             });
 
             if (!locations || locations.length === 0) {
-                await saveBackgroundLocationDebugLog({
+                await safeSaveBackgroundLocationDebugLog({
                     userId: state?.userId ?? null,
                     recordingSessionId: state?.recordingSessionId ?? null,
                     eventName: "backgroundLocationTaskSkippedNoLocations",
@@ -126,7 +152,7 @@ TaskManager.defineTask(
             }
 
             if (!state?.recordingSessionId || !state.userId) {
-                await saveBackgroundLocationDebugLog({
+                await safeSaveBackgroundLocationDebugLog({
                     userId: state?.userId ?? null,
                     recordingSessionId: state?.recordingSessionId ?? null,
                     eventName: "backgroundLocationTaskSkippedNoState",
@@ -212,7 +238,7 @@ TaskManager.defineTask(
                 currentState = result.nextState;
             }
 
-            await saveBackgroundLocationDebugLog({
+            await safeSaveBackgroundLocationDebugLog({
                 userId: state.userId,
                 recordingSessionId: state.recordingSessionId,
                 eventName: "backgroundLocationTaskCompleted",
@@ -231,7 +257,7 @@ TaskManager.defineTask(
                 saveConditionSkippedCount,
             });
         } catch (taskError) {
-            await saveBackgroundLocationDebugLog({
+            await safeSaveBackgroundLocationDebugLog({
                 eventName: "backgroundLocationTaskUnexpectedError",
                 taskFiredAt,
                 locationsLength,
@@ -332,7 +358,7 @@ async function saveBackgroundLocation(
                 recordedAtMs,
             );
 
-            await saveBackgroundLocationDebugLog({
+            await safeSaveBackgroundLocationDebugLog({
                 userId: state.userId,
                 recordingSessionId: state.recordingSessionId,
                 eventName: "backgroundLocationLogSkippedAbnormalSpeed",
@@ -406,15 +432,49 @@ async function saveBackgroundLocation(
          * LocationLog を保存するかどうかとは別に、
          * 共有中なら LiveLocation は更新する。
          */
-        const liveLocationId = await updateBackgroundLiveLocation(
-            location,
-            state,
-            taskFiredAt,
-        );
+        let liveLocationId = state.liveLocationId ?? null;
+
+        try {
+            const updatedLiveLocationId = await updateBackgroundLiveLocation(
+                location,
+                state,
+                taskFiredAt,
+            );
+
+            liveLocationId =
+                updatedLiveLocationId ?? state.liveLocationId ?? null;
+        } catch (liveLocationError) {
+            const liveLocationErrorMessage = getErrorMessage(liveLocationError);
+
+            console.error(
+                "Background LiveLocation unexpected error:",
+                liveLocationError,
+            );
+
+            await safeSaveBackgroundLocationDebugLog({
+                userId: state.userId,
+                recordingSessionId: state.recordingSessionId,
+                eventName: "backgroundLiveLocationUnexpectedError",
+                taskFiredAt,
+                errorMessage: liveLocationErrorMessage,
+                details: {
+                    hasLiveLocationId: Boolean(state.liveLocationId),
+                    sharedOwnersCount: state.liveShareOwnerValues?.length ?? 0,
+                    errorName:
+                        liveLocationError instanceof Error
+                            ? liveLocationError.name
+                            : typeof liveLocationError,
+                    errorStack:
+                        liveLocationError instanceof Error
+                            ? (liveLocationError.stack ?? null)
+                            : null,
+                },
+            });
+        }
 
         const stateAfterLiveLocationUpdate: BackgroundRecordingState = {
             ...state,
-            liveLocationId: liveLocationId ?? state.liveLocationId ?? null,
+            liveLocationId,
         };
 
         /*
@@ -471,7 +531,7 @@ async function saveBackgroundLocation(
                 result.errors,
             );
 
-            await saveBackgroundLocationDebugLog({
+            await safeSaveBackgroundLocationDebugLog({
                 userId: stateAfterLiveLocationUpdate.userId,
                 recordingSessionId:
                     stateAfterLiveLocationUpdate.recordingSessionId,
@@ -512,12 +572,17 @@ async function saveBackgroundLocation(
 
         console.error("saveBackgroundLocation unexpected error:", error);
 
-        await saveBackgroundLocationDebugLog({
+        await safeSaveBackgroundLocationDebugLog({
             userId: state.userId,
             recordingSessionId: state.recordingSessionId,
             eventName: "saveBackgroundLocationUnexpectedError",
             taskFiredAt,
             errorMessage,
+            details: {
+                errorName: error instanceof Error ? error.name : typeof error,
+                errorStack:
+                    error instanceof Error ? (error.stack ?? null) : null,
+            },
         });
 
         return {
@@ -556,9 +621,17 @@ async function updateBackgroundLiveLocation(
         return state.liveLocationId;
     }
 
-    const liveLocationModel = client.models.LiveLocation as any;
+    const models = client.models as unknown as {
+        LiveLocation?: LiveLocationModel;
+    };
 
-    const payload = {
+    const liveLocationModel = models.LiveLocation;
+
+    if (!liveLocationModel) {
+        throw new Error("client.models.LiveLocation is not available.");
+    }
+
+    const payload: Record<string, unknown> = {
         userId: state.userId,
         recordingSessionId: state.recordingSessionId,
         latitude,
@@ -570,13 +643,19 @@ async function updateBackgroundLiveLocation(
     };
 
     if (state.liveLocationId) {
+        if (typeof liveLocationModel.update !== "function") {
+            throw new Error(
+                "client.models.LiveLocation.update is not a function.",
+            );
+        }
+
         const updateResult = await liveLocationModel.update({
             id: state.liveLocationId,
             ...payload,
         });
 
         if (updateResult.errors) {
-            await saveBackgroundLocationDebugLog({
+            await safeSaveBackgroundLocationDebugLog({
                 userId: state.userId,
                 recordingSessionId: state.recordingSessionId,
                 eventName: "backgroundLiveLocationUpdateFailed",
@@ -593,12 +672,14 @@ async function updateBackgroundLiveLocation(
         return state.liveLocationId;
     }
 
-    const createResult = (await liveLocationModel.create(
-        payload,
-    )) as LiveLocationMutationResult;
+    if (typeof liveLocationModel.create !== "function") {
+        throw new Error("client.models.LiveLocation.create is not a function.");
+    }
+
+    const createResult = await liveLocationModel.create(payload);
 
     if (createResult.errors) {
-        await saveBackgroundLocationDebugLog({
+        await safeSaveBackgroundLocationDebugLog({
             userId: state.userId,
             recordingSessionId: state.recordingSessionId,
             eventName: "backgroundLiveLocationCreateFailed",

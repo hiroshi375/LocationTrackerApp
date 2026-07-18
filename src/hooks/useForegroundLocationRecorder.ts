@@ -46,6 +46,23 @@ type LiveLocationMutationResult = {
     errors?: unknown;
 };
 
+type BackgroundDebugLogInput = Parameters<
+    typeof saveBackgroundLocationDebugLog
+>[0];
+
+async function safeSaveBackgroundLocationDebugLog(
+    input: BackgroundDebugLogInput,
+): Promise<void> {
+    try {
+        await saveBackgroundLocationDebugLog(input);
+    } catch (debugLogError) {
+        console.error(
+            "Failed to save foreground location debug log:",
+            debugLogError,
+        );
+    }
+}
+
 export function useForegroundLocationRecorder({
     intervalMs,
     distanceMeters,
@@ -78,8 +95,6 @@ export function useForegroundLocationRecorder({
         number | null
     >(null);
 
-    const forceDistanceMeters = Math.max(distanceMeters * 5, 100);
-
     const normalizedLiveShareOwnerValues = useMemo(() => {
         return Array.from(new Set(liveShareOwnerValues.filter(Boolean)));
     }, [liveShareOwnerValues]);
@@ -87,41 +102,41 @@ export function useForegroundLocationRecorder({
     // 位置を保存すべきか判定する関数
     const shouldSaveLocation = useCallback(
         (latitude: number, longitude: number, recordedAtMs: number) => {
-            if (!lastSavedLocationRef.current) {
+            const lastSavedLocation = lastSavedLocationRef.current;
+
+            if (!lastSavedLocation) {
                 return true;
             }
 
-            const elapsedMs =
-                recordedAtMs - lastSavedLocationRef.current.recordedAt;
+            const elapsedMs = recordedAtMs - lastSavedLocation.recordedAt;
 
             if (elapsedMs <= 0) {
                 return false;
             }
 
             const distance = calculateDistanceMeters(
-                lastSavedLocationRef.current.latitude,
-                lastSavedLocationRef.current.longitude,
+                lastSavedLocation.latitude,
+                lastSavedLocation.longitude,
                 latitude,
                 longitude,
             );
 
-            //指定間隔未満なら保存しない
-            if (elapsedMs < intervalMs && distance < forceDistanceMeters) {
-                return false;
-            }
+            const configuredIntervalMs =
+                Number.isFinite(intervalMs) && intervalMs > 0
+                    ? intervalMs
+                    : 60_000;
 
-            if (elapsedMs >= intervalMs) {
-                return true;
-            }
+            const configuredDistanceMeters =
+                Number.isFinite(distanceMeters) && distanceMeters > 0
+                    ? distanceMeters
+                    : 100;
 
-            //100m以上動いた場合は例外的に保存
-            if (distance >= forceDistanceMeters) {
-                return true;
-            }
-
-            return false;
+            return (
+                elapsedMs >= configuredIntervalMs ||
+                distance >= configuredDistanceMeters
+            );
         },
-        [intervalMs, forceDistanceMeters],
+        [intervalMs, distanceMeters],
     );
 
     //
@@ -200,7 +215,7 @@ export function useForegroundLocationRecorder({
                             result.errors,
                         );
 
-                        await saveBackgroundLocationDebugLog({
+                        await safeSaveBackgroundLocationDebugLog({
                             userId,
                             recordingSessionId,
                             eventName: "foregroundLiveLocationUpdateFailed",

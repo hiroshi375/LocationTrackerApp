@@ -698,7 +698,8 @@ async function updateBackgroundLiveLocation(
     return createResult.data?.id ?? null;
 }
 
-const FORCE_DISTANCE_METERS = 100;
+const DEFAULT_DISTANCE_METERS = 100;
+const DEFAULT_INTERVAL_MS = 60_000;
 
 function createLocationDuplicateKey(
     latitude: number,
@@ -733,17 +734,24 @@ function shouldSaveLocation(
         longitude,
     );
 
-    //指定間隔未満なら保存しない
-    if (elapsedMs < state.intervalMs && distance < FORCE_DISTANCE_METERS) {
-        return false;
-    }
+    const configuredIntervalMs =
+        Number.isFinite(state.intervalMs) && state.intervalMs > 0
+            ? state.intervalMs
+            : DEFAULT_INTERVAL_MS;
 
-    if (elapsedMs >= state.intervalMs) {
+    const configuredDistanceMeters =
+        Number.isFinite(state.distanceMeters) && state.distanceMeters > 0
+            ? state.distanceMeters
+            : DEFAULT_DISTANCE_METERS;
+
+    /*
+     * 時間間隔と距離間隔のどちらかを満たした場合に保存する。
+     */
+    if (elapsedMs >= configuredIntervalMs) {
         return true;
     }
 
-    //100m以上動いた場合は例外的に保存
-    if (distance >= FORCE_DISTANCE_METERS) {
+    if (distance >= configuredDistanceMeters) {
         return true;
     }
 

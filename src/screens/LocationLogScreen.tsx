@@ -50,6 +50,8 @@ type RecordingSessionDisplayItem = {
     endAt: string;
     distanceMeters: number;
     pointCount: number;
+    startBatteryLevel?: number | null;
+    endBatteryLevel?: number | null;
     sharedOwners: string[];
     sortAt: string;
 };
@@ -85,6 +87,8 @@ export default function LocationLogScreen({ navigation }: Props) {
     const [recordingSessions, setRecordingSessions] = useState<
         RecordingSessionDisplayItem[]
     >([]);
+    const [recordingSessionTotalCount, setRecordingSessionTotalCount] =
+        useState<number | null>(null);
     const [recordingSessionNextToken, setRecordingSessionNextToken] = useState<
         string | null
     >(null);
@@ -167,6 +171,19 @@ export default function LocationLogScreen({ navigation }: Props) {
                         endAt: item.endedAt,
                         distanceMeters: Number(item.distanceMeters ?? 0),
                         pointCount: Number(item.pointCount ?? 0),
+                        startBatteryLevel:
+                            item.startBatteryLevel !== null &&
+                            item.startBatteryLevel !== undefined &&
+                            Number.isFinite(Number(item.startBatteryLevel))
+                                ? Number(item.startBatteryLevel)
+                                : null,
+
+                        endBatteryLevel:
+                            item.endBatteryLevel !== null &&
+                            item.endBatteryLevel !== undefined &&
+                            Number.isFinite(Number(item.endBatteryLevel))
+                                ? Number(item.endBatteryLevel)
+                                : null,
                         sharedOwners: Array.isArray(item.sharedOwners)
                             ? item.sharedOwners.filter(
                                   (owner: unknown): owner is string =>
@@ -206,6 +223,54 @@ export default function LocationLogScreen({ navigation }: Props) {
         },
         [],
     );
+
+    const loadRecordingSessionTotalCount = useCallback(async () => {
+        try {
+            const recordingSessionModel = client.models.RecordingSession as any;
+
+            let nextToken: string | null = null;
+            let totalCount = 0;
+
+            do {
+                const listParams: {
+                    limit: number;
+                    nextToken?: string;
+                } = {
+                    limit: 1000,
+                };
+
+                if (nextToken) {
+                    listParams.nextToken = nextToken;
+                }
+
+                const result = (await recordingSessionModel.list(
+                    listParams,
+                )) as RecordingSessionListResult;
+
+                if (result.errors) {
+                    console.error(
+                        "RecordingSession total count errors:",
+                        result.errors,
+                    );
+                    return;
+                }
+
+                const validItems = (result.data ?? []).filter(
+                    (item: any) =>
+                        !!item.recordingSessionId &&
+                        !!item.startedAt &&
+                        !!item.endedAt,
+                );
+
+                totalCount += validItems.length;
+                nextToken = result.nextToken ?? null;
+            } while (nextToken);
+
+            setRecordingSessionTotalCount(totalCount);
+        } catch (error) {
+            console.error("RecordingSession total count load error:", error);
+        }
+    }, []);
 
     const loadUserProfiles = useCallback(async () => {
         try {
@@ -301,7 +366,9 @@ export default function LocationLogScreen({ navigation }: Props) {
             reset: true,
             nextToken: null,
         });
-    }, [loadRecordingSessions]);
+
+        void loadRecordingSessionTotalCount();
+    }, [loadRecordingSessions, loadRecordingSessionTotalCount]);
 
     const filteredShareUsers = useMemo(() => {
         const keyword = shareSearchText.trim().toLowerCase();
@@ -481,6 +548,10 @@ export default function LocationLogScreen({ navigation }: Props) {
 
             setRecordingSessions((currentSessions) =>
                 currentSessions.filter((session) => session.id !== item.id),
+            );
+
+            setRecordingSessionTotalCount((currentCount) =>
+                currentCount === null ? null : Math.max(0, currentCount - 1),
             );
         } catch (error) {
             console.error("RecordingSession delete error:", error);
@@ -774,8 +845,13 @@ export default function LocationLogScreen({ navigation }: Props) {
                 nextToken: null,
             });
 
+            void loadRecordingSessionTotalCount();
             void loadUserProfiles();
-        }, [loadRecordingSessions, loadUserProfiles]),
+        }, [
+            loadRecordingSessions,
+            loadRecordingSessionTotalCount,
+            loadUserProfiles,
+        ]),
     );
 
     return (
@@ -794,7 +870,8 @@ export default function LocationLogScreen({ navigation }: Props) {
 
                 <View style={styles.searchInfoRow}>
                     <Text style={styles.searchInfoText}>
-                        表示件数: {filteredItems.length}
+                        表示件数: {filteredItems.length} /{" "}
+                        {recordingSessionTotalCount ?? "-"}
                     </Text>
 
                     {searchText.trim().length > 0 && (
@@ -879,7 +956,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                                                 styles.sessionStatsText,
                                             ]}
                                         >
-                                            距離:{" "}
+                                            距離:
                                             {formatDistance(
                                                 item.distanceMeters,
                                             )}
@@ -894,6 +971,22 @@ export default function LocationLogScreen({ navigation }: Props) {
                                             記録ポイント: {item.pointCount}件
                                         </Text>
                                     </View>
+
+                                    {hasBatteryRange(
+                                        item.startBatteryLevel,
+                                        item.endBatteryLevel,
+                                    ) && (
+                                        <Text style={styles.batteryText}>
+                                            バッテリー消費:{" "}
+                                            {formatBatteryPercent(
+                                                item.startBatteryLevel,
+                                            )}{" "}
+                                            →{" "}
+                                            {formatBatteryPercent(
+                                                item.endBatteryLevel,
+                                            )}
+                                        </Text>
+                                    )}
                                 </View>
 
                                 <View style={styles.sessionActionRow}>
@@ -1238,6 +1331,32 @@ function formatDistance(value: number) {
     }
 
     return `${Math.round(value)}m`;
+}
+
+function hasBatteryRange(
+    startBatteryLevel: number | null | undefined,
+    endBatteryLevel: number | null | undefined,
+) {
+    return (
+        typeof startBatteryLevel === "number" &&
+        Number.isFinite(startBatteryLevel) &&
+        typeof endBatteryLevel === "number" &&
+        Number.isFinite(endBatteryLevel)
+    );
+}
+
+function formatBatteryPercent(value: number | null | undefined) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+        return "-";
+    }
+
+    /*
+     * expo-battery の batteryLevel は通常0〜1。
+     * 過去データが0〜100で保存されていても表示できるようにする。
+     */
+    const percent = value <= 1 ? value * 100 : value;
+
+    return `${Math.max(0, Math.min(100, Math.round(percent)))}%`;
 }
 
 const styles = StyleSheet.create({
@@ -1592,5 +1711,10 @@ const styles = StyleSheet.create({
         fontSize: 13,
         marginTop: 8,
         marginBottom: 24,
+    },
+    batteryText: {
+        marginTop: 6,
+        color: "#555",
+        fontSize: 13,
     },
 });

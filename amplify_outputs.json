@@ -255,6 +255,20 @@
               "isRequired": true,
               "attributes": []
             },
+            "startBatteryLevel": {
+              "name": "startBatteryLevel",
+              "isArray": false,
+              "type": "Float",
+              "isRequired": false,
+              "attributes": []
+            },
+            "endBatteryLevel": {
+              "name": "endBatteryLevel",
+              "isArray": false,
+              "type": "Float",
+              "isRequired": false,
+              "attributes": []
+            },
             "sharedOwners": {
               "name": "sharedOwners",
               "isArray": true,

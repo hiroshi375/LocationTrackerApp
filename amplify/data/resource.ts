@@ -42,6 +42,9 @@ const schema = a.schema({
             distanceMeters: a.float().required(),
             pointCount: a.integer().required(),
 
+            startBatteryLevel: a.float(),
+            endBatteryLevel: a.float(),
+
             sharedOwners: a.string().array(),
         })
         .authorization((allow) => [

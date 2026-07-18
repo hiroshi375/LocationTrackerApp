@@ -1088,14 +1088,21 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         <Pressable
                             style={({ pressed }) => [
                                 styles.autoRecordStartButton,
-                                pressed && styles.buttonPressed,
+                                pressed &&
+                                    hasLoadedSavedHomeSettings &&
+                                    styles.buttonPressed,
+                                !hasLoadedSavedHomeSettings &&
+                                    styles.appButtonDisabled,
                             ]}
                             onPress={handleStartRecording}
+                            disabled={!hasLoadedSavedHomeSettings}
                         >
                             <Text style={styles.autoRecordButtonText}>
-                                {selectedLiveShareUsers.length > 0
-                                    ? "自動記録開始＋共有"
-                                    : "自動記録開始"}
+                                {!hasLoadedSavedHomeSettings
+                                    ? "設定を読み込み中..."
+                                    : selectedLiveShareUsers.length > 0
+                                      ? "自動記録開始＋共有"
+                                      : "自動記録開始"}
                             </Text>
                         </Pressable>
                     )}

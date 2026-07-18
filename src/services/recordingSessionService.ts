@@ -27,6 +27,7 @@ type SessionLogItem = {
     recordingSessionId?: string | null;
     recordingSessionName?: string | null;
     sharedOwners?: string[] | null;
+    batteryLevel?: number | null;
 };
 
 export async function upsertRecordingSessionSummary(
@@ -54,6 +55,22 @@ export async function upsertRecordingSessionSummary(
     const lastLog = routeLogs[routeLogs.length - 1];
 
     const distanceMeters = calculateRouteDistanceMeters(routeLogs);
+
+    const batteryLogs = [...logs]
+        .filter(
+            (log) =>
+                typeof log.batteryLevel === "number" &&
+                Number.isFinite(log.batteryLevel),
+        )
+        .sort(
+            (a, b) =>
+                new Date(a.recordedAt).getTime() -
+                new Date(b.recordedAt).getTime(),
+        );
+
+    const startBatteryLevel = batteryLogs[0]?.batteryLevel ?? null;
+    const endBatteryLevel =
+        batteryLogs[batteryLogs.length - 1]?.batteryLevel ?? null;
 
     const sharedOwnersFromLogs = routeLogs.flatMap((log) =>
         Array.isArray(log.sharedOwners)
@@ -116,6 +133,8 @@ export async function upsertRecordingSessionSummary(
         endedAt: endAt,
         distanceMeters,
         pointCount: routeLogs.length,
+        startBatteryLevel,
+        endBatteryLevel,
         sharedOwners,
     };
 
@@ -195,6 +214,12 @@ async function listLocationLogsBySessionId(recordingSessionId: string) {
             sharedOwners: Array.isArray(item.sharedOwners)
                 ? item.sharedOwners
                 : [],
+            batteryLevel:
+                item.batteryLevel !== null &&
+                item.batteryLevel !== undefined &&
+                Number.isFinite(Number(item.batteryLevel))
+                    ? Number(item.batteryLevel)
+                    : null,
         }))
         .filter(
             (item) =>

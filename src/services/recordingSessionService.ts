@@ -34,6 +34,8 @@ export async function upsertRecordingSessionSummary(
     recordingSessionId: string,
     recordingSessionName: string | null,
     shareOwnerValues: string[] = [],
+    recordingIntervalMs?: number | null,
+    recordingDistanceMeters?: number | null,
 ) {
     const logs = await listLocationLogsBySessionId(recordingSessionId);
 
@@ -136,6 +138,15 @@ export async function upsertRecordingSessionSummary(
         startBatteryLevel,
         endBatteryLevel,
         sharedOwners,
+        recordingIntervalMs:
+            typeof recordingIntervalMs === "number"
+                ? recordingIntervalMs
+                : (existing?.recordingIntervalMs ?? null),
+
+        recordingDistanceMeters:
+            typeof recordingDistanceMeters === "number"
+                ? recordingDistanceMeters
+                : (existing?.recordingDistanceMeters ?? null),
     };
 
     if (existing?.id) {

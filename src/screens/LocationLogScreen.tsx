@@ -50,6 +50,8 @@ type RecordingSessionDisplayItem = {
     endAt: string;
     distanceMeters: number;
     pointCount: number;
+    recordingIntervalMs?: number | null;
+    recordingDistanceMeters?: number | null;
     startBatteryLevel?: number | null;
     endBatteryLevel?: number | null;
     sharedOwners: string[];
@@ -173,7 +175,21 @@ export default function LocationLogScreen({ navigation }: Props) {
                         endAt: item.endedAt,
                         distanceMeters: Number(item.distanceMeters ?? 0),
                         pointCount: Number(item.pointCount ?? 0),
+                        recordingIntervalMs:
+                            item.recordingIntervalMs !== null &&
+                            item.recordingIntervalMs !== undefined &&
+                            Number.isFinite(Number(item.recordingIntervalMs))
+                                ? Number(item.recordingIntervalMs)
+                                : null,
 
+                        recordingDistanceMeters:
+                            item.recordingDistanceMeters !== null &&
+                            item.recordingDistanceMeters !== undefined &&
+                            Number.isFinite(
+                                Number(item.recordingDistanceMeters),
+                            )
+                                ? Number(item.recordingDistanceMeters)
+                                : null,
                         startBatteryLevel:
                             item.startBatteryLevel !== null &&
                             item.startBatteryLevel !== undefined &&
@@ -1002,6 +1018,26 @@ export default function LocationLogScreen({ navigation }: Props) {
                                         </Text>
                                     </View>
 
+                                    <View style={styles.recordingSettingsBox}>
+                                        <Text
+                                            style={styles.recordingSettingsText}
+                                        >
+                                            記録頻度:{" "}
+                                            {formatRecordingInterval(
+                                                item.recordingIntervalMs,
+                                            )}
+                                        </Text>
+
+                                        <Text
+                                            style={styles.recordingSettingsText}
+                                        >
+                                            記録する移動距離:{" "}
+                                            {formatRecordingDistance(
+                                                item.recordingDistanceMeters,
+                                            )}
+                                        </Text>
+                                    </View>
+
                                     {hasBatteryRange(
                                         item.startBatteryLevel,
                                         item.endBatteryLevel,
@@ -1358,6 +1394,32 @@ function formatDistance(value: number) {
 
     if (value >= 1000) {
         return `${(value / 1000).toFixed(2)}km`;
+    }
+
+    return `${Math.round(value)}m`;
+}
+
+function formatRecordingInterval(value: number | null | undefined) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+        return "記録なし";
+    }
+
+    if (value < 60 * 1000) {
+        return `${Math.round(value / 1000)}秒`;
+    }
+
+    const minutes = value / 1000 / 60;
+
+    if (Number.isInteger(minutes)) {
+        return `${minutes}分`;
+    }
+
+    return `${minutes.toFixed(1)}分`;
+}
+
+function formatRecordingDistance(value: number | null | undefined) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+        return "記録なし";
     }
 
     return `${Math.round(value)}m`;
@@ -1740,6 +1802,22 @@ const styles = StyleSheet.create({
     },
     batteryText: {
         marginTop: 6,
+        color: "#555",
+        fontSize: 13,
+    },
+    recordingSettingsBox: {
+        marginTop: 6,
+        paddingTop: 6,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: "#e0e0e0",
+
+        flexDirection: "row",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 12,
+    },
+
+    recordingSettingsText: {
         color: "#555",
         fontSize: 13,
     },

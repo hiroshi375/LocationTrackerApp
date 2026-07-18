@@ -277,6 +277,20 @@
               "attributes": [],
               "isArrayNullable": true
             },
+            "recordingIntervalMs": {
+              "name": "recordingIntervalMs",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "recordingDistanceMeters": {
+              "name": "recordingDistanceMeters",
+              "isArray": false,
+              "type": "Float",
+              "isRequired": false,
+              "attributes": []
+            },
             "createdAt": {
               "name": "createdAt",
               "isArray": false,
@@ -394,6 +408,13 @@
             },
             "iconImagePath": {
               "name": "iconImagePath",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "role": {
+              "name": "role",
               "isArray": false,
               "type": "String",
               "isRequired": false,

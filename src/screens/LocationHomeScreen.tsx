@@ -38,6 +38,7 @@ type AppButtonProps = {
     title: string;
     onPress: () => void;
     disabled?: boolean;
+    backgroundColor?: string;
 };
 
 type UserProfileItem = {
@@ -47,6 +48,7 @@ type UserProfileItem = {
     displayName?: string | null;
     ownerValue?: string | null;
     searchText?: string | null;
+    iconImagePath?: string | null;
 };
 
 type UserProfileListResult = {
@@ -93,6 +95,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [loginUserIconUrl, setLoginUserIconUrl] = useState<string | null>(
         null,
     );
+    const [isAdmin, setIsAdmin] = useState(false);
 
     const RECORD_INTERVAL_OPTIONS = [
         { label: "10秒", value: 10 * 1000 },
@@ -120,6 +123,9 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [selectedLiveShareUsers, setSelectedLiveShareUsers] = useState<
         UserProfileItem[]
     >([]);
+    const [liveShareUserIconUrls, setLiveShareUserIconUrls] = useState<
+        Record<string, string | null>
+    >({});
     const [draftLiveShareUsers, setDraftLiveShareUsers] = useState<
         UserProfileItem[]
     >([]);
@@ -215,6 +221,51 @@ export default function LocationHomeScreen({ navigation }: Props) {
             .filter((ownerValue): ownerValue is string => !!ownerValue);
     }, [selectedLiveShareUsers]);
 
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadSelectedLiveShareUserIcons = async () => {
+            const iconEntries = await Promise.all(
+                selectedLiveShareUsers.map(async (user) => {
+                    if (!user.iconImagePath) {
+                        return [user.id, null] as const;
+                    }
+
+                    try {
+                        const result = await getUrl({
+                            path: user.iconImagePath,
+                            options: {
+                                expiresIn: 3600,
+                            },
+                        });
+
+                        return [user.id, result.url.toString()] as const;
+                    } catch (error) {
+                        console.error("Load live share user icon error:", {
+                            userId: user.userId,
+                            iconImagePath: user.iconImagePath,
+                            error,
+                        });
+
+                        return [user.id, null] as const;
+                    }
+                }),
+            );
+
+            if (cancelled) {
+                return;
+            }
+
+            setLiveShareUserIconUrls(Object.fromEntries(iconEntries));
+        };
+
+        void loadSelectedLiveShareUserIcons();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedLiveShareUsers]);
+
     const {
         isRecording,
         recordingStartedAt,
@@ -239,6 +290,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
     );
     const [pendingSessionShareOwnerValues, setPendingSessionShareOwnerValues] =
         useState<string[]>([]);
+    const [pendingRecordingIntervalMs, setPendingRecordingIntervalMs] =
+        useState<number | null>(null);
+    const [pendingRecordingDistanceMeters, setPendingRecordingDistanceMeters] =
+        useState<number | null>(null);
     const [savingSessionName, setSavingSessionName] = useState(false);
 
     const loadLoginUserName = useCallback(async () => {
@@ -251,6 +306,9 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 "ユーザー";
 
             setLoginUserName(name);
+
+            // 追加
+            setIsAdmin(profile?.role === "admin");
 
             if (profile?.iconImagePath) {
                 const urlResult = await getUrl({
@@ -266,8 +324,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
             }
         } catch (error) {
             console.error("Load login user name error:", error);
+
             setLoginUserName("ユーザー");
             setLoginUserIconUrl(null);
+
+            // 追加
+            setIsAdmin(false);
         }
     }, []);
 
@@ -300,6 +362,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     displayName: user.displayName ?? null,
                     ownerValue: user.ownerValue ?? null,
                     searchText: user.searchText ?? null,
+                    iconImagePath: user.iconImagePath ?? null,
                 }))
                 .filter((user) => {
                     if (!user.ownerValue) {
@@ -569,12 +632,16 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 pendingSessionId,
                 sessionName,
                 pendingSessionShareOwnerValues,
+                pendingRecordingIntervalMs,
+                pendingRecordingDistanceMeters,
             );
 
             setSessionNameModalVisible(false);
             setSessionNameInput("");
             setPendingSessionId(null);
             setPendingSessionShareOwnerValues([]);
+            setPendingRecordingIntervalMs(null);
+            setPendingRecordingDistanceMeters(null);
         } catch (error) {
             console.error("Save session name error:", error);
             Alert.alert("保存エラー", "セッション名の保存に失敗しました。");
@@ -624,6 +691,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
             setSessionNameInput("");
             setPendingSessionId(null);
             setPendingSessionShareOwnerValues([]);
+            setPendingRecordingIntervalMs(null);
+            setPendingRecordingDistanceMeters(null);
         } catch (error) {
             console.error("Discard session error:", error);
             Alert.alert("削除エラー", "位置情報ログの削除に失敗しました。");
@@ -694,6 +763,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
             setPendingSessionId(finishedSessionId);
             setPendingSessionShareOwnerValues(stoppedShareOwnerValues);
+            setPendingRecordingIntervalMs(recordIntervalMs);
+            setPendingRecordingDistanceMeters(recordDistanceMeters);
             setSessionNameInput("");
             setSessionNameModalVisible(true);
         } catch (error) {
@@ -809,6 +880,9 @@ export default function LocationHomeScreen({ navigation }: Props) {
             } while (nextToken);
 
             const sharedLiveLocations: LiveLocationItem[] = allData
+                .filter(
+                    (item): item is NonNullable<typeof item> => item != null,
+                )
                 .map((item) => ({
                     id: item.id,
                     userId: item.userId,
@@ -851,10 +925,11 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     return bTime - aTime;
                 });
 
-            console.log("[SharedLive] fetched count:", allData.length);
+            console.log("[SharedLive] allData:", allData);
+
             console.log(
-                "[SharedLive] matched count:",
-                sharedLiveLocations.length,
+                "[SharedLive] null item count:",
+                allData.filter((item) => item == null).length,
             );
 
             const latest = sharedLiveLocations[0];
@@ -1013,6 +1088,55 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 )
                                 .join("、")}
                         </Text>
+                    )}
+
+                    {selectedLiveShareUsers.length > 0 && (
+                        <View style={styles.liveShareUserIconRow}>
+                            {selectedLiveShareUsers.map((user) => {
+                                const userName =
+                                    user.displayName ||
+                                    user.email ||
+                                    "名前未設定";
+
+                                const iconUrl = liveShareUserIconUrls[user.id];
+
+                                return (
+                                    <View
+                                        key={user.id}
+                                        style={styles.liveShareUserIconItem}
+                                    >
+                                        {iconUrl ? (
+                                            <Image
+                                                source={{ uri: iconUrl }}
+                                                style={styles.liveShareUserIcon}
+                                                resizeMode="cover"
+                                            />
+                                        ) : (
+                                            <View
+                                                style={
+                                                    styles.liveShareUserIconPlaceholder
+                                                }
+                                            >
+                                                <Text
+                                                    style={
+                                                        styles.liveShareUserIconPlaceholderText
+                                                    }
+                                                >
+                                                    {userName.slice(0, 1)}
+                                                </Text>
+                                            </View>
+                                        )}
+
+                                        <Text
+                                            style={styles.liveShareUserIconName}
+                                            numberOfLines={1}
+                                        >
+                                            {userName}
+                                        </Text>
+                                    </View>
+                                );
+                            })}
+                        </View>
                     )}
 
                     {selectedLiveShareUsers.length > 0 && (
@@ -1226,17 +1350,20 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     />
                 </View>
 
-                <View style={styles.buttonSpace}>
-                    <AppButton
-                        title={
-                            backfillingSessions
-                                ? "セッション履歴を作成中..."
-                                : "過去ログからセッション履歴を作成"
-                        }
-                        onPress={handleBackfillRecordingSessions}
-                        disabled={backfillingSessions || isRecording}
-                    />
-                </View>
+                {isAdmin && (
+                    <View style={styles.buttonSpace}>
+                        <AppButton
+                            title={
+                                backfillingSessions
+                                    ? "セッション履歴を作成中..."
+                                    : "過去ログからセッション履歴を作成"
+                            }
+                            onPress={handleBackfillRecordingSessions}
+                            disabled={backfillingSessions || isRecording}
+                            backgroundColor="#27445c"
+                        />
+                    </View>
+                )}
                 <View style={styles.signOutButtonSpace}>
                     <Pressable
                         style={({ pressed }) => [
@@ -1486,11 +1613,17 @@ function formatElapsedTime(totalSeconds: number) {
     return `${hh}:${mm}:${ss}`;
 }
 
-function AppButton({ title, onPress, disabled = false }: AppButtonProps) {
+function AppButton({
+    title,
+    onPress,
+    disabled = false,
+    backgroundColor,
+}: AppButtonProps) {
     return (
         <Pressable
             style={({ pressed }) => [
                 styles.appButton,
+                backgroundColor ? { backgroundColor } : null,
                 pressed && !disabled && styles.appButtonPressed,
                 disabled && styles.appButtonDisabled,
             ]}
@@ -1750,12 +1883,7 @@ const styles = StyleSheet.create({
         marginBottom: 36,
     },
     userInfoBox: {
-        padding: 12,
         marginBottom: 12,
-        borderRadius: 10,
-        backgroundColor: "#eef3f7",
-        borderWidth: 1,
-        borderColor: "#c8d6e0",
         flexDirection: "row",
         alignItems: "center",
         gap: 8,
@@ -1938,5 +2066,48 @@ const styles = StyleSheet.create({
         fontSize: 13,
         color: "#555",
         lineHeight: 19,
+    },
+    liveShareUserIconRow: {
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: 12,
+        marginTop: 10,
+    },
+
+    liveShareUserIconItem: {
+        width: 64,
+        alignItems: "center",
+    },
+
+    liveShareUserIcon: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: "#e6edf3",
+    },
+
+    liveShareUserIconPlaceholder: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#dbe7f0",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+    },
+
+    liveShareUserIconPlaceholderText: {
+        color: "#2f4f66",
+        fontSize: 18,
+        fontWeight: "bold",
+    },
+
+    liveShareUserIconName: {
+        width: 64,
+        marginTop: 4,
+        color: "#555",
+        fontSize: 11,
+        textAlign: "center",
     },
 });

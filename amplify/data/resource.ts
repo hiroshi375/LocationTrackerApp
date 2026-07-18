@@ -46,6 +46,8 @@ const schema = a.schema({
             endBatteryLevel: a.float(),
 
             sharedOwners: a.string().array(),
+            recordingIntervalMs: a.integer(),
+            recordingDistanceMeters: a.float(),
         })
         .secondaryIndexes((index) => [
             index("userId")
@@ -64,6 +66,7 @@ const schema = a.schema({
             ownerValue: a.string(),
             searchText: a.string(),
             iconImagePath: a.string(),
+            role: a.string(),
         })
         .authorization((allow) => [
             allow.owner(),

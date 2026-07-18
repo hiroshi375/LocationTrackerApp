@@ -53,7 +53,7 @@ export default function RootNavigator() {
                 <Stack.Screen
                     name="LocationHome"
                     component={LocationHomeScreen}
-                    options={{ title: "現在地記録" }}
+                    options={{ title: "" }}
                 />
                 <Stack.Screen
                     name="LocationLog"

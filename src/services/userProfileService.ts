@@ -11,6 +11,7 @@ type UserProfileRecord = {
     owner?: string | null;
     searchText?: string | null;
     iconImagePath?: string | null;
+    role: string | null;
 };
 
 type CurrentUserProfile = {
@@ -20,6 +21,7 @@ type CurrentUserProfile = {
     displayName: string;
     ownerValue: string | null;
     iconImagePath: string | null;
+    role: string | null;
 };
 
 export async function ensureUserProfile() {
@@ -133,6 +135,7 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
             displayName: existing.displayName ?? "",
             ownerValue: existing.ownerValue ?? null,
             iconImagePath: existing.iconImagePath ?? null,
+            role: existing.role ?? null,
         };
     }
 
@@ -148,6 +151,7 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
             displayName: "",
             ownerValue: null,
             iconImagePath: null,
+            role: null,
         };
     }
 
@@ -158,6 +162,7 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
         displayName: created.displayName ?? "",
         ownerValue: created.ownerValue ?? null,
         iconImagePath: created.iconImagePath ?? null,
+        role: created.role ?? null,
     };
 }
 

@@ -200,25 +200,44 @@ export default function LocationMapScreen({ route }: Props) {
     const sharedLiveUserId = route.params?.sharedLiveUserId ?? null;
     const sharedLiveLocationId = route.params?.sharedLiveLocationId ?? null;
 
+    const recordingIntervalMs = route.params?.recordingIntervalMs ?? null;
+    const recordingDistanceMeters =
+        route.params?.recordingDistanceMeters ?? null;
+
     const activeSessionId =
         selectedLocation?.recordingSessionId ?? routeRecordingSessionId ?? null;
 
+    /*
+     * 共有中の現在地画面から開いた地図。
+     * sharedLiveUserId、sharedLiveLocationId、recordingSessionIdが
+     * すべて渡された場合だけ共有中の地図と判定する。
+     */
     const isSharedLiveLocationMap = Boolean(
-        sharedLiveUserId && routeRecordingSessionId,
+        sharedLiveUserId && sharedLiveLocationId && routeRecordingSessionId,
     );
 
-    const isOwnLiveRecordingMap =
-        Boolean(routeRecordingSessionId) && !isSharedLiveLocationMap;
+    /*
+     * ホーム画面の自動記録欄にある「地図で見る」から開いた場合。
+     *
+     * ホーム画面からは以下が渡される。
+     * - recordingSessionId
+     * - recordingIntervalMs
+     * - recordingDistanceMeters
+     *
+     * セッション履歴からはrecordingSessionIdだけなので、
+     * 過去セッションを自動記録中の地図として扱わない。
+     */
+    const isOwnLiveRecordingMap = Boolean(
+        routeRecordingSessionId &&
+        typeof recordingIntervalMs === "number" &&
+        typeof recordingDistanceMeters === "number" &&
+        !isSharedLiveLocationMap,
+    );
 
     const shouldShowLiveCurrentLocation =
         isOwnLiveRecordingMap || isSharedLiveLocationMap;
 
-    // 既存コードの isLiveRecordingMap 条件をなるべく活かすため
     const isLiveRecordingMap = shouldShowLiveCurrentLocation;
-
-    const recordingIntervalMs = route.params?.recordingIntervalMs ?? null;
-    const recordingDistanceMeters =
-        route.params?.recordingDistanceMeters ?? null;
 
     const recordingIntervalSeconds =
         typeof recordingIntervalMs === "number"

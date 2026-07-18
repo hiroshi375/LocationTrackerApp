@@ -1708,15 +1708,11 @@ const styles = StyleSheet.create({
     },
     loadMoreButton: {
         marginTop: 8,
-        marginBottom: 24,
+        marginBottom: 80,
         paddingVertical: 12,
-        paddingHorizontal: 16,
-        borderRadius: 8,
-        backgroundColor: "#e6edf3",
         alignItems: "center",
         justifyContent: "center",
-        borderWidth: 1,
-        borderColor: "#c8d6e0",
+        backgroundColor: "transparent",
     },
 
     loadMoreButtonPressed: {

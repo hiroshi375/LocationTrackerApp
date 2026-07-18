@@ -109,7 +109,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
     ];
 
     const [recordIntervalMs, setRecordIntervalMs] = useState(30 * 1000);
-    const [recordDistanceMeters, setRecordDistanceMeters] = useState(20);
+    const [recordDistanceMeters, setRecordDistanceMeters] = useState(50);
     const [hasLoadedSavedHomeSettings, setHasLoadedSavedHomeSettings] =
         useState(false);
 
@@ -639,6 +639,30 @@ export default function LocationHomeScreen({ navigation }: Props) {
         }
     };
 
+    const confirmStopRecording = () => {
+        if (stoppingRecording) {
+            return;
+        }
+
+        Alert.alert(
+            "自動記録を停止しますか？",
+            "自動記録を停止すると、このセッションの位置情報記録が終了します。",
+            [
+                {
+                    text: "キャンセル",
+                    style: "cancel",
+                },
+                {
+                    text: "停止する",
+                    style: "destructive",
+                    onPress: () => {
+                        void handleStopRecording();
+                    },
+                },
+            ],
+        );
+    };
+
     // セッションIDに紐づくLocationLogを全件取得してセッション名を更新する
     const handleStopRecording = async () => {
         if (stoppingRecording) {
@@ -1130,7 +1154,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                     styles.buttonPressed,
                                 stoppingRecording && styles.appButtonDisabled,
                             ]}
-                            onPress={handleStopRecording}
+                            onPress={confirmStopRecording}
                             disabled={stoppingRecording}
                         >
                             <Text style={styles.autoRecordButtonText}>

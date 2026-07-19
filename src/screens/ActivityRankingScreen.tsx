@@ -1,5 +1,4 @@
 import { useFocusEffect } from "@react-navigation/native";
-import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { getUrl } from "aws-amplify/storage";
 import { useCallback, useMemo, useState } from "react";
 import {
@@ -14,10 +13,7 @@ import {
 } from "react-native";
 
 import { client } from "../lib/client";
-import type { RootStackParamList } from "../navigation/RootNavigator";
 import { createMonthKey } from "../services/userActivityAggregationService";
-
-type Props = NativeStackScreenProps<RootStackParamList, "ActivityRanking">;
 
 type RankingMode = "MONTHLY" | "TOTAL";
 
@@ -37,7 +33,7 @@ type ListResult = {
     nextToken?: string | null;
 };
 
-export default function ActivityRankingScreen({}: Props) {
+export default function ActivityRankingScreen() {
     const [mode, setMode] = useState<RankingMode>("MONTHLY");
     const [items, setItems] = useState<RankingItem[]>([]);
     const [iconUrls, setIconUrls] = useState<Record<string, string | null>>({});

@@ -85,10 +85,14 @@ type LiveLocationListResult = {
 const LOCATION_HOME_SETTINGS_STORAGE_KEY = "location-tracker-home-settings";
 
 type SavedLocationHomeSettings = {
+    version?: number;
     recordIntervalMs?: number;
     recordDistanceMeters?: number;
     selectedLiveShareUsers?: UserProfileItem[];
 };
+
+const LOCATION_HOME_SETTINGS_VERSION = 2;
+const DEFAULT_RECORD_DISTANCE_METERS = 50;
 
 // 現在地の記録と保存を行うホーム画面コンポーネント
 export default function LocationHomeScreen({ navigation }: Props) {
@@ -139,6 +143,14 @@ export default function LocationHomeScreen({ navigation }: Props) {
         useState<RecordingSessionBackfillProgress | null>(null);
 
     useEffect(() => {
+        const resetLocationSettings = async () => {
+            await AsyncStorage.removeItem(LOCATION_HOME_SETTINGS_STORAGE_KEY);
+        };
+
+        void resetLocationSettings();
+    }, []);
+
+    useEffect(() => {
         const loadSavedHomeSettings = async () => {
             try {
                 const raw = await AsyncStorage.getItem(
@@ -162,13 +174,20 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     setRecordIntervalMs(savedSettings.recordIntervalMs);
                 }
 
-                if (
-                    typeof savedSettings.recordDistanceMeters === "number" &&
-                    [10, 20, 50, 100].includes(
-                        savedSettings.recordDistanceMeters,
-                    )
-                ) {
-                    setRecordDistanceMeters(savedSettings.recordDistanceMeters);
+                if (savedSettings.version === LOCATION_HOME_SETTINGS_VERSION) {
+                    if (
+                        typeof savedSettings.recordDistanceMeters ===
+                            "number" &&
+                        [10, 20, 50, 100].includes(
+                            savedSettings.recordDistanceMeters,
+                        )
+                    ) {
+                        setRecordDistanceMeters(
+                            savedSettings.recordDistanceMeters,
+                        );
+                    }
+                } else {
+                    setRecordDistanceMeters(DEFAULT_RECORD_DISTANCE_METERS);
                 }
 
                 if (Array.isArray(savedSettings.selectedLiveShareUsers)) {
@@ -260,6 +279,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
         const saveHomeSettings = async () => {
             try {
                 const settings: SavedLocationHomeSettings = {
+                    version: LOCATION_HOME_SETTINGS_VERSION,
                     recordIntervalMs,
                     recordDistanceMeters,
                     selectedLiveShareUsers,

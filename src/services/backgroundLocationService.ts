@@ -141,7 +141,7 @@ export async function getBackgroundRecordingState(): Promise<BackgroundRecording
                 Number.isFinite(parsed.distanceMeters) &&
                 parsed.distanceMeters > 0
                     ? parsed.distanceMeters
-                    : 100,
+                    : 50,
         };
 
         return normalizedState;
@@ -150,6 +150,23 @@ export async function getBackgroundRecordingState(): Promise<BackgroundRecording
 
         return null;
     }
+}
+
+function shouldRestartBackgroundLocationUpdates(
+    hasStarted: boolean,
+    previousState: BackgroundRecordingState | null,
+    nextState: BackgroundRecordingState,
+): boolean {
+    if (!hasStarted) {
+        return false;
+    }
+
+    return (
+        previousState?.isRecording !== nextState.isRecording ||
+        previousState?.recordingSessionId !== nextState.recordingSessionId ||
+        previousState?.intervalMs !== nextState.intervalMs ||
+        previousState?.distanceMeters !== nextState.distanceMeters
+    );
 }
 
 export async function startBackgroundLocationTracking({
@@ -220,17 +237,28 @@ export async function startBackgroundLocationTracking({
         BACKGROUND_LOCATION_TASK_NAME,
     );
 
-    if (hasStarted) {
+    const shouldRestart = shouldRestartBackgroundLocationUpdates(
+        hasStarted,
+        previousState,
+        nextState,
+    );
+
+    if (shouldRestart) {
+        await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME);
+    }
+
+    if (hasStarted && !shouldRestart) {
         return;
     }
 
     await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME, {
-        accuracy: Location.Accuracy.Balanced,
+        accuracy: Location.Accuracy.BestForNavigation,
         timeInterval: intervalMs,
         distanceInterval: distanceMeters,
-        deferredUpdatesInterval: intervalMs,
-        deferredUpdatesDistance: distanceMeters,
+        activityType: Location.ActivityType.Fitness,
         pausesUpdatesAutomatically: false,
+        deferredUpdatesInterval: 0,
+        deferredUpdatesDistance: 0,
         showsBackgroundLocationIndicator: true,
         foregroundService: {
             notificationTitle: isRecording

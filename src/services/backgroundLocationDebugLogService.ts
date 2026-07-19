@@ -34,38 +34,70 @@ type BackgroundLocationDebugLogInput = {
     details?: Record<string, unknown>;
 };
 
+type BackgroundDebugLogMode = "ALL" | "IMPORTANT" | "ERROR_ONLY";
+
 const UNKNOWN_USER_ID = "unknown";
 const MAX_ERROR_MESSAGE_LENGTH = 1000;
 const MAX_DETAILS_JSON_LENGTH = 4000;
-const ENABLE_VERBOSE_BACKGROUND_LOCATION_DEBUG_LOG = false;
 
-const ALWAYS_SAVE_EVENT_NAMES = new Set([
+/*
+ * ALL:
+ *   調査用。正常系・異常系を含むすべてのイベントを保存する。
+ *
+ * IMPORTANT:
+ *   定義済みの正常系・異常系イベントだけ保存する。
+ *
+ * ERROR_ONLY:
+ *   異常系イベントだけ保存する。
+ */
+const BACKGROUND_DEBUG_LOG_MODE: BackgroundDebugLogMode = "ALL";
+
+const NORMAL_EVENT_NAMES = new Set([
+    // バックグラウンドタスクの正常動作確認
+    "backgroundLocationTrackingStarted",
+    "backgroundLocationTaskFired",
+    "backgroundLocationTaskCompleted",
+    "backgroundLocationTaskSkippedNoLocations",
+    // 権限・ネイティブタスク状態
+    "backgroundLocationPermissionStatus",
+    "backgroundLocationUpdatesStatus",
+]);
+
+const ERROR_EVENT_NAMES = new Set([
     // バックグラウンドタスク自体の異常
     "backgroundLocationTaskError",
     "backgroundLocationTaskUnexpectedError",
     "saveBackgroundLocationUnexpectedError",
-
     // LocationLog保存失敗
     "backgroundLocationLogCreateFailed",
     "foregroundLocationLogCreateFailed",
-
     // LiveLocation作成・更新失敗
     "backgroundLiveLocationCreateFailed",
     "backgroundLiveLocationUpdateFailed",
     "foregroundLiveLocationCreateFailed",
     "foregroundLiveLocationUpdateFailed",
     "foregroundLiveLocationUnexpectedError",
-
     // 通常起きるべきではない状態
     "foregroundLocationLogSkippedNoUserId",
 ]);
 
-function shouldSaveBackgroundLocationDebugLog(eventName: string) {
-    if (ENABLE_VERBOSE_BACKGROUND_LOCATION_DEBUG_LOG) {
-        return true;
-    }
+function shouldSaveBackgroundLocationDebugLog(eventName: string): boolean {
+    switch (BACKGROUND_DEBUG_LOG_MODE) {
+        case "ALL":
+            return true;
 
-    return ALWAYS_SAVE_EVENT_NAMES.has(eventName);
+        case "IMPORTANT":
+            return (
+                NORMAL_EVENT_NAMES.has(eventName) ||
+                ERROR_EVENT_NAMES.has(eventName)
+            );
+
+        case "ERROR_ONLY":
+            return ERROR_EVENT_NAMES.has(eventName);
+
+        default:
+            return false;
+    }
 }
 
 export function getErrorMessage(error: unknown) {
@@ -87,7 +119,6 @@ export function getErrorMessage(error: unknown) {
 export async function saveBackgroundLocationDebugLog(
     input: BackgroundLocationDebugLogInput,
 ) {
-    // 追加
     if (!shouldSaveBackgroundLocationDebugLog(input.eventName)) {
         return;
     }

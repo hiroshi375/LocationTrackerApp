@@ -36,6 +36,13 @@ type SessionLogItem = {
     batteryLevel?: number | null;
 };
 
+function createRecordingSessionRecordId(
+    userId: string,
+    recordingSessionId: string,
+): string {
+    return `recording-session:${userId}:${recordingSessionId}`;
+}
+
 export async function upsertRecordingSessionSummary(
     recordingSessionId: string,
     recordingSessionName: string | null,
@@ -91,18 +98,55 @@ export async function upsertRecordingSessionSummary(
         "自動記録セッション";
 
     const model = client.models.RecordingSession as any;
+
+    const recordingSessionRecordId = createRecordingSessionRecordId(
+        currentUser.userId,
+        recordingSessionId,
+    );
+
     const existingResult = (await model.list({
-        filter: { recordingSessionId: { eq: recordingSessionId } },
-        limit: 1,
+        filter: {
+            and: [
+                {
+                    recordingSessionId: {
+                        eq: recordingSessionId,
+                    },
+                },
+                {
+                    userId: {
+                        eq: currentUser.userId,
+                    },
+                },
+            ],
+        },
+        limit: 1000,
     })) as ListResult;
 
     if (existingResult.errors) {
         throw new Error(
-            `RecordingSession list failed: ${JSON.stringify(existingResult.errors)}`,
+            `RecordingSession list failed: ${JSON.stringify(
+                existingResult.errors,
+            )}`,
         );
     }
 
-    const existing = existingResult.data?.[0];
+    const existingSessions = (existingResult.data ?? []).filter(
+        (session: any) =>
+            session?.id &&
+            session.recordingSessionId === recordingSessionId &&
+            session.userId === currentUser.userId,
+    );
+
+    /*
+     * 固定IDのレコードを優先する。
+     * 過去レコードが自動採番IDの場合は、最初の1件を更新対象として残す。
+     */
+    const existing =
+        existingSessions.find(
+            (session: any) => session.id === recordingSessionRecordId,
+        ) ??
+        existingSessions[0] ??
+        null;
     const existingSharedOwners = Array.isArray(existing?.sharedOwners)
         ? existing.sharedOwners.filter(
               (owner: unknown): owner is string =>
@@ -158,14 +202,72 @@ export async function upsertRecordingSessionSummary(
         monthKey: createMonthKey(endAt),
     };
 
-    const result = existing?.id
-        ? await model.update({ id: existing.id, ...payload })
-        : await model.create(payload);
+    let saveResult: {
+        data?: any;
+        errors?: unknown;
+    };
 
-    if (result.errors) {
-        throw new Error(
-            `RecordingSession save failed: ${JSON.stringify(result.errors)}`,
-        );
+    if (existing?.id) {
+        saveResult = await model.update({
+            id: existing.id,
+            ...payload,
+        });
+    } else {
+        saveResult = await model.create({
+            id: recordingSessionRecordId,
+            ...payload,
+        });
+    }
+
+    if (saveResult.errors) {
+        /*
+         * 並行処理などで固定IDが直前に作成された場合は、
+         * 固定IDのレコードを更新して再試行する。
+         */
+        if (!existing?.id) {
+            const retryResult = await model.update({
+                id: recordingSessionRecordId,
+                ...payload,
+            });
+
+            if (retryResult.errors) {
+                throw new Error(
+                    `RecordingSession save failed: ${JSON.stringify(
+                        retryResult.errors,
+                    )}`,
+                );
+            }
+        } else {
+            throw new Error(
+                `RecordingSession save failed: ${JSON.stringify(
+                    saveResult.errors,
+                )}`,
+            );
+        }
+    }
+
+    /*
+     * 同じユーザー・同じrecordingSessionIdで複数存在する
+     * RecordingSessionを整理する。
+     */
+    const savedRecordId = existing?.id ?? recordingSessionRecordId;
+
+    const duplicateSessions = existingSessions.filter(
+        (session: any) => session.id !== savedRecordId,
+    );
+
+    for (const duplicateSession of duplicateSessions) {
+        const deleteResult = await model.delete({
+            id: duplicateSession.id,
+        });
+
+        if (deleteResult.errors) {
+            console.error("Duplicate RecordingSession delete errors:", {
+                recordingSessionId,
+                duplicateId: duplicateSession.id,
+                errors: deleteResult.errors,
+            });
+        }
     }
 
     await updateLocationLogClassification(
@@ -185,16 +287,91 @@ export async function updateRecordingSessionActivityType(
 ): Promise<void> {
     const currentUser = await getCurrentUser();
     const model = client.models.RecordingSession as any;
-    const result = (await model.list({
-        filter: { recordingSessionId: { eq: recordingSessionId } },
-        limit: 1,
-    })) as ListResult;
 
-    if (result.errors || !result.data?.[0]?.id) {
-        throw new Error("対象のRecordingSessionを取得できませんでした。");
+    const normalizedRecordingSessionId = recordingSessionId.trim();
+
+    if (!normalizedRecordingSessionId) {
+        throw new Error("recordingSessionIdが空です。");
     }
 
-    const session = result.data[0];
+    const deterministicId = createRecordingSessionRecordId(
+        currentUser.userId,
+        normalizedRecordingSessionId,
+    );
+
+    /*
+     * 新しい固定ID形式のレコードを最初に直接取得する。
+     */
+    const getResult = await model.get({
+        id: deterministicId,
+    });
+
+    if (getResult.errors) {
+        console.warn(
+            "RecordingSession deterministic ID get errors:",
+            getResult.errors,
+        );
+    }
+
+    let session = getResult.data ?? null;
+
+    /*
+     * 過去に自動採番IDで作られたRecordingSessionとの互換性を保つ。
+     */
+    if (!session) {
+        const listResult = (await model.list({
+            filter: {
+                and: [
+                    {
+                        recordingSessionId: {
+                            eq: normalizedRecordingSessionId,
+                        },
+                    },
+                    {
+                        userId: {
+                            eq: currentUser.userId,
+                        },
+                    },
+                ],
+            },
+            limit: 1000,
+        })) as ListResult;
+
+        if (listResult.errors) {
+            console.error("RecordingSession activity type list errors:", {
+                recordingSessionId: normalizedRecordingSessionId,
+                userId: currentUser.userId,
+                errors: listResult.errors,
+            });
+
+            throw new Error(
+                `RecordingSessionの検索に失敗しました: ${JSON.stringify(
+                    listResult.errors,
+                )}`,
+            );
+        }
+
+        const matchingSessions = (listResult.data ?? []).filter(
+            (item: any) =>
+                item?.id &&
+                item.recordingSessionId === normalizedRecordingSessionId &&
+                item.userId === currentUser.userId,
+        );
+
+        session = matchingSessions[0] ?? null;
+    }
+
+    if (!session?.id) {
+        console.error("RecordingSession not found for activity update:", {
+            recordingSessionId: normalizedRecordingSessionId,
+            deterministicId,
+            userId: currentUser.userId,
+        });
+
+        throw new Error(
+            `対象のRecordingSessionを取得できませんでした。セッションID: ${normalizedRecordingSessionId}`,
+        );
+    }
 
     if (session.userId !== currentUser.userId) {
         throw new Error("自分以外のセッション区分は変更できません。");
@@ -211,19 +388,29 @@ export async function updateRecordingSessionActivityType(
     });
 
     if (updateResult.errors) {
+        console.error("RecordingSession activity type update errors:", {
+            id: session.id,
+            recordingSessionId: normalizedRecordingSessionId,
+            errors: updateResult.errors,
+        });
+
         throw new Error(
-            `RecordingSession classification update failed: ${JSON.stringify(
+            `RecordingSessionの区分更新に失敗しました: ${JSON.stringify(
                 updateResult.errors,
             )}`,
         );
     }
 
-    const logs = await listLocationLogsBySessionId(recordingSessionId);
+    const logs = await listLocationLogsBySessionId(
+        normalizedRecordingSessionId,
+    );
+
     await updateLocationLogClassification(
         logs,
         activityType,
         isAggregationTarget,
     );
+
     await recalculateUserActivityAggregates(currentUser.userId);
 }
 

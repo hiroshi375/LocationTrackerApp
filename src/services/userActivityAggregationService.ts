@@ -1,4 +1,5 @@
 import { client } from "../lib/client";
+import { ensureUserProfile } from "./userProfileService";
 
 type ListResult = {
     data?: any[] | null;
@@ -29,18 +30,30 @@ export function createMonthKey(value: string | Date): string {
 export async function recalculateUserActivityAggregates(
     userId: string,
 ): Promise<void> {
-    const [sessions, profile] = await Promise.all([
-        listAllRecordingSessionsByUser(userId),
-        findUserProfile(userId),
-    ]);
+    let profile = await findUserProfile(userId);
 
+    /*
+     * ログインユーザー自身のUserProfileが存在しない場合は作成する。
+     */
     if (!profile?.id) {
-        console.warn("Skip activity aggregation: UserProfile not found", {
-            userId,
-        });
-        return;
+        console.warn(
+            "UserProfile not found. Creating before activity aggregation.",
+            {
+                userId,
+            },
+        );
+
+        await ensureUserProfile();
+        profile = await findUserProfile(userId);
     }
 
+    if (!profile?.id) {
+        throw new Error(
+            `集計対象のUserProfileを作成・取得できませんでした。userId: ${userId}`,
+        );
+    }
+
+    const sessions = await listAllRecordingSessionsByUser(userId);
     const targetSessions = sessions.filter(
         (session) =>
             session?.userId === userId &&
@@ -142,24 +155,49 @@ async function listAllRecordingSessionsByUser(userId: string): Promise<any[]> {
 }
 
 async function findUserProfile(userId: string): Promise<any | null> {
-    const userProfileModel = client.models.UserProfile as any;
+    const model = client.models.UserProfile as any;
 
-    const result = (await userProfileModel.list({
-        filter: {
-            userId: {
-                eq: userId,
+    let nextToken: string | null = null;
+
+    do {
+        const result = (await model.list({
+            filter: {
+                userId: {
+                    eq: userId,
+                },
             },
-        },
-        limit: 1,
-    })) as ListResult;
+            limit: 100,
+            nextToken: nextToken ?? undefined,
+        })) as ListResult;
 
-    if (result.errors) {
-        throw new Error(
-            `UserProfile list failed: ${JSON.stringify(result.errors)}`,
+        if (result.errors) {
+            throw new Error(
+                `UserProfile list failed: ${JSON.stringify(result.errors)}`,
+            );
+        }
+
+        const profile = (result.data ?? []).find(
+            (item: any) => item?.id && item.userId === userId,
         );
-    }
 
-    return result.data?.[0] ?? null;
+        if (profile) {
+            console.log("[ActivityAggregation] UserProfile found:", {
+                requestedUserId: userId,
+                profileId: profile.id,
+                profileUserId: profile.userId,
+            });
+
+            return profile;
+        }
+
+        nextToken = result.nextToken ?? null;
+    } while (nextToken);
+
+    console.warn("[ActivityAggregation] UserProfile not found after paging:", {
+        userId,
+    });
+
+    return null;
 }
 
 async function synchronizeMonthlySummaries(

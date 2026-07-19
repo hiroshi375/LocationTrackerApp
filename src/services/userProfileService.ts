@@ -211,44 +211,45 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
 async function findExistingUserProfile(
     userId: string,
 ): Promise<UserProfileRecord | null> {
-    const result = await client.models.UserProfile.list({
-        filter: {
-            userId: {
-                eq: userId,
+    const allProfiles: UserProfileRecord[] = [];
+    let nextToken: string | null = null;
+
+    do {
+        const userProfileModel = client.models.UserProfile as any;
+
+        const result = (await userProfileModel.list({
+            filter: {
+                userId: {
+                    eq: userId,
+                },
             },
-        },
-        limit: 100,
-    });
+            limit: 100,
+            nextToken: nextToken ?? undefined,
+        })) as {
+            data?: UserProfileRecord[] | null;
+            errors?: unknown;
+            nextToken?: string | null;
+        };
 
-    if (result.errors) {
-        console.error("UserProfile list errors:", result.errors);
-        throw new Error("プロフィールを取得できませんでした。");
-    }
+        if (result.errors) {
+            console.error("UserProfile list errors:", result.errors);
+            throw new Error("プロフィールを取得できませんでした。");
+        }
 
-    const profiles = (result.data ?? []) as UserProfileRecord[];
+        allProfiles.push(...(result.data ?? []));
 
-    return pickUserProfile(profiles);
-}
+        const matchingProfile = allProfiles.find(
+            (profile) => profile.userId === userId,
+        );
 
-function pickUserProfile(profiles: UserProfileRecord[]) {
-    if (profiles.length === 0) {
-        return null;
-    }
+        if (matchingProfile) {
+            return matchingProfile;
+        }
 
-    return (
-        profiles.find(
-            (profile) =>
-                profile.ownerValue &&
-                profile.displayName &&
-                profile.displayName.trim().length > 0,
-        ) ??
-        profiles.find((profile) => profile.ownerValue) ??
-        profiles.find(
-            (profile) =>
-                profile.displayName && profile.displayName.trim().length > 0,
-        ) ??
-        profiles[0]
-    );
+        nextToken = result.nextToken ?? null;
+    } while (nextToken);
+
+    return allProfiles.find((profile) => profile.userId === userId) ?? null;
 }
 
 function buildSearchText(displayName: string, email: string) {

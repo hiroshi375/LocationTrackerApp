@@ -39,7 +39,30 @@ export default function ActivityRankingScreen() {
     const [iconUrls, setIconUrls] = useState<Record<string, string | null>>({});
     const [loading, setLoading] = useState(false);
 
-    const monthKey = useMemo(() => createMonthKey(new Date()), []);
+    const [selectedMonth, setSelectedMonth] = useState(() => {
+        const now = new Date();
+
+        return new Date(now.getFullYear(), now.getMonth(), 1);
+    });
+
+    const monthKey = useMemo(
+        () => createMonthKey(selectedMonth),
+        [selectedMonth],
+    );
+
+    const moveMonth = useCallback((amount: number) => {
+        setSelectedMonth((current) => {
+            return new Date(
+                current.getFullYear(),
+                current.getMonth() + amount,
+                1,
+            );
+        });
+    }, []);
+
+    const currentMonthKey = useMemo(() => createMonthKey(new Date()), []);
+
+    const canMoveToNextMonth = monthKey < currentMonthKey;
 
     const loadRanking = useCallback(async () => {
         try {
@@ -130,11 +153,43 @@ export default function ActivityRankingScreen() {
                 </Pressable>
             </View>
 
-            <Text style={styles.periodText}>
-                {mode === "MONTHLY"
-                    ? `${monthKey.replace("-", "年")}月`
-                    : "全期間"}
-            </Text>
+            {mode === "MONTHLY" ? (
+                <View style={styles.monthSelector}>
+                    <Pressable
+                        style={styles.monthMoveButton}
+                        onPress={() => moveMonth(-1)}
+                        disabled={loading}
+                    >
+                        <Text style={styles.monthMoveButtonText}>‹ 前月</Text>
+                    </Pressable>
+
+                    <Text style={styles.periodText}>
+                        {formatMonthLabel(selectedMonth)}
+                    </Text>
+
+                    <Pressable
+                        style={[
+                            styles.monthMoveButton,
+                            !canMoveToNextMonth &&
+                                styles.monthMoveButtonDisabled,
+                        ]}
+                        onPress={() => moveMonth(1)}
+                        disabled={!canMoveToNextMonth || loading}
+                    >
+                        <Text
+                            style={[
+                                styles.monthMoveButtonText,
+                                !canMoveToNextMonth &&
+                                    styles.monthMoveButtonTextDisabled,
+                            ]}
+                        >
+                            次月 ›
+                        </Text>
+                    </Pressable>
+                </View>
+            ) : (
+                <Text style={styles.periodText}>全期間</Text>
+            )}
 
             {loading && items.length === 0 ? (
                 <ActivityIndicator style={styles.loading} />
@@ -277,6 +332,10 @@ function formatDuration(totalSeconds: number): string {
     return `${minutes}分`;
 }
 
+function formatMonthLabel(date: Date): string {
+    return `${date.getFullYear()}年${date.getMonth() + 1}月`;
+}
+
 const styles = StyleSheet.create({
     container: {
         flex: 1,
@@ -368,5 +427,33 @@ const styles = StyleSheet.create({
     subText: {
         color: "#555",
         fontSize: 13,
+    },
+    monthSelector: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        marginTop: 12,
+        marginBottom: 12,
+    },
+
+    monthMoveButton: {
+        minWidth: 80,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        alignItems: "center",
+    },
+
+    monthMoveButtonDisabled: {
+        opacity: 0.4,
+    },
+
+    monthMoveButtonText: {
+        fontSize: 14,
+        fontWeight: "600",
+        color: "#27445c",
+    },
+
+    monthMoveButtonTextDisabled: {
+        color: "#999999",
     },
 });

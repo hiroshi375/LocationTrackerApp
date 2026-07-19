@@ -24,6 +24,7 @@ import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRec
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import {
+    type RecordingSessionBackfillProgress,
     backfillRecordingSessionsFromLocationLogs,
     upsertRecordingSessionSummary,
 } from "../services/recordingSessionService";
@@ -38,6 +39,7 @@ type AppButtonProps = {
     title: string;
     onPress: () => void;
     disabled?: boolean;
+    backgroundColor?: string;
 };
 
 type UserProfileItem = {
@@ -47,6 +49,7 @@ type UserProfileItem = {
     displayName?: string | null;
     ownerValue?: string | null;
     searchText?: string | null;
+    iconImagePath?: string | null;
 };
 
 type UserProfileListResult = {
@@ -93,6 +96,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [loginUserIconUrl, setLoginUserIconUrl] = useState<string | null>(
         null,
     );
+    const [isAdmin, setIsAdmin] = useState(false);
 
     const RECORD_INTERVAL_OPTIONS = [
         { label: "10秒", value: 10 * 1000 },
@@ -120,6 +124,9 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [selectedLiveShareUsers, setSelectedLiveShareUsers] = useState<
         UserProfileItem[]
     >([]);
+    const [liveShareUserIconUrls, setLiveShareUserIconUrls] = useState<
+        Record<string, string | null>
+    >({});
     const [draftLiveShareUsers, setDraftLiveShareUsers] = useState<
         UserProfileItem[]
     >([]);
@@ -128,6 +135,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [liveShareStatusMessage, setLiveShareStatusMessage] = useState("");
     const [openingSharedLiveMap, setOpeningSharedLiveMap] = useState(false);
     const [backfillingSessions, setBackfillingSessions] = useState(false);
+    const [backfillProgress, setBackfillProgress] =
+        useState<RecordingSessionBackfillProgress | null>(null);
 
     useEffect(() => {
         const loadSavedHomeSettings = async () => {
@@ -163,11 +172,75 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 }
 
                 if (Array.isArray(savedSettings.selectedLiveShareUsers)) {
-                    setSelectedLiveShareUsers(
+                    const savedUsers =
                         savedSettings.selectedLiveShareUsers.filter(
                             (user) => !!user.ownerValue,
-                        ),
-                    );
+                        );
+
+                    try {
+                        const userProfileModel = client.models
+                            .UserProfile as any;
+
+                        const profileResult = (await userProfileModel.list({
+                            limit: 1000,
+                        })) as UserProfileListResult;
+
+                        if (profileResult.errors) {
+                            console.error(
+                                "Restore live share users profile errors:",
+                                profileResult.errors,
+                            );
+
+                            setSelectedLiveShareUsers(savedUsers);
+                        } else {
+                            const latestProfileMap = new Map(
+                                (profileResult.data ?? [])
+                                    .filter(
+                                        (profile: any) =>
+                                            profile?.id && profile?.userId,
+                                    )
+                                    .map((profile: any) => [
+                                        profile.userId,
+                                        profile,
+                                    ]),
+                            );
+
+                            const restoredUsers: UserProfileItem[] =
+                                savedUsers.map((savedUser) => {
+                                    const latestProfile = latestProfileMap.get(
+                                        savedUser.userId,
+                                    );
+
+                                    if (!latestProfile) {
+                                        return savedUser;
+                                    }
+
+                                    return {
+                                        id: latestProfile.id,
+                                        userId: latestProfile.userId,
+                                        email: latestProfile.email ?? null,
+                                        displayName:
+                                            latestProfile.displayName ?? null,
+                                        ownerValue:
+                                            latestProfile.ownerValue ?? null,
+                                        searchText:
+                                            latestProfile.searchText ?? null,
+                                        iconImagePath:
+                                            latestProfile.iconImagePath ?? null,
+                                    };
+                                });
+
+                            setSelectedLiveShareUsers(
+                                restoredUsers.filter(
+                                    (user) => !!user.ownerValue,
+                                ),
+                            );
+                        }
+                    } catch (error) {
+                        console.error("Restore live share users error:", error);
+
+                        setSelectedLiveShareUsers(savedUsers);
+                    }
                 }
             } catch (error) {
                 console.error("Load saved home settings error:", error);
@@ -215,12 +288,61 @@ export default function LocationHomeScreen({ navigation }: Props) {
             .filter((ownerValue): ownerValue is string => !!ownerValue);
     }, [selectedLiveShareUsers]);
 
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadSelectedLiveShareUserIcons = async () => {
+            const iconEntries = await Promise.all(
+                selectedLiveShareUsers.map(async (user) => {
+                    if (!user.iconImagePath) {
+                        return [user.id, null] as const;
+                    }
+
+                    try {
+                        const result = await getUrl({
+                            path: user.iconImagePath,
+                            options: {
+                                expiresIn: 3600,
+                            },
+                        });
+
+                        return [user.id, result.url.toString()] as const;
+                    } catch (error) {
+                        console.error("Load live share user icon error:", {
+                            userId: user.userId,
+                            iconImagePath: user.iconImagePath,
+                            error,
+                        });
+
+                        return [user.id, null] as const;
+                    }
+                }),
+            );
+
+            if (cancelled) {
+                return;
+            }
+
+            setLiveShareUserIconUrls(Object.fromEntries(iconEntries));
+        };
+
+        void loadSelectedLiveShareUserIcons();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedLiveShareUsers]);
+
     const {
         isRecording,
         recordingStartedAt,
         activeRecordingSessionId,
+        continuationPrompt,
+        autoStoppedSessionId,
         startRecording,
         stopRecording,
+        confirmContinuation,
+        clearAutoStoppedSession,
     } = useForegroundLocationRecorder({
         intervalMs: recordIntervalMs,
         distanceMeters: recordDistanceMeters,
@@ -230,6 +352,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const recordingBlinkAnim = useRef(new Animated.Value(1)).current;
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const [stoppingRecording, setStoppingRecording] = useState(false);
+    const continuationAlertKeyRef = useRef<string | null>(null);
+    const handledAutoStoppedSessionIdRef = useRef<string | null>(null);
 
     const [sessionNameModalVisible, setSessionNameModalVisible] =
         useState(false);
@@ -239,6 +363,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
     );
     const [pendingSessionShareOwnerValues, setPendingSessionShareOwnerValues] =
         useState<string[]>([]);
+    const [pendingRecordingIntervalMs, setPendingRecordingIntervalMs] =
+        useState<number | null>(null);
+    const [pendingRecordingDistanceMeters, setPendingRecordingDistanceMeters] =
+        useState<number | null>(null);
     const [savingSessionName, setSavingSessionName] = useState(false);
 
     const loadLoginUserName = useCallback(async () => {
@@ -251,6 +379,9 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 "ユーザー";
 
             setLoginUserName(name);
+
+            // 追加
+            setIsAdmin(profile?.role === "admin");
 
             if (profile?.iconImagePath) {
                 const urlResult = await getUrl({
@@ -266,8 +397,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
             }
         } catch (error) {
             console.error("Load login user name error:", error);
+
             setLoginUserName("ユーザー");
             setLoginUserIconUrl(null);
+
+            // 追加
+            setIsAdmin(false);
         }
     }, []);
 
@@ -300,6 +435,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     displayName: user.displayName ?? null,
                     ownerValue: user.ownerValue ?? null,
                     searchText: user.searchText ?? null,
+                    iconImagePath: user.iconImagePath ?? null,
                 }))
                 .filter((user) => {
                     if (!user.ownerValue) {
@@ -455,6 +591,14 @@ export default function LocationHomeScreen({ navigation }: Props) {
             return;
         }
 
+        if (selectedLiveShareUsers.length > 0) {
+            Alert.alert(
+                "現在地を共有中です",
+                "サインアウトする前に「共有先をすべて解除」してください。",
+            );
+            return;
+        }
+
         try {
             await signOut();
         } catch (error) {
@@ -561,12 +705,16 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 pendingSessionId,
                 sessionName,
                 pendingSessionShareOwnerValues,
+                pendingRecordingIntervalMs,
+                pendingRecordingDistanceMeters,
             );
 
             setSessionNameModalVisible(false);
             setSessionNameInput("");
             setPendingSessionId(null);
             setPendingSessionShareOwnerValues([]);
+            setPendingRecordingIntervalMs(null);
+            setPendingRecordingDistanceMeters(null);
         } catch (error) {
             console.error("Save session name error:", error);
             Alert.alert("保存エラー", "セッション名の保存に失敗しました。");
@@ -616,6 +764,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
             setSessionNameInput("");
             setPendingSessionId(null);
             setPendingSessionShareOwnerValues([]);
+            setPendingRecordingIntervalMs(null);
+            setPendingRecordingDistanceMeters(null);
         } catch (error) {
             console.error("Discard session error:", error);
             Alert.alert("削除エラー", "位置情報ログの削除に失敗しました。");
@@ -624,7 +774,70 @@ export default function LocationHomeScreen({ navigation }: Props) {
         }
     };
 
-    const confirmStopRecording = () => {
+    // セッションIDに紐づくLocationLogを全件取得してセッション名を更新する
+    const handleStopRecording: () => Promise<void> =
+        useCallback(async (): Promise<void> => {
+            if (stoppingRecording) {
+                return;
+            }
+
+            if (recordingStartedAt) {
+                const startedAtTime = new Date(recordingStartedAt).getTime();
+
+                const stoppedSeconds = Math.floor(
+                    (Date.now() - startedAtTime) / 1000,
+                );
+
+                setElapsedSeconds(stoppedSeconds);
+            }
+
+            setStoppingRecording(true);
+
+            const stoppedShareUserName = liveShareUserName;
+
+            const stoppedShareOwnerValues = selectedLiveShareUsers
+                .map((user) => user.ownerValue)
+                .filter((ownerValue): ownerValue is string => !!ownerValue);
+
+            try {
+                const finishedSessionId = await stopRecording();
+
+                if (stoppedShareUserName) {
+                    setLiveShareStatusMessage(
+                        `自動記録を停止しました。現在地共有は継続中です: ${stoppedShareUserName}`,
+                    );
+                } else {
+                    setLiveShareStatusMessage("自動記録を停止しました。");
+                }
+
+                if (!finishedSessionId) {
+                    return;
+                }
+
+                setPendingSessionId(finishedSessionId);
+                setPendingSessionShareOwnerValues(stoppedShareOwnerValues);
+                setPendingRecordingIntervalMs(recordIntervalMs);
+                setPendingRecordingDistanceMeters(recordDistanceMeters);
+                setSessionNameInput("");
+                setSessionNameModalVisible(true);
+            } catch (error) {
+                console.error("Stop recording error:", error);
+
+                Alert.alert("停止エラー", "自動記録の停止処理に失敗しました。");
+            } finally {
+                setStoppingRecording(false);
+            }
+        }, [
+            liveShareUserName,
+            recordDistanceMeters,
+            recordIntervalMs,
+            recordingStartedAt,
+            selectedLiveShareUsers,
+            stopRecording,
+            stoppingRecording,
+        ]);
+
+    const confirmStopRecording = useCallback((): void => {
         if (stoppingRecording) {
             return;
         }
@@ -646,55 +859,109 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 },
             ],
         );
-    };
+    }, [handleStopRecording, stoppingRecording]);
 
-    // セッションIDに紐づくLocationLogを全件取得してセッション名を更新する
-    const handleStopRecording = async () => {
-        if (stoppingRecording) {
+    useEffect(() => {
+        if (!continuationPrompt?.confirmationRequired) {
+            continuationAlertKeyRef.current = null;
             return;
         }
 
-        if (recordingStartedAt) {
-            const startedAtTime = new Date(recordingStartedAt).getTime();
-            const stoppedSeconds = Math.floor(
-                (Date.now() - startedAtTime) / 1000,
-            );
-            setElapsedSeconds(stoppedSeconds);
+        const alertKey = `${continuationPrompt.recordingSessionId}:${
+            continuationPrompt.confirmationRequestedAt ?? ""
+        }`;
+
+        if (continuationAlertKeyRef.current === alertKey) {
+            return;
         }
 
-        setStoppingRecording(true);
+        continuationAlertKeyRef.current = alertKey;
 
-        const stoppedShareUserName = liveShareUserName;
+        const messageLines: string[] = [];
+
+        if (continuationPrompt.requestedElapsedHours > 0) {
+            messageLines.push(
+                `記録開始から${continuationPrompt.requestedElapsedHours}時間経過しています。`,
+            );
+        }
+
+        if (continuationPrompt.requestedPointMilestone > 0) {
+            messageLines.push(
+                `${continuationPrompt.savedPointCount.toLocaleString()}ポイント記録しています。`,
+            );
+        }
+
+        messageLines.push(
+            "継続しますか？",
+            "3分以内に「継続します」を押さない場合は、自動記録を停止します。",
+        );
+
+        Alert.alert(
+            "自動記録を継続しますか？",
+            messageLines.join("\n"),
+            [
+                {
+                    text: "停止する",
+                    style: "destructive",
+                    onPress: () => {
+                        continuationAlertKeyRef.current = null;
+                        void handleStopRecording();
+                    },
+                },
+                {
+                    text: "継続します",
+                    onPress: () => {
+                        continuationAlertKeyRef.current = null;
+                        void confirmContinuation();
+                    },
+                },
+            ],
+            { cancelable: false },
+        );
+    }, [continuationPrompt, confirmContinuation, handleStopRecording]);
+
+    useEffect(() => {
+        if (!autoStoppedSessionId) {
+            handledAutoStoppedSessionIdRef.current = null;
+            return;
+        }
+
+        if (handledAutoStoppedSessionIdRef.current === autoStoppedSessionId) {
+            return;
+        }
+
+        handledAutoStoppedSessionIdRef.current = autoStoppedSessionId;
+
         const stoppedShareOwnerValues = selectedLiveShareUsers
             .map((user) => user.ownerValue)
             .filter((ownerValue): ownerValue is string => !!ownerValue);
 
-        try {
-            const finishedSessionId = await stopRecording();
+        setElapsedSeconds((current) => current);
+        setPendingSessionId(autoStoppedSessionId);
+        setPendingSessionShareOwnerValues(stoppedShareOwnerValues);
+        setPendingRecordingIntervalMs(recordIntervalMs);
+        setPendingRecordingDistanceMeters(recordDistanceMeters);
+        setSessionNameInput("");
+        setSessionNameModalVisible(true);
+        setLiveShareStatusMessage(
+            selectedLiveShareUsers.length > 0
+                ? "継続確認がなかったため自動記録を停止しました。現在地共有は継続中です。"
+                : "継続確認がなかったため自動記録を停止しました。",
+        );
 
-            if (stoppedShareUserName) {
-                setLiveShareStatusMessage(
-                    `自動記録を停止しました。現在地共有は継続中です: ${stoppedShareUserName}`,
-                );
-            } else {
-                setLiveShareStatusMessage("自動記録を停止しました。");
-            }
+        Alert.alert(
+            "自動記録を停止しました",
+            "継続確認から3分以内に操作がなかったため、自動記録を停止しました。",
+        );
 
-            if (!finishedSessionId) {
-                return;
-            }
-
-            setPendingSessionId(finishedSessionId);
-            setPendingSessionShareOwnerValues(stoppedShareOwnerValues);
-            setSessionNameInput("");
-            setSessionNameModalVisible(true);
-        } catch (error) {
-            console.error("Stop recording error:", error);
-            Alert.alert("停止エラー", "自動記録の停止処理に失敗しました。");
-        } finally {
-            setStoppingRecording(false);
-        }
-    };
+        void clearAutoStoppedSession();
+    }, [
+        autoStoppedSessionId,
+        clearAutoStoppedSession,
+        recordDistanceMeters,
+        recordIntervalMs,
+        selectedLiveShareUsers,
+    ]);
 
     const canOpenRecordingMap =
         isRecording && Boolean(activeRecordingSessionId);
@@ -730,6 +997,11 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 return;
             }
 
+            console.log(
+                "[SharedLive] viewer ownerValue:",
+                JSON.stringify(ownerValue),
+            );
+
             const liveLocationModel = client.models.LiveLocation as any;
 
             const allData: any[] = [];
@@ -761,6 +1033,27 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     listParams,
                 )) as LiveLocationListResult;
 
+                console.log("[SharedLive] list result:", {
+                    dataCount: result.data?.length ?? 0,
+                    errors: result.errors,
+                    nextToken: result.nextToken,
+                });
+
+                console.log(
+                    "[SharedLive] records:",
+                    (result.data ?? []).map((item) => ({
+                        id: item.id,
+                        userId: item.userId,
+                        owner: item.owner,
+                        sharedOwners: item.sharedOwners,
+                        isActive: item.isActive,
+                        isRecording: item.isRecording,
+                        recordingSessionId: item.recordingSessionId,
+                        latitude: item.latitude,
+                        longitude: item.longitude,
+                    })),
+                );
+
                 if (result.errors) {
                     console.error("LiveLocation list errors:", result.errors);
                     Alert.alert(
@@ -775,6 +1068,9 @@ export default function LocationHomeScreen({ navigation }: Props) {
             } while (nextToken);
 
             const sharedLiveLocations: LiveLocationItem[] = allData
+                .filter(
+                    (item): item is NonNullable<typeof item> => item != null,
+                )
                 .map((item) => ({
                     id: item.id,
                     userId: item.userId,
@@ -817,6 +1113,13 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     return bTime - aTime;
                 });
 
+            console.log("[SharedLive] allData:", allData);
+
+            console.log(
+                "[SharedLive] null item count:",
+                allData.filter((item) => item == null).length,
+            );
+
             const latest = sharedLiveLocations[0];
 
             if (!latest) {
@@ -826,14 +1129,15 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 );
                 return;
             }
+            const sharedLiveIsRecording =
+                latest.isRecording === true &&
+                Boolean(latest.recordingSessionId);
 
             navigation.navigate("LocationMap", {
                 sharedLiveUserId: latest.userId,
                 sharedLiveLocationId: latest.id,
-                recordingSessionId: latest.recordingSessionId ?? undefined,
-                sharedLiveIsRecording: Boolean(
-                    latest.isRecording && latest.recordingSessionId,
-                ),
+                recordingSessionId: latest.recordingSessionId ?? null,
+                sharedLiveIsRecording,
             });
         } catch (error) {
             console.error("Open shared live location map error:", error);
@@ -849,6 +1153,32 @@ export default function LocationHomeScreen({ navigation }: Props) {
     useEffect(() => {
         void ensureUserProfile();
     }, []);
+
+    const backfillProgressText = useMemo(() => {
+        if (!backfillingSessions) {
+            return "";
+        }
+
+        if (!backfillProgress) {
+            return "処理を開始しています...";
+        }
+
+        switch (backfillProgress.phase) {
+            case "loadingLocationLogs":
+                return backfillProgress.loadedLocationLogCount > 0
+                    ? `LocationLogを取得中... ${backfillProgress.loadedLocationLogCount.toLocaleString()}件`
+                    : "LocationLogを取得中...";
+
+            case "processingSessions":
+                return `${backfillProgress.processedSessionCount} / ${backfillProgress.totalSessionCount} セッション処理中`;
+
+            case "recalculatingAggregates":
+                return "月間・トータル集計を更新中...";
+
+            default:
+                return "セッション履歴を作成中...";
+        }
+    }, [backfillingSessions, backfillProgress]);
 
     const handleBackfillRecordingSessions = async () => {
         if (backfillingSessions || isRecording) {
@@ -868,9 +1198,36 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     onPress: async () => {
                         try {
                             setBackfillingSessions(true);
+                            setBackfillProgress({
+                                phase: "loadingLocationLogs",
+                                loadedLocationLogCount: 0,
+                                processedSessionCount: 0,
+                                totalSessionCount: 0,
+                                createdOrUpdatedCount: 0,
+                                failedCount: 0,
+                                currentRecordingSessionId: null,
+                            });
 
                             const result =
-                                await backfillRecordingSessionsFromLocationLogs();
+                                await backfillRecordingSessionsFromLocationLogs(
+                                    (progress) => {
+                                        setBackfillProgress(progress);
+                                    },
+                                );
+
+                            const failureDetails =
+                                result.failures.length > 0
+                                    ? [
+                                          "",
+                                          "失敗内容:",
+                                          ...result.failures
+                                              .slice(0, 3)
+                                              .map(
+                                                  (failure) =>
+                                                      `${failure.recordingSessionId}: ${failure.errorMessage}`,
+                                              ),
+                                      ]
+                                    : [];
 
                             Alert.alert(
                                 "作成完了",
@@ -880,6 +1237,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                     `作成・更新: ${result.createdOrUpdatedCount}件`,
                                     `失敗: ${result.failedCount}件`,
                                     `対象外ログ: ${result.skippedLogCount}件`,
+                                    ...failureDetails,
                                 ].join("\n"),
                             );
                         } catch (error) {
@@ -894,6 +1252,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             );
                         } finally {
                             setBackfillingSessions(false);
+                            setBackfillProgress(null);
                         }
                     },
                 },
@@ -926,23 +1285,107 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         </View>
                     )}
                 </View>
-                <View style={styles.buttonSpace}>
-                    <AppButton
-                        title="セッション履歴を見る"
-                        onPress={() => navigation.navigate("LocationLog")}
-                    />
+
+                <View style={styles.liveShareBox}>
+                    <Text style={styles.liveShareTitle}>
+                        リアルタイム共有先
+                    </Text>
+
+                    <Pressable
+                        style={styles.liveShareSelectButton}
+                        onPress={openLiveShareModal}
+                    >
+                        <Text style={styles.liveShareSelectButtonText}>
+                            {selectedLiveShareUsers.length > 0
+                                ? `${selectedLiveShareUsers.length}人を選択中`
+                                : "共有先ユーザーを選択"}
+                        </Text>
+                    </Pressable>
+
+                    {selectedLiveShareUsers.length > 0 && (
+                        <Text style={styles.liveShareSelectedUserName}>
+                            共有先ユーザー
+                        </Text>
+                    )}
+
+                    {selectedLiveShareUsers.length > 0 && (
+                        <View style={styles.liveShareUserIconRow}>
+                            {selectedLiveShareUsers.map((user) => {
+                                const userName =
+                                    user.displayName ||
+                                    user.email ||
+                                    "名前未設定";
+
+                                const iconUrl = liveShareUserIconUrls[user.id];
+
+                                return (
+                                    <View
+                                        key={user.id}
+                                        style={styles.liveShareUserIconItem}
+                                    >
+                                        {iconUrl ? (
+                                            <Image
+                                                source={{ uri: iconUrl }}
+                                                style={styles.liveShareUserIcon}
+                                                resizeMode="cover"
+                                            />
+                                        ) : (
+                                            <View
+                                                style={
+                                                    styles.liveShareUserIconPlaceholder
+                                                }
+                                            >
+                                                <Text
+                                                    style={
+                                                        styles.liveShareUserIconPlaceholderText
+                                                    }
+                                                >
+                                                    {userName.slice(0, 1)}
+                                                </Text>
+                                            </View>
+                                        )}
+
+                                        <Text
+                                            style={styles.liveShareUserIconName}
+                                            numberOfLines={1}
+                                        >
+                                            {userName}
+                                        </Text>
+                                    </View>
+                                );
+                            })}
+                        </View>
+                    )}
+
+                    {selectedLiveShareUsers.length > 0 && (
+                        <Pressable
+                            style={styles.liveShareClearButton}
+                            onPress={clearLiveShareUsers}
+                        >
+                            <Text style={styles.liveShareClearButtonText}>
+                                共有先をすべて解除
+                            </Text>
+                        </Pressable>
+                    )}
+
+                    {selectedLiveShareUsers.length > 0 && (
+                        <View style={styles.liveShareStatusActiveBox}>
+                            <Text style={styles.liveShareStatusActiveText}>
+                                現在地を共有中: {liveShareUserName}
+                            </Text>
+                        </View>
+                    )}
+
+                    {selectedLiveShareUsers.length === 0 &&
+                        liveShareStatusMessage.length > 0 && (
+                            <View style={styles.liveShareStatusStoppedBox}>
+                                <Text style={styles.liveShareStatusStoppedText}>
+                                    {liveShareStatusMessage}
+                                </Text>
+                            </View>
+                        )}
                 </View>
-                <View style={styles.buttonSpace}>
-                    <AppButton
-                        title={
-                            openingSharedLiveMap
-                                ? "共有中の現在地を取得中..."
-                                : "共有中の現在地を見る"
-                        }
-                        onPress={handleOpenSharedLiveLocationMap}
-                        disabled={openingSharedLiveMap}
-                    />
-                </View>
+
                 <View style={styles.autoRecordBox}>
                     <View style={styles.autoRecordHeader}>
                         <Text style={styles.autoRecordTitle}>自動記録</Text>
@@ -1068,62 +1511,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             })}
                         </View>
                     </View>
-                    <View style={styles.settingBlock}>
-                        <Text style={styles.settingTitle}>
-                            リアルタイム共有先
-                        </Text>
 
-                        <Pressable
-                            style={styles.liveShareSelectButton}
-                            onPress={openLiveShareModal}
-                        >
-                            <Text style={styles.liveShareSelectButtonText}>
-                                {selectedLiveShareUsers.length > 0
-                                    ? `${selectedLiveShareUsers.length}人を選択中`
-                                    : "共有先ユーザーを選択"}
-                            </Text>
-                        </Pressable>
-
-                        {selectedLiveShareUsers.length > 0 && (
-                            <Text style={styles.liveShareSelectedEmail}>
-                                {selectedLiveShareUsers
-                                    .map(
-                                        (user) =>
-                                            user.email ||
-                                            user.displayName ||
-                                            "名前未設定",
-                                    )
-                                    .join("、")}
-                            </Text>
-                        )}
-
-                        {selectedLiveShareUsers.length > 0 && (
-                            <Pressable
-                                style={styles.liveShareClearButton}
-                                onPress={clearLiveShareUsers}
-                            >
-                                <Text style={styles.liveShareClearButtonText}>
-                                    共有先をすべて解除
-                                </Text>
-                            </Pressable>
-                        )}
-                    </View>
-                    {selectedLiveShareUsers.length > 0 && (
-                        <View style={styles.liveShareStatusActiveBox}>
-                            <Text style={styles.liveShareStatusActiveText}>
-                                {isRecording
-                                    ? `自動記録中・現在地を共有中: ${liveShareUserName}`
-                                    : `現在地を共有中: ${liveShareUserName}`}
-                            </Text>
-                        </View>
-                    )}
-                    {liveShareStatusMessage.length > 0 && (
-                        <View style={styles.liveShareStatusStoppedBox}>
-                            <Text style={styles.liveShareStatusStoppedText}>
-                                {liveShareStatusMessage}
-                            </Text>
-                        </View>
-                    )}
                     <View style={styles.autoRecordMapButtonSpace}>
                         <AppButton
                             title="地図で見る"
@@ -1172,23 +1560,104 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         </Pressable>
                     )}
                 </View>
+
+                <View style={styles.buttonSpace}>
+                    <AppButton
+                        title="セッション履歴を見る"
+                        onPress={() => navigation.navigate("LocationLog")}
+                    />
+                </View>
+                <View style={styles.buttonSpace}>
+                    <AppButton
+                        title="活動ランキングを見る"
+                        onPress={() => navigation.navigate("ActivityRanking")}
+                    />
+                </View>
+                <View style={styles.buttonSpace}>
+                    <AppButton
+                        title={
+                            openingSharedLiveMap
+                                ? "共有中の現在地を取得中..."
+                                : "共有中の現在地を見る"
+                        }
+                        onPress={handleOpenSharedLiveLocationMap}
+                        disabled={openingSharedLiveMap}
+                    />
+                </View>
+
                 <View style={styles.buttonSpace}>
                     <AppButton
                         title="プロフィール"
                         onPress={() => navigation.navigate("Profile")}
                     />
                 </View>
-                <View style={styles.buttonSpace}>
-                    <AppButton
-                        title={
-                            backfillingSessions
-                                ? "セッション履歴を作成中..."
-                                : "過去ログからセッション履歴を作成"
-                        }
-                        onPress={handleBackfillRecordingSessions}
-                        disabled={backfillingSessions || isRecording}
-                    />
-                </View>
+
+                {isAdmin && (
+                    <View style={styles.buttonSpace}>
+                        <AppButton
+                            title={
+                                backfillingSessions
+                                    ? backfillProgressText
+                                    : "過去ログからセッション履歴を作成"
+                            }
+                            onPress={handleBackfillRecordingSessions}
+                            disabled={backfillingSessions || isRecording}
+                            backgroundColor="#27445c"
+                        />
+
+                        {backfillingSessions && backfillProgress && (
+                            <View style={styles.backfillProgressContainer}>
+                                <ActivityIndicator size="small" />
+
+                                <Text style={styles.backfillProgressText}>
+                                    {backfillProgressText}
+                                </Text>
+
+                                {backfillProgress.phase ===
+                                    "processingSessions" &&
+                                    backfillProgress.totalSessionCount > 0 && (
+                                        <>
+                                            <View
+                                                style={
+                                                    styles.backfillProgressTrack
+                                                }
+                                            >
+                                                <View
+                                                    style={[
+                                                        styles.backfillProgressBar,
+                                                        {
+                                                            width: `${Math.min(
+                                                                100,
+                                                                Math.max(
+                                                                    0,
+                                                                    (backfillProgress.processedSessionCount /
+                                                                        backfillProgress.totalSessionCount) *
+                                                                        100,
+                                                                ),
+                                                            )}%`,
+                                                        },
+                                                    ]}
+                                                />
+                                            </View>
+
+                                            <Text
+                                                style={
+                                                    styles.backfillProgressDetail
+                                                }
+                                            >
+                                                成功:{" "}
+                                                {
+                                                    backfillProgress.createdOrUpdatedCount
+                                                }
+                                                件　失敗:{" "}
+                                                {backfillProgress.failedCount}件
+                                            </Text>
+                                        </>
+                                    )}
+                            </View>
+                        )}
+                    </View>
+                )}
                 <View style={styles.signOutButtonSpace}>
                     <Pressable
                         style={({ pressed }) => [
@@ -1438,11 +1907,17 @@ function formatElapsedTime(totalSeconds: number) {
     return `${hh}:${mm}:${ss}`;
 }
 
-function AppButton({ title, onPress, disabled = false }: AppButtonProps) {
+function AppButton({
+    title,
+    onPress,
+    disabled = false,
+    backgroundColor,
+}: AppButtonProps) {
     return (
         <Pressable
             style={({ pressed }) => [
                 styles.appButton,
+                backgroundColor ? { backgroundColor } : null,
                 pressed && !disabled && styles.appButtonPressed,
                 disabled && styles.appButtonDisabled,
             ]}
@@ -1702,12 +2177,7 @@ const styles = StyleSheet.create({
         marginBottom: 36,
     },
     userInfoBox: {
-        padding: 12,
         marginBottom: 12,
-        borderRadius: 10,
-        backgroundColor: "#eef3f7",
-        borderWidth: 1,
-        borderColor: "#c8d6e0",
         flexDirection: "row",
         alignItems: "center",
         gap: 8,
@@ -1868,5 +2338,105 @@ const styles = StyleSheet.create({
         color: "#2f4f66",
         fontSize: 13,
         fontWeight: "bold",
+    },
+    liveShareBox: {
+        marginTop: 4,
+        padding: 14,
+        borderWidth: 1,
+        borderColor: "#ddd",
+        borderRadius: 10,
+        backgroundColor: "#fff",
+    },
+
+    liveShareTitle: {
+        fontSize: 16,
+        fontWeight: "bold",
+        color: "#333",
+        marginBottom: 10,
+    },
+
+    liveShareSelectedUserName: {
+        marginTop: 8,
+        fontSize: 13,
+        color: "#555",
+        lineHeight: 19,
+    },
+    liveShareUserIconRow: {
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: 12,
+        marginTop: 10,
+    },
+
+    liveShareUserIconItem: {
+        width: 64,
+        alignItems: "center",
+    },
+
+    liveShareUserIcon: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: "#e6edf3",
+    },
+
+    liveShareUserIconPlaceholder: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#dbe7f0",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+    },
+
+    liveShareUserIconPlaceholderText: {
+        color: "#2f4f66",
+        fontSize: 18,
+        fontWeight: "bold",
+    },
+
+    liveShareUserIconName: {
+        width: 64,
+        marginTop: 4,
+        color: "#555",
+        fontSize: 11,
+        textAlign: "center",
+    },
+
+    backfillProgressContainer: {
+        marginTop: 10,
+        alignItems: "center",
+    },
+
+    backfillProgressText: {
+        marginTop: 8,
+        fontSize: 14,
+        fontWeight: "600",
+        color: "#27445c",
+        textAlign: "center",
+    },
+
+    backfillProgressTrack: {
+        width: "100%",
+        height: 8,
+        marginTop: 10,
+        overflow: "hidden",
+        borderRadius: 4,
+        backgroundColor: "#d9e1e8",
+    },
+
+    backfillProgressBar: {
+        height: "100%",
+        borderRadius: 4,
+        backgroundColor: "#27445c",
+    },
+
+    backfillProgressDetail: {
+        marginTop: 6,
+        fontSize: 12,
+        color: "#5f6f7c",
+        textAlign: "center",
     },
 });

@@ -128,46 +128,6 @@ export function useForegroundLocationRecorder({
         return Array.from(new Set(liveShareOwnerValues.filter(Boolean)));
     }, [liveShareOwnerValues]);
 
-    // 位置を保存すべきか判定する関数
-    const shouldSaveLocation = useCallback(
-        (latitude: number, longitude: number, recordedAtMs: number) => {
-            const lastSavedLocation = lastSavedLocationRef.current;
-
-            if (!lastSavedLocation) {
-                return true;
-            }
-
-            const elapsedMs = recordedAtMs - lastSavedLocation.recordedAt;
-
-            if (elapsedMs <= 0) {
-                return false;
-            }
-
-            const distance = calculateDistanceMeters(
-                lastSavedLocation.latitude,
-                lastSavedLocation.longitude,
-                latitude,
-                longitude,
-            );
-
-            const configuredIntervalMs =
-                Number.isFinite(intervalMs) && intervalMs > 0
-                    ? intervalMs
-                    : 60_000;
-
-            const configuredDistanceMeters =
-                Number.isFinite(distanceMeters) && distanceMeters > 0
-                    ? distanceMeters
-                    : 100;
-
-            return (
-                elapsedMs >= configuredIntervalMs ||
-                distance >= configuredDistanceMeters
-            );
-        },
-        [intervalMs, distanceMeters],
-    );
-
     //
     const updateDistanceFromStart = useCallback(
         (location: Location.LocationObject) => {

@@ -20,6 +20,12 @@ import {
     releaseLocationSaveLock,
 } from "../services/locationLogDeduplicationService";
 import {
+    evaluateRecordingContinuation,
+    getRecordingContinuationState,
+    incrementRecordingContinuationPointCount,
+    markRecordingContinuationAutoStopped,
+} from "../services/recordingContinuationService";
+import {
     calculateDistanceMeters,
     calculateSpeedMetersPerSecond,
     isAbnormalSpeedLocation,
@@ -137,6 +143,18 @@ TaskManager.defineTask(
             }
 
             activeState = state;
+
+            if (state.isRecording && state.recordingSessionId) {
+                const continuationEvaluation =
+                    await evaluateRecordingContinuation(
+                        state.recordingSessionId,
+                    );
+
+                if (continuationEvaluation.isDeadlineExpired) {
+                    await stopBackgroundRecordingForContinuationTimeout(state);
+                    return;
+                }
+            }
 
             if (error) {
                 await safeSaveBackgroundLocationDebugLog({
@@ -328,6 +346,84 @@ TaskManager.defineTask(
         }
     },
 );
+
+async function stopBackgroundRecordingForContinuationTimeout(
+    state: BackgroundRecordingState,
+): Promise<void> {
+    const recordingSessionId = state.recordingSessionId;
+
+    if (!recordingSessionId) {
+        return;
+    }
+
+    const stoppedAt = new Date().toISOString();
+
+    await markRecordingContinuationAutoStopped(recordingSessionId, stoppedAt);
+
+    const nextState: BackgroundRecordingState = {
+        ...state,
+        isRecording: false,
+        recordingSessionId: null,
+        startedAt: null,
+        lastSavedLocation: null,
+    };
+
+    await setBackgroundRecordingState(nextState);
+
+    if (state.liveLocationId) {
+        try {
+            const result = await client.models.LiveLocation.update({
+                id: state.liveLocationId,
+                isRecording: false,
+                recordingSessionId: null,
+                isActive: state.liveShareOwnerValues.length > 0,
+                updatedAt: stoppedAt,
+                sharedOwners: state.liveShareOwnerValues,
+            });
+
+            if (result.errors) {
+                console.error(
+                    "Auto stop LiveLocation update errors:",
+                    result.errors,
+                );
+            }
+        } catch (error) {
+            console.error("Auto stop LiveLocation update error:", error);
+        }
+    }
+
+    if (state.liveShareOwnerValues.length === 0) {
+        try {
+            const hasStarted = await Location.hasStartedLocationUpdatesAsync(
+                BACKGROUND_LOCATION_TASK_NAME,
+            );
+
+            if (hasStarted) {
+                await Location.stopLocationUpdatesAsync(
+                    BACKGROUND_LOCATION_TASK_NAME,
+                );
+            }
+        } catch (error) {
+            console.error(
+                "Stop background task after continuation timeout error:",
+                error,
+            );
+        }
+
+        await AsyncStorage.removeItem(BACKGROUND_RECORDING_STATE_KEY);
+    }
+
+    await safeSaveBackgroundLocationDebugLog({
+        userId: state.userId,
+        recordingSessionId,
+        eventName: "backgroundRecordingAutoStoppedContinuationTimeout",
+        details: {
+            stoppedAt,
+            savedPointCount: (await getRecordingContinuationState())
+                ?.savedPointCount,
+        },
+    });
+}
 
 async function updateBackgroundLiveLocationState(
     location: Location.LocationObject,
@@ -757,6 +853,8 @@ async function saveBackgroundLocation(
          * create成功からロック解放までの間に最終保存位置を更新する。
          */
         await setBackgroundRecordingState(nextState);
+
+        await incrementRecordingContinuationPointCount(recordingSessionId);
 
         return {
             saved: true,

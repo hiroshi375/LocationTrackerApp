@@ -11,6 +11,7 @@ import {
 } from "../tasks/backgroundLocationTask";
 import { saveBackgroundLocationDebugLog } from "./backgroundLocationDebugLogService";
 import { clearLocationSaveLock } from "./locationLogDeduplicationService";
+import { initializeRecordingContinuationState } from "./recordingContinuationService";
 
 export const BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED =
     "BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED";
@@ -190,6 +191,11 @@ export async function startBackgroundLocationTracking({
         recordingSessionId !== previousState?.recordingSessionId
     ) {
         await clearLocationSaveLock();
+
+        await initializeRecordingContinuationState(
+            recordingSessionId,
+            startedAt ?? new Date().toISOString(),
+        );
     }
 
     const nextState: BackgroundRecordingState = {

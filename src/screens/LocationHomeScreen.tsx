@@ -337,8 +337,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
         isRecording,
         recordingStartedAt,
         activeRecordingSessionId,
+        continuationPrompt,
+        autoStoppedSessionId,
         startRecording,
         stopRecording,
+        confirmContinuation,
+        clearAutoStoppedSession,
     } = useForegroundLocationRecorder({
         intervalMs: recordIntervalMs,
         distanceMeters: recordDistanceMeters,
@@ -348,6 +352,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const recordingBlinkAnim = useRef(new Animated.Value(1)).current;
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const [stoppingRecording, setStoppingRecording] = useState(false);
+    const continuationAlertKeyRef = useRef<string | null>(null);
+    const handledAutoStoppedSessionIdRef = useRef<string | null>(null);
 
     const [sessionNameModalVisible, setSessionNameModalVisible] =
         useState(false);
@@ -841,6 +847,108 @@ export default function LocationHomeScreen({ navigation }: Props) {
             setStoppingRecording(false);
         }
     };
+
+    useEffect(() => {
+        if (!continuationPrompt?.confirmationRequired) {
+            continuationAlertKeyRef.current = null;
+            return;
+        }
+
+        const alertKey = `${continuationPrompt.recordingSessionId}:${
+            continuationPrompt.confirmationRequestedAt ?? ""
+        }`;
+
+        if (continuationAlertKeyRef.current === alertKey) {
+            return;
+        }
+
+        continuationAlertKeyRef.current = alertKey;
+
+        const messageLines: string[] = [];
+
+        if (continuationPrompt.requestedElapsedHours > 0) {
+            messageLines.push(
+                `記録開始から${continuationPrompt.requestedElapsedHours}時間経過しています。`,
+            );
+        }
+
+        if (continuationPrompt.requestedPointMilestone > 0) {
+            messageLines.push(
+                `${continuationPrompt.savedPointCount.toLocaleString()}ポイント記録しています。`,
+            );
+        }
+
+        messageLines.push(
+            "継続しますか？",
+            "3分以内に「継続します」を押さない場合は、自動記録を停止します。",
+        );
+
+        Alert.alert(
+            "自動記録を継続しますか？",
+            messageLines.join("\n"),
+            [
+                {
+                    text: "停止する",
+                    style: "destructive",
+                    onPress: () => {
+                        continuationAlertKeyRef.current = null;
+                        void handleStopRecording();
+                    },
+                },
+                {
+                    text: "継続します",
+                    onPress: () => {
+                        continuationAlertKeyRef.current = null;
+                        void confirmContinuation();
+                    },
+                },
+            ],
+            { cancelable: false },
+        );
+    }, [continuationPrompt, confirmContinuation]);
+
+    useEffect(() => {
+        if (!autoStoppedSessionId) {
+            handledAutoStoppedSessionIdRef.current = null;
+            return;
+        }
+
+        if (handledAutoStoppedSessionIdRef.current === autoStoppedSessionId) {
+            return;
+        }
+
+        handledAutoStoppedSessionIdRef.current = autoStoppedSessionId;
+
+        const stoppedShareOwnerValues = selectedLiveShareUsers
+            .map((user) => user.ownerValue)
+            .filter((ownerValue): ownerValue is string => !!ownerValue);
+
+        setElapsedSeconds((current) => current);
+        setPendingSessionId(autoStoppedSessionId);
+        setPendingSessionShareOwnerValues(stoppedShareOwnerValues);
+        setPendingRecordingIntervalMs(recordIntervalMs);
+        setPendingRecordingDistanceMeters(recordDistanceMeters);
+        setSessionNameInput("");
+        setSessionNameModalVisible(true);
+        setLiveShareStatusMessage(
+            selectedLiveShareUsers.length > 0
+                ? "継続確認がなかったため自動記録を停止しました。現在地共有は継続中です。"
+                : "継続確認がなかったため自動記録を停止しました。",
+        );
+
+        Alert.alert(
+            "自動記録を停止しました",
+            "継続確認から3分以内に操作がなかったため、自動記録を停止しました。",
+        );
+
+        void clearAutoStoppedSession();
+    }, [
+        autoStoppedSessionId,
+        clearAutoStoppedSession,
+        recordDistanceMeters,
+        recordIntervalMs,
+        selectedLiveShareUsers,
+    ]);
 
     const canOpenRecordingMap =
         isRecording && Boolean(activeRecordingSessionId);

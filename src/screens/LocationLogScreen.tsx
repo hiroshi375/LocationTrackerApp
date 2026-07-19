@@ -20,6 +20,16 @@ import {
 
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
+import {
+    ACTIVITY_TYPES,
+    ACTIVITY_TYPE_LABELS,
+    type ActivityType,
+    normalizeActivityType,
+} from "../services/activityClassificationService";
+import {
+    recalculateCurrentUserActivityAggregates,
+    updateRecordingSessionActivityType,
+} from "../services/recordingSessionService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationLog">;
 
@@ -56,6 +66,13 @@ type RecordingSessionDisplayItem = {
     endBatteryLevel?: number | null;
     sharedOwners: string[];
     sortAt: string;
+    activityType: ActivityType;
+    isAggregationTarget: boolean;
+    classificationSource?: string | null;
+    classificationReason?: string | null;
+    averageSpeedKmh?: number | null;
+    maxSpeedKmh?: number | null;
+    movingDurationSeconds?: number | null;
 };
 
 type UserProfileItem = {
@@ -95,6 +112,9 @@ export default function LocationLogScreen({ navigation }: Props) {
         string | null
     >(null);
     const [loadingMore, setLoadingMore] = useState(false);
+    const [updatingActivitySessionId, setUpdatingActivitySessionId] = useState<
+        string | null
+    >(null);
 
     const [shareModalVisible, setShareModalVisible] = useState(false);
     const [shareSearchText, setShareSearchText] = useState("");
@@ -212,6 +232,22 @@ export default function LocationLogScreen({ navigation }: Props) {
                               )
                             : [],
 
+                        activityType: normalizeActivityType(item.activityType),
+                        isAggregationTarget: item.isAggregationTarget === true,
+                        classificationSource: item.classificationSource ?? null,
+                        classificationReason: item.classificationReason ?? null,
+                        averageSpeedKmh:
+                            item.averageSpeedKmh == null
+                                ? null
+                                : Number(item.averageSpeedKmh),
+                        maxSpeedKmh:
+                            item.maxSpeedKmh == null
+                                ? null
+                                : Number(item.maxSpeedKmh),
+                        movingDurationSeconds:
+                            item.movingDurationSeconds == null
+                                ? null
+                                : Number(item.movingDurationSeconds),
                         sortAt: item.endedAt,
                     }))
                     .filter(
@@ -517,6 +553,64 @@ export default function LocationLogScreen({ navigation }: Props) {
         [],
     );
 
+    const handleChangeActivityType = (item: RecordingSessionDisplayItem) => {
+        Alert.alert(
+            "セッション区分を変更",
+            "徒歩・ランニングはランキング集計対象です。自転車・乗り物・複合移動・未判定は集計対象外です。",
+            [
+                ...ACTIVITY_TYPES.map((activityType) => ({
+                    text: ACTIVITY_TYPE_LABELS[activityType],
+                    onPress: () => {
+                        void saveActivityType(item, activityType);
+                    },
+                })),
+                {
+                    text: "キャンセル",
+                    style: "cancel" as const,
+                },
+            ],
+        );
+    };
+
+    const saveActivityType = async (
+        item: RecordingSessionDisplayItem,
+        activityType: ActivityType,
+    ) => {
+        try {
+            setUpdatingActivitySessionId(item.id);
+
+            await updateRecordingSessionActivityType(
+                item.recordingSessionId,
+                activityType,
+            );
+
+            setRecordingSessions((currentSessions) =>
+                currentSessions.map((session) =>
+                    session.id === item.id
+                        ? {
+                              ...session,
+                              activityType,
+                              isAggregationTarget:
+                                  activityType === "WALKING" ||
+                                  activityType === "RUNNING",
+                              classificationSource: "MANUAL",
+                              classificationReason:
+                                  "ユーザーが手動で区分を変更しました。",
+                          }
+                        : session,
+                ),
+            );
+        } catch (error) {
+            console.error("Activity type update error:", error);
+            Alert.alert(
+                "区分変更エラー",
+                "セッション区分を変更できませんでした。",
+            );
+        } finally {
+            setUpdatingActivitySessionId(null);
+        }
+    };
+
     const handleDeleteSession = (item: RecordingSessionDisplayItem) => {
         Alert.alert(
             "自動記録セッションを削除",
@@ -597,6 +691,8 @@ export default function LocationLogScreen({ navigation }: Props) {
             setRecordingSessionTotalCount((currentCount) =>
                 currentCount === null ? null : Math.max(0, currentCount - 1),
             );
+
+            await recalculateCurrentUserActivityAggregates();
         } catch (error) {
             console.error("RecordingSession delete error:", error);
             Alert.alert(
@@ -1036,6 +1132,75 @@ export default function LocationLogScreen({ navigation }: Props) {
                                                 item.recordingDistanceMeters,
                                             )}
                                         </Text>
+                                    </View>
+
+                                    <View style={styles.activityBox}>
+                                        <View style={styles.activityHeaderRow}>
+                                            <Text style={styles.activityLabel}>
+                                                区分:{" "}
+                                                {
+                                                    ACTIVITY_TYPE_LABELS[
+                                                        item.activityType
+                                                    ]
+                                                }
+                                            </Text>
+
+                                            <Text
+                                                style={[
+                                                    styles.aggregationBadge,
+                                                    item.isAggregationTarget
+                                                        ? styles.aggregationTargetBadge
+                                                        : styles.aggregationExcludedBadge,
+                                                ]}
+                                            >
+                                                {item.isAggregationTarget
+                                                    ? "集計対象"
+                                                    : "集計対象外"}
+                                            </Text>
+                                        </View>
+
+                                        <Text style={styles.activitySubText}>
+                                            判定:{" "}
+                                            {item.classificationSource ===
+                                            "MANUAL"
+                                                ? "手動"
+                                                : "自動"}
+                                            {typeof item.averageSpeedKmh ===
+                                                "number" &&
+                                                ` / 平均 ${item.averageSpeedKmh.toFixed(
+                                                    1,
+                                                )}km/h`}
+                                        </Text>
+
+                                        <Pressable
+                                            style={({ pressed }) => [
+                                                styles.activityChangeButton,
+                                                pressed &&
+                                                    styles.detailButtonPressed,
+                                                updatingActivitySessionId ===
+                                                    item.id &&
+                                                    styles.deleteButtonDisabled,
+                                            ]}
+                                            onPress={() =>
+                                                handleChangeActivityType(item)
+                                            }
+                                            disabled={
+                                                isDeleting ||
+                                                updatingActivitySessionId ===
+                                                    item.id
+                                            }
+                                        >
+                                            <Text
+                                                style={
+                                                    styles.activityChangeButtonText
+                                                }
+                                            >
+                                                {updatingActivitySessionId ===
+                                                item.id
+                                                    ? "区分を更新中..."
+                                                    : "区分を変更"}
+                                            </Text>
+                                        </Pressable>
                                     </View>
 
                                     {hasBatteryRange(
@@ -1799,6 +1964,61 @@ const styles = StyleSheet.create({
         fontSize: 13,
         marginTop: 8,
         marginBottom: 24,
+    },
+
+    activityBox: {
+        marginTop: 8,
+        paddingTop: 8,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: "#d9e1e7",
+    },
+    activityHeaderRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+    },
+    activityLabel: {
+        flex: 1,
+        color: "#333",
+        fontSize: 13,
+        fontWeight: "bold",
+    },
+    aggregationBadge: {
+        overflow: "hidden",
+        paddingVertical: 3,
+        paddingHorizontal: 8,
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: "bold",
+    },
+    aggregationTargetBadge: {
+        color: "#256029",
+        backgroundColor: "#e4f5e6",
+    },
+    aggregationExcludedBadge: {
+        color: "#7a4b00",
+        backgroundColor: "#fff2d6",
+    },
+    activitySubText: {
+        marginTop: 4,
+        color: "#666",
+        fontSize: 12,
+    },
+    activityChangeButton: {
+        alignSelf: "flex-start",
+        marginTop: 7,
+        paddingVertical: 6,
+        paddingHorizontal: 10,
+        borderRadius: 7,
+        borderWidth: 1,
+        borderColor: "#4b6f8f",
+        backgroundColor: "#fff",
+    },
+    activityChangeButtonText: {
+        color: "#4b6f8f",
+        fontSize: 12,
+        fontWeight: "bold",
     },
     batteryText: {
         marginTop: 6,

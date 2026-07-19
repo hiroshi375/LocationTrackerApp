@@ -6,16 +6,21 @@ import {
     getRoutePeriod,
     normalizeRouteLogs,
 } from "../lib/locationRoute";
+import {
+    type ActivityType,
+    classifyActivitySession,
+    isAggregationTargetActivityType,
+    normalizeActivityType,
+} from "./activityClassificationService";
+import {
+    createMonthKey,
+    recalculateUserActivityAggregates,
+} from "./userActivityAggregationService";
 
-type LocationLogListResult = {
+type ListResult = {
     data?: any[] | null;
     errors?: unknown;
     nextToken?: string | null;
-};
-
-type RecordingSessionListResult = {
-    data?: any[] | null;
-    errors?: unknown;
 };
 
 type SessionLogItem = {
@@ -23,6 +28,7 @@ type SessionLogItem = {
     userId: string;
     latitude: number;
     longitude: number;
+    accuracy?: number | null;
     recordedAt: string;
     recordingSessionId?: string | null;
     recordingSessionName?: string | null;
@@ -36,9 +42,9 @@ export async function upsertRecordingSessionSummary(
     shareOwnerValues: string[] = [],
     recordingIntervalMs?: number | null,
     recordingDistanceMeters?: number | null,
+    options?: { skipAggregation?: boolean },
 ) {
     const logs = await listLocationLogsBySessionId(recordingSessionId);
-
     const routeLogs = normalizeRouteLogs(logs);
 
     if (routeLogs.length === 0) {
@@ -52,11 +58,10 @@ export async function upsertRecordingSessionSummary(
     }
 
     const currentUser = await getCurrentUser();
-
     const firstLog = routeLogs[0];
     const lastLog = routeLogs[routeLogs.length - 1];
-
     const distanceMeters = calculateRouteDistanceMeters(routeLogs);
+    const classification = classifyActivitySession(logs);
 
     const batteryLogs = [...logs]
         .filter(
@@ -69,10 +74,6 @@ export async function upsertRecordingSessionSummary(
                 new Date(a.recordedAt).getTime() -
                 new Date(b.recordedAt).getTime(),
         );
-
-    const startBatteryLevel = batteryLogs[0]?.batteryLevel ?? null;
-    const endBatteryLevel =
-        batteryLogs[batteryLogs.length - 1]?.batteryLevel ?? null;
 
     const sharedOwnersFromLogs = routeLogs.flatMap((log) =>
         Array.isArray(log.sharedOwners)
@@ -89,24 +90,19 @@ export async function upsertRecordingSessionSummary(
         firstLog.recordingSessionName ??
         "自動記録セッション";
 
-    const recordingSessionModel = client.models.RecordingSession as any;
-
-    const existingResult = (await recordingSessionModel.list({
-        filter: {
-            recordingSessionId: {
-                eq: recordingSessionId,
-            },
-        },
+    const model = client.models.RecordingSession as any;
+    const existingResult = (await model.list({
+        filter: { recordingSessionId: { eq: recordingSessionId } },
         limit: 1,
-    })) as RecordingSessionListResult;
+    })) as ListResult;
 
     if (existingResult.errors) {
-        console.error("RecordingSession list errors:", existingResult.errors);
-        return;
+        throw new Error(
+            `RecordingSession list failed: ${JSON.stringify(existingResult.errors)}`,
+        );
     }
 
     const existing = existingResult.data?.[0];
-
     const existingSharedOwners = Array.isArray(existing?.sharedOwners)
         ? existing.sharedOwners.filter(
               (owner: unknown): owner is string =>
@@ -114,18 +110,21 @@ export async function upsertRecordingSessionSummary(
           )
         : [];
 
-    const explicitSharedOwners = shareOwnerValues.filter(
-        (owner): owner is string =>
-            typeof owner === "string" && owner.length > 0,
-    );
-
     const sharedOwners = Array.from(
         new Set([
             ...existingSharedOwners,
             ...sharedOwnersFromLogs,
-            ...explicitSharedOwners,
+            ...shareOwnerValues.filter(Boolean),
         ]),
     );
+
+    const useManualClassification = existing?.classificationSource === "MANUAL";
+    const activityType = useManualClassification
+        ? normalizeActivityType(existing?.activityType)
+        : classification.activityType;
+    const isAggregationTarget = useManualClassification
+        ? isAggregationTargetActivityType(activityType)
+        : classification.isAggregationTarget;
 
     const payload = {
         recordingSessionId,
@@ -135,90 +134,160 @@ export async function upsertRecordingSessionSummary(
         endedAt: endAt,
         distanceMeters,
         pointCount: routeLogs.length,
-        startBatteryLevel,
-        endBatteryLevel,
+        startBatteryLevel: batteryLogs[0]?.batteryLevel ?? null,
+        endBatteryLevel:
+            batteryLogs[batteryLogs.length - 1]?.batteryLevel ?? null,
         sharedOwners,
         recordingIntervalMs:
             typeof recordingIntervalMs === "number"
                 ? recordingIntervalMs
                 : (existing?.recordingIntervalMs ?? null),
-
         recordingDistanceMeters:
             typeof recordingDistanceMeters === "number"
                 ? recordingDistanceMeters
                 : (existing?.recordingDistanceMeters ?? null),
+        activityType,
+        isAggregationTarget,
+        classificationSource: useManualClassification ? "MANUAL" : "AUTO",
+        classificationReason: useManualClassification
+            ? (existing?.classificationReason ?? "手動で区分を変更しました。")
+            : classification.classificationReason,
+        averageSpeedKmh: classification.averageSpeedKmh,
+        maxSpeedKmh: classification.maxSpeedKmh,
+        movingDurationSeconds: classification.movingDurationSeconds,
+        monthKey: createMonthKey(endAt),
     };
 
-    if (existing?.id) {
-        const updateResult = await recordingSessionModel.update({
-            id: existing.id,
-            ...payload,
-        });
+    const result = existing?.id
+        ? await model.update({ id: existing.id, ...payload })
+        : await model.create(payload);
 
-        if (updateResult.errors) {
-            console.error(
-                "RecordingSession update errors:",
-                updateResult.errors,
-            );
-        }
-
-        return;
+    if (result.errors) {
+        throw new Error(
+            `RecordingSession save failed: ${JSON.stringify(result.errors)}`,
+        );
     }
 
-    const createResult = await recordingSessionModel.create(payload);
+    await updateLocationLogClassification(
+        logs,
+        activityType,
+        isAggregationTarget,
+    );
 
-    if (createResult.errors) {
-        console.error("RecordingSession create errors:", createResult.errors);
+    if (!options?.skipAggregation) {
+        await recalculateUserActivityAggregates(currentUser.userId);
     }
 }
 
-async function listLocationLogsBySessionId(recordingSessionId: string) {
+export async function updateRecordingSessionActivityType(
+    recordingSessionId: string,
+    activityType: ActivityType,
+): Promise<void> {
+    const currentUser = await getCurrentUser();
+    const model = client.models.RecordingSession as any;
+    const result = (await model.list({
+        filter: { recordingSessionId: { eq: recordingSessionId } },
+        limit: 1,
+    })) as ListResult;
+
+    if (result.errors || !result.data?.[0]?.id) {
+        throw new Error("対象のRecordingSessionを取得できませんでした。");
+    }
+
+    const session = result.data[0];
+
+    if (session.userId !== currentUser.userId) {
+        throw new Error("自分以外のセッション区分は変更できません。");
+    }
+
+    const isAggregationTarget = isAggregationTargetActivityType(activityType);
+
+    const updateResult = await model.update({
+        id: session.id,
+        activityType,
+        isAggregationTarget,
+        classificationSource: "MANUAL",
+        classificationReason: "ユーザーが手動で区分を変更しました。",
+    });
+
+    if (updateResult.errors) {
+        throw new Error(
+            `RecordingSession classification update failed: ${JSON.stringify(
+                updateResult.errors,
+            )}`,
+        );
+    }
+
+    const logs = await listLocationLogsBySessionId(recordingSessionId);
+    await updateLocationLogClassification(
+        logs,
+        activityType,
+        isAggregationTarget,
+    );
+    await recalculateUserActivityAggregates(currentUser.userId);
+}
+
+export async function recalculateCurrentUserActivityAggregates(): Promise<void> {
+    const currentUser = await getCurrentUser();
+    await recalculateUserActivityAggregates(currentUser.userId);
+}
+
+async function updateLocationLogClassification(
+    logs: SessionLogItem[],
+    activityType: ActivityType,
+    isAggregationTarget: boolean,
+): Promise<void> {
+    const model = client.models.LocationLog as any;
+
+    for (let index = 0; index < logs.length; index += 25) {
+        const batch = logs.slice(index, index + 25);
+        const results = await Promise.all(
+            batch.map((log) =>
+                model.update({
+                    id: log.id,
+                    activityType,
+                    isAggregationTarget,
+                }),
+            ),
+        );
+
+        if (results.some((result) => result.errors)) {
+            throw new Error("LocationLogの区分更新に失敗しました。");
+        }
+    }
+}
+
+async function listLocationLogsBySessionId(
+    recordingSessionId: string,
+): Promise<SessionLogItem[]> {
     const allData: any[] = [];
     let nextToken: string | null = null;
-
-    const locationLogModel = client.models.LocationLog as any;
+    const model = client.models.LocationLog as any;
 
     do {
-        const listParams: {
-            filter: {
-                recordingSessionId: {
-                    eq: string;
-                };
-            };
-            limit: number;
-            nextToken?: string;
-        } = {
-            filter: {
-                recordingSessionId: {
-                    eq: recordingSessionId,
-                },
-            },
+        const result = (await model.list({
+            filter: { recordingSessionId: { eq: recordingSessionId } },
             limit: 1000,
-        };
-
-        if (nextToken) {
-            listParams.nextToken = nextToken;
-        }
-
-        const result = (await locationLogModel.list(
-            listParams,
-        )) as LocationLogListResult;
+            nextToken: nextToken ?? undefined,
+        })) as ListResult;
 
         if (result.errors) {
-            console.error("LocationLog session list errors:", result.errors);
-            return [];
+            throw new Error(
+                `LocationLog session list failed: ${JSON.stringify(result.errors)}`,
+            );
         }
 
         allData.push(...(result.data ?? []));
         nextToken = result.nextToken ?? null;
     } while (nextToken);
 
-    const logs: SessionLogItem[] = allData
+    return allData
         .map((item) => ({
             id: item.id,
             userId: item.userId ?? "",
             latitude: Number(item.latitude),
             longitude: Number(item.longitude),
+            accuracy: item.accuracy == null ? null : Number(item.accuracy),
             recordedAt: item.recordedAt,
             recordingSessionId: item.recordingSessionId ?? null,
             recordingSessionName: item.recordingSessionName ?? null,
@@ -226,11 +295,7 @@ async function listLocationLogsBySessionId(recordingSessionId: string) {
                 ? item.sharedOwners
                 : [],
             batteryLevel:
-                item.batteryLevel !== null &&
-                item.batteryLevel !== undefined &&
-                Number.isFinite(Number(item.batteryLevel))
-                    ? Number(item.batteryLevel)
-                    : null,
+                item.batteryLevel == null ? null : Number(item.batteryLevel),
         }))
         .filter(
             (item) =>
@@ -238,8 +303,6 @@ async function listLocationLogsBySessionId(recordingSessionId: string) {
                 Number.isFinite(item.latitude) &&
                 Number.isFinite(item.longitude),
         );
-
-    return logs;
 }
 
 type RecordingSessionBackfillResult = {
@@ -256,16 +319,15 @@ type RecordingSessionBackfillResult = {
 
 export async function backfillRecordingSessionsFromLocationLogs(): Promise<RecordingSessionBackfillResult> {
     const currentUser = await getCurrentUser();
-    const locationLogModel = client.models.LocationLog as any;
-
+    const model = client.models.LocationLog as any;
     const allLogs: any[] = [];
     let nextToken: string | null = null;
 
     do {
-        const result = (await locationLogModel.list({
+        const result = (await model.list({
             limit: 1000,
             nextToken: nextToken ?? undefined,
-        })) as LocationLogListResult;
+        })) as ListResult;
 
         if (result.errors) {
             throw new Error(
@@ -279,53 +341,38 @@ export async function backfillRecordingSessionsFromLocationLogs(): Promise<Recor
 
     const sessionMap = new Map<
         string,
-        {
-            recordingSessionName: string | null;
-            sharedOwners: string[];
-        }
+        { recordingSessionName: string | null; sharedOwners: string[] }
     >();
-
     let skippedLogCount = 0;
 
     for (const log of allLogs) {
-        /*
-         * 共有された他ユーザーのLocationLogを、
-         * 現在ユーザーのRecordingSessionとして登録しない。
-         */
         if (log.userId !== currentUser.userId) {
             skippedLogCount += 1;
             continue;
         }
 
-        const recordingSessionId =
+        const id =
             typeof log.recordingSessionId === "string"
                 ? log.recordingSessionId.trim()
                 : "";
 
-        if (!recordingSessionId) {
+        if (!id) {
             skippedLogCount += 1;
             continue;
         }
 
-        const currentSession = sessionMap.get(recordingSessionId);
-
-        const sharedOwners = Array.isArray(log.sharedOwners)
-            ? log.sharedOwners.filter(
-                  (owner: unknown): owner is string =>
-                      typeof owner === "string" && owner.length > 0,
-              )
-            : [];
-
-        sessionMap.set(recordingSessionId, {
+        const current = sessionMap.get(id);
+        sessionMap.set(id, {
             recordingSessionName:
-                currentSession?.recordingSessionName ??
+                current?.recordingSessionName ??
                 log.recordingSessionName ??
                 null,
-
             sharedOwners: Array.from(
                 new Set([
-                    ...(currentSession?.sharedOwners ?? []),
-                    ...sharedOwners,
+                    ...(current?.sharedOwners ?? []),
+                    ...(Array.isArray(log.sharedOwners)
+                        ? log.sharedOwners.filter(Boolean)
+                        : []),
                 ]),
             ),
         });
@@ -333,41 +380,32 @@ export async function backfillRecordingSessionsFromLocationLogs(): Promise<Recor
 
     let createdOrUpdatedCount = 0;
     let failedCount = 0;
-
     const failures: RecordingSessionBackfillResult["failures"] = [];
 
-    for (const [recordingSessionId, sessionInfo] of sessionMap.entries()) {
+    for (const [id, info] of sessionMap.entries()) {
         try {
             await upsertRecordingSessionSummary(
-                recordingSessionId,
-                sessionInfo.recordingSessionName,
-                sessionInfo.sharedOwners,
+                id,
+                info.recordingSessionName,
+                info.sharedOwners,
+                undefined,
+                undefined,
+                { skipAggregation: true },
             );
-
             createdOrUpdatedCount += 1;
-
-            console.log("RecordingSession backfill success:", {
-                recordingSessionId,
-            });
         } catch (error) {
             failedCount += 1;
-
-            const errorMessage =
-                error instanceof Error ? error.message : String(error);
-
             failures.push({
-                recordingSessionId,
-                errorMessage,
-            });
-
-            console.error("RecordingSession backfill failed:", {
-                recordingSessionId,
-                error,
+                recordingSessionId: id,
+                errorMessage:
+                    error instanceof Error ? error.message : String(error),
             });
         }
     }
 
-    const result: RecordingSessionBackfillResult = {
+    await recalculateUserActivityAggregates(currentUser.userId);
+
+    return {
         locationLogCount: allLogs.length,
         targetSessionCount: sessionMap.size,
         createdOrUpdatedCount,
@@ -375,8 +413,4 @@ export async function backfillRecordingSessionsFromLocationLogs(): Promise<Recor
         skippedLogCount,
         failures,
     };
-
-    console.log("RecordingSession backfill completed:", result);
-
-    return result;
 }

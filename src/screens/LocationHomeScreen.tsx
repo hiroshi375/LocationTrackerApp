@@ -1390,6 +1390,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 </View>
                 <View style={styles.buttonSpace}>
                     <AppButton
+                        title="活動ランキングを見る"
+                        onPress={() => navigation.navigate("ActivityRanking")}
+                    />
+                </View>
+                <View style={styles.buttonSpace}>
+                    <AppButton
                         title={
                             openingSharedLiveMap
                                 ? "共有中の現在地を取得中..."

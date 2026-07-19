@@ -26,6 +26,9 @@ const schema = a.schema({
             source: a.string(),
             // 同一セッション・同一時刻・同一座標・同一精度の重複防止用
             locationUniqueKey: a.string(),
+
+            activityType: a.string(),
+            isAggregationTarget: a.boolean(),
         })
         .authorization((allow) => [
             allow.owner(),
@@ -50,6 +53,15 @@ const schema = a.schema({
             sharedOwners: a.string().array(),
             recordingIntervalMs: a.integer(),
             recordingDistanceMeters: a.float(),
+
+            activityType: a.string(),
+            isAggregationTarget: a.boolean(),
+            classificationSource: a.string(),
+            classificationReason: a.string(),
+            averageSpeedKmh: a.float(),
+            maxSpeedKmh: a.float(),
+            movingDurationSeconds: a.integer(),
+            monthKey: a.string(),
         })
         .secondaryIndexes((index) => [
             index("userId")
@@ -69,7 +81,37 @@ const schema = a.schema({
             searchText: a.string(),
             iconImagePath: a.string(),
             role: a.string(),
+
+            totalAggregationDistanceMeters: a.float(),
+            totalAggregationDurationSeconds: a.integer(),
+            totalAggregationSessionCount: a.integer(),
+            currentMonthKey: a.string(),
+            currentMonthDistanceMeters: a.float(),
+            currentMonthDurationSeconds: a.integer(),
+            currentMonthSessionCount: a.integer(),
         })
+        .authorization((allow) => [
+            allow.owner(),
+            allow.authenticated().to(["read"]),
+        ]),
+    UserActivityMonthlySummary: a
+        .model({
+            userId: a.string().required(),
+            monthKey: a.string().required(),
+            distanceMeters: a.float().required(),
+            durationSeconds: a.integer().required(),
+            sessionCount: a.integer().required(),
+            displayName: a.string(),
+            iconImagePath: a.string(),
+        })
+        .secondaryIndexes((index) => [
+            index("monthKey")
+                .sortKeys(["distanceMeters"])
+                .queryField("listMonthlyActivityRanking"),
+            index("userId")
+                .sortKeys(["monthKey"])
+                .queryField("listMonthlyActivitySummariesByUser"),
+        ])
         .authorization((allow) => [
             allow.owner(),
             allow.authenticated().to(["read"]),

@@ -144,6 +144,20 @@
               "isRequired": false,
               "attributes": []
             },
+            "activityType": {
+              "name": "activityType",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "isAggregationTarget": {
+              "name": "isAggregationTarget",
+              "isArray": false,
+              "type": "Boolean",
+              "isRequired": false,
+              "attributes": []
+            },
             "createdAt": {
               "name": "createdAt",
               "isArray": false,
@@ -298,6 +312,62 @@
               "isRequired": false,
               "attributes": []
             },
+            "activityType": {
+              "name": "activityType",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "isAggregationTarget": {
+              "name": "isAggregationTarget",
+              "isArray": false,
+              "type": "Boolean",
+              "isRequired": false,
+              "attributes": []
+            },
+            "classificationSource": {
+              "name": "classificationSource",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "classificationReason": {
+              "name": "classificationReason",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "averageSpeedKmh": {
+              "name": "averageSpeedKmh",
+              "isArray": false,
+              "type": "Float",
+              "isRequired": false,
+              "attributes": []
+            },
+            "maxSpeedKmh": {
+              "name": "maxSpeedKmh",
+              "isArray": false,
+              "type": "Float",
+              "isRequired": false,
+              "attributes": []
+            },
+            "movingDurationSeconds": {
+              "name": "movingDurationSeconds",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "monthKey": {
+              "name": "monthKey",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
             "createdAt": {
               "name": "createdAt",
               "isArray": false,
@@ -427,6 +497,55 @@
               "isRequired": false,
               "attributes": []
             },
+            "totalAggregationDistanceMeters": {
+              "name": "totalAggregationDistanceMeters",
+              "isArray": false,
+              "type": "Float",
+              "isRequired": false,
+              "attributes": []
+            },
+            "totalAggregationDurationSeconds": {
+              "name": "totalAggregationDurationSeconds",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "totalAggregationSessionCount": {
+              "name": "totalAggregationSessionCount",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "currentMonthKey": {
+              "name": "currentMonthKey",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "currentMonthDistanceMeters": {
+              "name": "currentMonthDistanceMeters",
+              "isArray": false,
+              "type": "Float",
+              "isRequired": false,
+              "attributes": []
+            },
+            "currentMonthDurationSeconds": {
+              "name": "currentMonthDurationSeconds",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "currentMonthSessionCount": {
+              "name": "currentMonthSessionCount",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
             "createdAt": {
               "name": "createdAt",
               "isArray": false,
@@ -450,6 +569,143 @@
             {
               "type": "model",
               "properties": {}
+            },
+            {
+              "type": "auth",
+              "properties": {
+                "rules": [
+                  {
+                    "provider": "userPools",
+                    "ownerField": "owner",
+                    "allow": "owner",
+                    "identityClaim": "cognito:username",
+                    "operations": [
+                      "create",
+                      "update",
+                      "delete",
+                      "read"
+                    ]
+                  },
+                  {
+                    "allow": "private",
+                    "operations": [
+                      "read"
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "primaryKeyInfo": {
+            "isCustomPrimaryKey": false,
+            "primaryKeyFieldName": "id",
+            "sortKeyFieldNames": []
+          }
+        },
+        "UserActivityMonthlySummary": {
+          "name": "UserActivityMonthlySummary",
+          "fields": {
+            "id": {
+              "name": "id",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true,
+              "attributes": []
+            },
+            "userId": {
+              "name": "userId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "monthKey": {
+              "name": "monthKey",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "distanceMeters": {
+              "name": "distanceMeters",
+              "isArray": false,
+              "type": "Float",
+              "isRequired": true,
+              "attributes": []
+            },
+            "durationSeconds": {
+              "name": "durationSeconds",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": true,
+              "attributes": []
+            },
+            "sessionCount": {
+              "name": "sessionCount",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": true,
+              "attributes": []
+            },
+            "displayName": {
+              "name": "displayName",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "iconImagePath": {
+              "name": "iconImagePath",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "createdAt": {
+              "name": "createdAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": [],
+              "isReadOnly": true
+            },
+            "updatedAt": {
+              "name": "updatedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": [],
+              "isReadOnly": true
+            }
+          },
+          "syncable": true,
+          "pluralName": "UserActivityMonthlySummaries",
+          "attributes": [
+            {
+              "type": "model",
+              "properties": {}
+            },
+            {
+              "type": "key",
+              "properties": {
+                "name": "userActivityMonthlySummariesByUserIdAndMonthKey",
+                "queryField": "listMonthlyActivitySummariesByUser",
+                "fields": [
+                  "userId",
+                  "monthKey"
+                ]
+              }
+            },
+            {
+              "type": "key",
+              "properties": {
+                "name": "userActivityMonthlySummariesByMonthKeyAndDistanceMeters",
+                "queryField": "listMonthlyActivityRanking",
+                "fields": [
+                  "monthKey",
+                  "distanceMeters"
+                ]
+              }
             },
             {
               "type": "auth",

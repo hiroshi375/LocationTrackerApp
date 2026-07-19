@@ -12,6 +12,13 @@ type UserProfileRecord = {
     searchText?: string | null;
     iconImagePath?: string | null;
     role: string | null;
+    totalAggregationDistanceMeters?: number | null;
+    totalAggregationDurationSeconds?: number | null;
+    totalAggregationSessionCount?: number | null;
+    currentMonthKey?: string | null;
+    currentMonthDistanceMeters?: number | null;
+    currentMonthDurationSeconds?: number | null;
+    currentMonthSessionCount?: number | null;
 };
 
 type CurrentUserProfile = {
@@ -22,6 +29,13 @@ type CurrentUserProfile = {
     ownerValue: string | null;
     iconImagePath: string | null;
     role: string | null;
+    totalAggregationDistanceMeters: number;
+    totalAggregationDurationSeconds: number;
+    totalAggregationSessionCount: number;
+    currentMonthKey: string | null;
+    currentMonthDistanceMeters: number;
+    currentMonthDurationSeconds: number;
+    currentMonthSessionCount: number;
 };
 
 export async function ensureUserProfile() {
@@ -136,6 +150,18 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
             ownerValue: existing.ownerValue ?? null,
             iconImagePath: existing.iconImagePath ?? null,
             role: existing.role ?? null,
+            totalAggregationDistanceMeters:
+                existing.totalAggregationDistanceMeters ?? 0,
+            totalAggregationDurationSeconds:
+                existing.totalAggregationDurationSeconds ?? 0,
+            totalAggregationSessionCount:
+                existing.totalAggregationSessionCount ?? 0,
+            currentMonthKey: existing.currentMonthKey ?? null,
+            currentMonthDistanceMeters:
+                existing.currentMonthDistanceMeters ?? 0,
+            currentMonthDurationSeconds:
+                existing.currentMonthDurationSeconds ?? 0,
+            currentMonthSessionCount: existing.currentMonthSessionCount ?? 0,
         };
     }
 
@@ -152,6 +178,13 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
             ownerValue: null,
             iconImagePath: null,
             role: null,
+            totalAggregationDistanceMeters: 0,
+            totalAggregationDurationSeconds: 0,
+            totalAggregationSessionCount: 0,
+            currentMonthKey: null,
+            currentMonthDistanceMeters: 0,
+            currentMonthDurationSeconds: 0,
+            currentMonthSessionCount: 0,
         };
     }
 
@@ -163,6 +196,15 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
         ownerValue: created.ownerValue ?? null,
         iconImagePath: created.iconImagePath ?? null,
         role: created.role ?? null,
+        totalAggregationDistanceMeters:
+            created.totalAggregationDistanceMeters ?? 0,
+        totalAggregationDurationSeconds:
+            created.totalAggregationDurationSeconds ?? 0,
+        totalAggregationSessionCount: created.totalAggregationSessionCount ?? 0,
+        currentMonthKey: created.currentMonthKey ?? null,
+        currentMonthDistanceMeters: created.currentMonthDistanceMeters ?? 0,
+        currentMonthDurationSeconds: created.currentMonthDurationSeconds ?? 0,
+        currentMonthSessionCount: created.currentMonthSessionCount ?? 0,
     };
 }
 

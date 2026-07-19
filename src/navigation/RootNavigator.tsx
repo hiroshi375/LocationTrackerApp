@@ -1,6 +1,7 @@
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
+import ActivityRankingScreen from "../screens/ActivityRankingScreen";
 import LiveLocationMapScreen from "../screens/LiveLocationMapScreen";
 import LocationHomeScreen from "../screens/LocationHomeScreen";
 import LocationLogDetailScreen from "../screens/LocationLogDetailScreen";
@@ -42,6 +43,7 @@ export type RootStackParamList = {
     };
     Profile: undefined;
     LiveLocationMap: undefined;
+    ActivityRanking: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -74,6 +76,11 @@ export default function RootNavigator() {
                     name="Profile"
                     component={ProfileScreen}
                     options={{ title: "プロフィール" }}
+                />
+                <Stack.Screen
+                    name="ActivityRanking"
+                    component={ActivityRankingScreen}
+                    options={{ title: "活動ランキング" }}
                 />
                 <Stack.Screen
                     name="LiveLocationMap"

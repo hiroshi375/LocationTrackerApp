@@ -33,6 +33,19 @@ type ListResult = {
     nextToken?: string | null;
 };
 
+const RANKING_TROPHY_IMAGES: Record<number, number> = {
+    1: require("../../assets/images/gold_trophy.png"),
+    2: require("../../assets/images/silver_trophy.png"),
+    3: require("../../assets/images/bronze_trophy.png"),
+    4: require("../../assets/images/4th_trophy.png"),
+    5: require("../../assets/images/5th_trophy.png"),
+    6: require("../../assets/images/6th_trophy.png"),
+    7: require("../../assets/images/7th_trophy.png"),
+    8: require("../../assets/images/8th_trophy.png"),
+    9: require("../../assets/images/9th_trophy.png"),
+    10: require("../../assets/images/10th_trophy.png"),
+};
+
 export default function ActivityRankingScreen() {
     const [mode, setMode] = useState<RankingMode>("MONTHLY");
     const [items, setItems] = useState<RankingItem[]>([]);
@@ -210,10 +223,24 @@ export default function ActivityRankingScreen() {
                     }
                     renderItem={({ item, index }) => {
                         const iconUrl = iconUrls[item.userId];
+                        const rank = index + 1;
+                        const trophyImage = RANKING_TROPHY_IMAGES[rank];
 
                         return (
                             <View style={styles.card}>
-                                <Text style={styles.rankText}>{index + 1}</Text>
+                                <View style={styles.rankArea}>
+                                    {trophyImage ? (
+                                        <Image
+                                            source={trophyImage}
+                                            style={styles.trophyImage}
+                                            resizeMode="contain"
+                                        />
+                                    ) : (
+                                        <Text style={styles.rankText}>
+                                            {rank}
+                                        </Text>
+                                    )}
+                                </View>
 
                                 {iconUrl ? (
                                     <Image
@@ -389,8 +416,19 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: "#e1e7ec",
     },
+    rankArea: {
+        width: 54,
+        height: 54,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    trophyImage: {
+        width: 52,
+        height: 52,
+    },
+
     rankText: {
-        width: 34,
         fontSize: 20,
         fontWeight: "bold",
         textAlign: "center",

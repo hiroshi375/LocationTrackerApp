@@ -37,6 +37,36 @@ type BackgroundLocationDebugLogInput = {
 const UNKNOWN_USER_ID = "unknown";
 const MAX_ERROR_MESSAGE_LENGTH = 1000;
 const MAX_DETAILS_JSON_LENGTH = 4000;
+const ENABLE_VERBOSE_BACKGROUND_LOCATION_DEBUG_LOG = false;
+
+const ALWAYS_SAVE_EVENT_NAMES = new Set([
+    // バックグラウンドタスク自体の異常
+    "backgroundLocationTaskError",
+    "backgroundLocationTaskUnexpectedError",
+    "saveBackgroundLocationUnexpectedError",
+
+    // LocationLog保存失敗
+    "backgroundLocationLogCreateFailed",
+    "foregroundLocationLogCreateFailed",
+
+    // LiveLocation作成・更新失敗
+    "backgroundLiveLocationCreateFailed",
+    "backgroundLiveLocationUpdateFailed",
+    "foregroundLiveLocationCreateFailed",
+    "foregroundLiveLocationUpdateFailed",
+    "foregroundLiveLocationUnexpectedError",
+
+    // 通常起きるべきではない状態
+    "foregroundLocationLogSkippedNoUserId",
+]);
+
+function shouldSaveBackgroundLocationDebugLog(eventName: string) {
+    if (ENABLE_VERBOSE_BACKGROUND_LOCATION_DEBUG_LOG) {
+        return true;
+    }
+
+    return ALWAYS_SAVE_EVENT_NAMES.has(eventName);
+}
 
 export function getErrorMessage(error: unknown) {
     if (error instanceof Error) {
@@ -57,6 +87,11 @@ export function getErrorMessage(error: unknown) {
 export async function saveBackgroundLocationDebugLog(
     input: BackgroundLocationDebugLogInput,
 ) {
+    // 追加
+    if (!shouldSaveBackgroundLocationDebugLog(input.eventName)) {
+        return;
+    }
+
     try {
         const userId = input.userId ?? UNKNOWN_USER_ID;
 
@@ -122,7 +157,6 @@ export async function saveBackgroundLocationDebugLog(
             );
         }
     } catch (error) {
-        // 診断ログ保存の失敗で本体処理を止めない
         console.error("Save background debug log error:", error, {
             eventName: input.eventName,
             userId: input.userId ?? UNKNOWN_USER_ID,

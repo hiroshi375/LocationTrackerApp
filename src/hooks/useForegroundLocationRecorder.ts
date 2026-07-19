@@ -22,6 +22,15 @@ import {
     updateBackgroundRecordingLiveLocationId,
 } from "../services/backgroundLocationService";
 import {
+    acquireLocationSaveLock,
+    createLocationLogId,
+    createLocationSaveLockScopeKey,
+    createLocationUniqueKey,
+    isDuplicateLocationCreateError,
+    isLocationLogAlreadySaved,
+    releaseLocationSaveLock,
+} from "../services/locationLogDeduplicationService";
+import {
     calculateDistanceMeters,
     calculateSpeedMetersPerSecond,
     isAbnormalSpeedLocation,
@@ -78,7 +87,6 @@ export function useForegroundLocationRecorder({
 
     const subscriptionRef = useRef<Location.LocationSubscription | null>(null);
     const lastSavedLocationRef = useRef<SavedLocation | null>(null);
-    const savingLocationKeyRef = useRef<string | null>(null);
     const recordingSessionIdRef = useRef<string | null>(null);
     const liveLocationIdRef = useRef<string | null>(null);
     const recordingUserIdRef = useRef<string | null>(null);
@@ -332,7 +340,9 @@ export function useForegroundLocationRecorder({
              * LocationLogは自動記録中だけ保存する。
              * 現在地共有のみの場合はLiveLocationだけを更新する。
              */
-            if (!isRecordingRef.current || !recordingSessionIdRef.current) {
+            const recordingSessionId = recordingSessionIdRef.current;
+
+            if (!isRecordingRef.current || !recordingSessionId) {
                 return;
             }
 
@@ -355,7 +365,7 @@ export function useForegroundLocationRecorder({
             if (isLowAccuracyLocation(accuracy)) {
                 await saveBackgroundLocationDebugLog({
                     userId: recordingUserIdRef.current,
-                    recordingSessionId: recordingSessionIdRef.current,
+                    recordingSessionId,
                     eventName: "foregroundLocationLogSkippedLowAccuracy",
                     details: {
                         recordedAt,
@@ -368,144 +378,144 @@ export function useForegroundLocationRecorder({
                 return;
             }
 
-            if (
-                isAbnormalSpeedLocation(
-                    lastSavedLocationRef.current,
-                    latitude,
-                    longitude,
-                    recordedAtMs,
-                )
-            ) {
-                const speedMetersPerSecond = calculateSpeedMetersPerSecond(
-                    lastSavedLocationRef.current,
-                    latitude,
-                    longitude,
-                    recordedAtMs,
+            updateDistanceFromStart(location);
+
+            const userId = recordingUserIdRef.current;
+
+            if (!userId) {
+                console.error(
+                    "Skip foreground LocationLog create: userId is missing",
                 );
 
                 await saveBackgroundLocationDebugLog({
-                    userId: recordingUserIdRef.current,
-                    recordingSessionId: recordingSessionIdRef.current,
-                    eventName: "foregroundLocationLogSkippedAbnormalSpeed",
+                    userId: null,
+                    recordingSessionId,
+                    eventName: "foregroundLocationLogSkippedNoUserId",
                     details: {
                         recordedAt,
                         latitude,
                         longitude,
-                        accuracy,
-                        speedMetersPerSecond,
-                        speedKmPerHour:
-                            speedMetersPerSecond == null
-                                ? null
-                                : speedMetersPerSecond * 3.6,
                     },
                 });
 
                 return;
             }
 
-            updateDistanceFromStart(location);
-
-            const duplicateKey = createLocationDuplicateKey(
-                latitude,
-                longitude,
-                recordedAtMs,
+            const lockScopeKey = createLocationSaveLockScopeKey(
+                userId,
+                recordingSessionId,
             );
+            const lock = await acquireLocationSaveLock(lockScopeKey);
 
-            if (savingLocationKeyRef.current === duplicateKey) {
-                return;
-            }
-
-            if (
-                isExactDuplicateLocation(
-                    lastSavedLocationRef.current,
-                    latitude,
-                    longitude,
-                    recordedAtMs,
-                ) ||
-                isNearDuplicateLocation(
-                    lastSavedLocationRef.current,
-                    latitude,
-                    longitude,
-                    recordedAtMs,
-                )
-            ) {
-                console.log("Skip duplicate foreground location:", {
-                    latitude,
-                    longitude,
-                    recordedAt,
-                });
-
-                return;
-            }
-
-            if (!forceSave) {
-                try {
-                    const { state } = await getBackgroundRecordingStatus();
-
-                    const backgroundLastSavedLocation =
-                        state?.lastSavedLocation ?? null;
-
-                    if (
-                        isExactDuplicateLocation(
-                            backgroundLastSavedLocation,
-                            latitude,
-                            longitude,
-                            recordedAtMs,
-                        ) ||
-                        isNearDuplicateLocation(
-                            backgroundLastSavedLocation,
-                            latitude,
-                            longitude,
-                            recordedAtMs,
-                        )
-                    ) {
-                        console.log(
-                            "Skip duplicate foreground location by background state:",
-                            {
-                                latitude,
-                                longitude,
-                                recordedAt,
-                            },
-                        );
-
-                        return;
-                    }
-                } catch (error) {
-                    console.error(
-                        "Check background duplicate location error:",
-                        error,
-                    );
-                }
-            }
-
-            if (
-                !forceSave &&
-                !shouldSaveLocation(latitude, longitude, recordedAtMs)
-            ) {
+            if (!lock) {
                 return;
             }
 
             try {
-                savingLocationKeyRef.current = duplicateKey;
+                /*
+                 * ロック取得後に共有状態を再取得し、
+                 * background側が直前に保存した地点を反映する。
+                 */
+                const { state } = await getBackgroundRecordingStatus();
 
-                const userId = recordingUserIdRef.current;
+                if (
+                    !isRecordingRef.current ||
+                    recordingSessionIdRef.current !== recordingSessionId ||
+                    !state?.isRecording ||
+                    state.recordingSessionId !== recordingSessionId
+                ) {
+                    return;
+                }
 
-                if (!userId) {
-                    console.error(
-                        "Skip foreground LocationLog create: userId is missing",
+                const latestLastSavedLocation =
+                    state.lastSavedLocation ??
+                    lastSavedLocationRef.current ??
+                    null;
+
+                if (
+                    !forceSave &&
+                    isAbnormalSpeedLocation(
+                        latestLastSavedLocation,
+                        latitude,
+                        longitude,
+                        recordedAtMs,
+                    )
+                ) {
+                    const speedMetersPerSecond = calculateSpeedMetersPerSecond(
+                        latestLastSavedLocation,
+                        latitude,
+                        longitude,
+                        recordedAtMs,
                     );
 
                     await saveBackgroundLocationDebugLog({
-                        userId: null,
-                        recordingSessionId: recordingSessionIdRef.current,
-                        eventName: "foregroundLocationLogSkippedNoUserId",
+                        userId,
+                        recordingSessionId,
+                        eventName: "foregroundLocationLogSkippedAbnormalSpeed",
                         details: {
                             recordedAt,
                             latitude,
                             longitude,
+                            accuracy,
+                            speedMetersPerSecond,
+                            speedKmPerHour:
+                                speedMetersPerSecond == null
+                                    ? null
+                                    : speedMetersPerSecond * 3.6,
                         },
                     });
 
+                    return;
+                }
+
+                /*
+                 * 開始・停止地点のforceSaveでは、状態に先行設定された
+                 * lastSavedLocationによって自分自身を除外しない。
+                 * DBの決定的idによる完全重複防止は常に実施する。
+                 */
+                if (
+                    !forceSave &&
+                    (isExactDuplicateLocation(
+                        latestLastSavedLocation,
+                        latitude,
+                        longitude,
+                        recordedAtMs,
+                    ) ||
+                        isNearDuplicateLocation(
+                            latestLastSavedLocation,
+                            latitude,
+                            longitude,
+                            recordedAtMs,
+                        ))
+                ) {
+                    return;
+                }
+
+                if (
+                    !forceSave &&
+                    !shouldSaveLocationFromSavedLocation(
+                        latestLastSavedLocation,
+                        latitude,
+                        longitude,
+                        recordedAtMs,
+                        intervalMs,
+                        distanceMeters,
+                    )
+                ) {
+                    return;
+                }
+
+                const locationUniqueKey = createLocationUniqueKey({
+                    userId,
+                    recordingSessionId,
+                    recordedAt,
+                    latitude,
+                    longitude,
+                    accuracy,
+                });
+                const locationLogId = createLocationLogId(locationUniqueKey);
+
+                if (await isLocationLogAlreadySaved(locationLogId)) {
                     return;
                 }
 
@@ -517,23 +527,30 @@ export function useForegroundLocationRecorder({
                         : undefined;
 
                 const result = await client.models.LocationLog.create({
+                    id: locationLogId,
                     userId,
                     latitude,
                     longitude,
                     accuracy,
                     recordedAt,
                     memo: "自動記録",
-                    recordingSessionId: recordingSessionIdRef.current,
+                    recordingSessionId,
                     source: "foreground",
-
                     sharedOwners,
-
+                    locationUniqueKey,
                     batteryLevel: batterySnapshot.batteryLevel ?? undefined,
                     batteryState: batterySnapshot.batteryState ?? undefined,
                     lowPowerMode: batterySnapshot.lowPowerMode ?? undefined,
                 });
 
                 if (result.errors) {
+                    if (
+                        isDuplicateLocationCreateError(result.errors) ||
+                        (await isLocationLogAlreadySaved(locationLogId))
+                    ) {
+                        return;
+                    }
+
                     const errorMessage = getErrorMessage(result.errors);
 
                     console.error(
@@ -543,7 +560,7 @@ export function useForegroundLocationRecorder({
 
                     await saveBackgroundLocationDebugLog({
                         userId,
-                        recordingSessionId: recordingSessionIdRef.current,
+                        recordingSessionId,
                         eventName: "foregroundLocationLogCreateFailed",
                         errorMessage,
                         details: {
@@ -551,6 +568,7 @@ export function useForegroundLocationRecorder({
                             latitude,
                             longitude,
                             source: "foreground",
+                            locationUniqueKey,
                         },
                     });
 
@@ -563,6 +581,10 @@ export function useForegroundLocationRecorder({
                     recordedAt: recordedAtMs,
                 };
 
+                /*
+                 * create成功後、ロックを解放する前にforeground refと
+                 * AsyncStorageの最終保存位置を両方更新する。
+                 */
                 lastSavedLocationRef.current = nextSavedLocation;
 
                 await updateBackgroundRecordingLastSavedLocation(
@@ -577,13 +599,12 @@ export function useForegroundLocationRecorder({
             } catch (error) {
                 console.error("Auto LocationLog create error:", error);
             } finally {
-                if (savingLocationKeyRef.current === duplicateKey) {
-                    savingLocationKeyRef.current = null;
-                }
+                await releaseLocationSaveLock(lock);
             }
         },
         [
-            shouldSaveLocation,
+            intervalMs,
+            distanceMeters,
             updateDistanceFromStart,
             normalizedLiveShareOwnerValues,
         ],
@@ -715,11 +736,6 @@ export function useForegroundLocationRecorder({
                 setRecordingStartedAt(null);
                 setDistanceFromStartMeters(null);
                 setIsRecording(false);
-
-                console.log("Restored live sharing state:", {
-                    isRecording: false,
-                    sharedOwnersCount: state.liveShareOwnerValues?.length ?? 0,
-                });
             }
 
             try {
@@ -1145,12 +1161,43 @@ export function useForegroundLocationRecorder({
     };
 }
 
-function createLocationDuplicateKey(
+function shouldSaveLocationFromSavedLocation(
+    lastSavedLocation: SavedLocation | null,
     latitude: number,
     longitude: number,
     recordedAtMs: number,
+    intervalMs: number,
+    distanceMeters: number,
 ) {
-    return [recordedAtMs, latitude.toFixed(7), longitude.toFixed(7)].join(":");
+    if (!lastSavedLocation) {
+        return true;
+    }
+
+    const elapsedMs = recordedAtMs - lastSavedLocation.recordedAt;
+
+    if (elapsedMs <= 0) {
+        return false;
+    }
+
+    const distance = calculateDistanceMeters(
+        lastSavedLocation.latitude,
+        lastSavedLocation.longitude,
+        latitude,
+        longitude,
+    );
+
+    const configuredIntervalMs =
+        Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : 60_000;
+
+    const configuredDistanceMeters =
+        Number.isFinite(distanceMeters) && distanceMeters > 0
+            ? distanceMeters
+            : 100;
+
+    return (
+        elapsedMs >= configuredIntervalMs ||
+        distance >= configuredDistanceMeters
+    );
 }
 
 function createRecordingSessionId() {

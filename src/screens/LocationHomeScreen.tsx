@@ -289,15 +289,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
         let cancelled = false;
 
         const loadSelectedLiveShareUserIcons = async () => {
-            console.log(
-                "[LiveShareIcon] selected users:",
-                selectedLiveShareUsers.map((user) => ({
-                    id: user.id,
-                    userId: user.userId,
-                    displayName: user.displayName,
-                    iconImagePath: user.iconImagePath,
-                })),
-            );
             const iconEntries = await Promise.all(
                 selectedLiveShareUsers.map(async (user) => {
                     if (!user.iconImagePath) {
@@ -1115,23 +1106,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         </View>
                     )}
                 </View>
-                <View style={styles.buttonSpace}>
-                    <AppButton
-                        title="セッション履歴を見る"
-                        onPress={() => navigation.navigate("LocationLog")}
-                    />
-                </View>
-                <View style={styles.buttonSpace}>
-                    <AppButton
-                        title={
-                            openingSharedLiveMap
-                                ? "共有中の現在地を取得中..."
-                                : "共有中の現在地を見る"
-                        }
-                        onPress={handleOpenSharedLiveLocationMap}
-                        disabled={openingSharedLiveMap}
-                    />
-                </View>
 
                 <View style={styles.liveShareBox}>
                     <Text style={styles.liveShareTitle}>
@@ -1406,6 +1380,24 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             </Text>
                         </Pressable>
                     )}
+                </View>
+
+                <View style={styles.buttonSpace}>
+                    <AppButton
+                        title="セッション履歴を見る"
+                        onPress={() => navigation.navigate("LocationLog")}
+                    />
+                </View>
+                <View style={styles.buttonSpace}>
+                    <AppButton
+                        title={
+                            openingSharedLiveMap
+                                ? "共有中の現在地を取得中..."
+                                : "共有中の現在地を見る"
+                        }
+                        onPress={handleOpenSharedLiveLocationMap}
+                        disabled={openingSharedLiveMap}
+                    />
                 </View>
 
                 <View style={styles.buttonSpace}>

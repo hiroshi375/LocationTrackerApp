@@ -10,6 +10,7 @@ import {
     BACKGROUND_RECORDING_STATE_KEY,
 } from "../tasks/backgroundLocationTask";
 import { saveBackgroundLocationDebugLog } from "./backgroundLocationDebugLogService";
+import { clearLocationSaveLock } from "./locationLogDeduplicationService";
 
 export const BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED =
     "BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED";
@@ -180,6 +181,17 @@ export async function startBackgroundLocationTracking({
 
     const previousState = await getBackgroundRecordingState();
 
+    /*
+     * 新しい自動記録セッション開始時は、前セッションの古いロックを除去する。
+     */
+    if (
+        isRecording &&
+        recordingSessionId &&
+        recordingSessionId !== previousState?.recordingSessionId
+    ) {
+        await clearLocationSaveLock();
+    }
+
     const nextState: BackgroundRecordingState = {
         userId,
         isRecording,
@@ -313,6 +325,7 @@ export async function stopBackgroundLocationTracking() {
     }
 
     await AsyncStorage.removeItem(BACKGROUND_RECORDING_STATE_KEY);
+    await clearLocationSaveLock();
 }
 
 export async function stopBackgroundLocationRecording() {
@@ -365,6 +378,7 @@ export async function stopBackgroundLocationRecording() {
             }
         }
 
+        await clearLocationSaveLock();
         return;
     }
 

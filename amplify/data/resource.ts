@@ -24,6 +24,8 @@ const schema = a.schema({
             lowPowerMode: a.boolean(),
 
             source: a.string(),
+            // 同一セッション・同一時刻・同一座標・同一精度の重複防止用
+            locationUniqueKey: a.string(),
         })
         .authorization((allow) => [
             allow.owner(),

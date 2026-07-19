@@ -137,6 +137,13 @@
               "isRequired": false,
               "attributes": []
             },
+            "locationUniqueKey": {
+              "name": "locationUniqueKey",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
             "createdAt": {
               "name": "createdAt",
               "isArray": false,

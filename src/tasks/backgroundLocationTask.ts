@@ -10,6 +10,16 @@ import {
     saveBackgroundLocationDebugLog,
 } from "../services/backgroundLocationDebugLogService";
 import {
+    acquireLocationSaveLock,
+    createLocationLogId,
+    createLocationSaveLockScopeKey,
+    createLocationUniqueKey,
+    deduplicateLocationBatch,
+    isDuplicateLocationCreateError,
+    isLocationLogAlreadySaved,
+    releaseLocationSaveLock,
+} from "../services/locationLogDeduplicationService";
+import {
     calculateDistanceMeters,
     calculateSpeedMetersPerSecond,
     isAbnormalSpeedLocation,
@@ -69,8 +79,6 @@ type SaveBackgroundLocationResult = {
     skippedReason?: BackgroundLocationSkipReason;
     errorMessage?: string;
 };
-
-let savingBackgroundLocationKey: string | null = null;
 
 type BackgroundDebugLogInput = Parameters<
     typeof saveBackgroundLocationDebugLog
@@ -186,9 +194,15 @@ TaskManager.defineTask(
                 return aTime - bTime;
             });
 
+            /*
+             * 1回のOS callback内に同一時刻・同一座標・同一精度の
+             * LocationObjectが複数含まれていても1件だけ処理する。
+             */
+            const uniqueLocations = deduplicateLocationBatch(sortedLocations);
+
             let currentState = state;
 
-            for (const location of sortedLocations) {
+            for (const location of uniqueLocations) {
                 /*
                  * 自動記録の有無に関係なく、
                  * 共有中ならLiveLocationを更新する。
@@ -495,38 +509,77 @@ async function saveBackgroundLocation(
     state: BackgroundRecordingState,
     taskFiredAt: string,
 ): Promise<SaveBackgroundLocationResult> {
-    let duplicateKeyForFinally: string | null = null;
+    const latitude = location.coords.latitude;
+    const longitude = location.coords.longitude;
+
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        return {
+            saved: false,
+            nextState: state,
+            skippedReason: "invalidCoordinate",
+        };
+    }
+
+    const recordedAtMs =
+        typeof location.timestamp === "number" &&
+        Number.isFinite(location.timestamp)
+            ? location.timestamp
+            : Date.now();
+
+    const recordedAt = new Date(recordedAtMs).toISOString();
+    const accuracy = location.coords.accuracy ?? null;
+    const recordingSessionId = state.recordingSessionId;
+
+    if (!recordingSessionId) {
+        return {
+            saved: false,
+            nextState: state,
+            errorMessage: "recordingSessionId is missing.",
+        };
+    }
+
+    if (isLowAccuracyLocation(accuracy)) {
+        return {
+            saved: false,
+            nextState: state,
+            skippedReason: "lowAccuracy",
+        };
+    }
+
+    const lockScopeKey = createLocationSaveLockScopeKey(
+        state.userId,
+        recordingSessionId,
+    );
+    const lock = await acquireLocationSaveLock(lockScopeKey);
+
+    if (!lock) {
+        return {
+            saved: false,
+            nextState: state,
+            skippedReason: "inProgressDuplicate",
+        };
+    }
 
     try {
-        const latitude = location.coords.latitude;
-        const longitude = location.coords.longitude;
+        /*
+         * ロック取得後にAsyncStorageを再読込する。
+         * foreground側が直前に保存したlastSavedLocationもここで反映する。
+         */
+        const latestState = await getBackgroundRecordingState();
 
-        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        if (
+            !latestState ||
+            !latestState.isRecording ||
+            latestState.recordingSessionId !== recordingSessionId
+        ) {
             return {
                 saved: false,
                 nextState: state,
-                skippedReason: "invalidCoordinate",
+                skippedReason: "saveConditionNotMet",
             };
         }
 
-        const recordedAtMs =
-            typeof location.timestamp === "number" &&
-            Number.isFinite(location.timestamp)
-                ? location.timestamp
-                : Date.now();
-
-        const recordedAt = new Date(recordedAtMs).toISOString();
-        const accuracy = location.coords.accuracy ?? null;
-
-        if (isLowAccuracyLocation(accuracy)) {
-            return {
-                saved: false,
-                nextState: state,
-                skippedReason: "lowAccuracy",
-            };
-        }
-
-        const lastSavedLocation = state.lastSavedLocation ?? null;
+        const lastSavedLocation = latestState.lastSavedLocation ?? null;
 
         if (
             isAbnormalSpeedLocation(
@@ -544,8 +597,8 @@ async function saveBackgroundLocation(
             );
 
             await safeSaveBackgroundLocationDebugLog({
-                userId: state.userId,
-                recordingSessionId: state.recordingSessionId,
+                userId: latestState.userId,
+                recordingSessionId,
                 eventName: "backgroundLocationLogSkippedAbnormalSpeed",
                 taskFiredAt,
                 details: {
@@ -563,22 +616,8 @@ async function saveBackgroundLocation(
 
             return {
                 saved: false,
-                nextState: state,
+                nextState: latestState,
                 skippedReason: "abnormalSpeed",
-            };
-        }
-
-        const duplicateKey = createLocationDuplicateKey(
-            latitude,
-            longitude,
-            recordedAtMs,
-        );
-
-        if (savingBackgroundLocationKey === duplicateKey) {
-            return {
-                saved: false,
-                nextState: state,
-                skippedReason: "inProgressDuplicate",
             };
         }
 
@@ -592,7 +631,7 @@ async function saveBackgroundLocation(
         ) {
             return {
                 saved: false,
-                nextState: state,
+                nextState: latestState,
                 skippedReason: "exactDuplicate",
             };
         }
@@ -607,47 +646,53 @@ async function saveBackgroundLocation(
         ) {
             return {
                 saved: false,
-                nextState: state,
+                nextState: latestState,
                 skippedReason: "nearDuplicate",
             };
         }
 
-        /*
-         * ここから下は LocationLog 保存判定。
-         * 保存条件を満たさなくても、LiveLocation はすでに更新済み。
-         */
-        if (!shouldSaveLocation(latitude, longitude, recordedAtMs, state)) {
-            await setBackgroundRecordingState(state);
-
+        if (
+            !shouldSaveLocation(latitude, longitude, recordedAtMs, latestState)
+        ) {
             return {
                 saved: false,
-                nextState: state,
+                nextState: latestState,
                 skippedReason: "saveConditionNotMet",
             };
         }
 
-        const recordingSessionId = state.recordingSessionId;
+        const locationUniqueKey = createLocationUniqueKey({
+            userId: latestState.userId,
+            recordingSessionId,
+            recordedAt,
+            latitude,
+            longitude,
+            accuracy,
+        });
+        const locationLogId = createLocationLogId(locationUniqueKey);
 
-        if (!recordingSessionId) {
+        /*
+         * 通常はここで既存レコードを検出する。
+         * 同時実行でこの確認をすり抜けても、決定的idによりcreate時に防止される。
+         */
+        if (await isLocationLogAlreadySaved(locationLogId)) {
             return {
                 saved: false,
-                nextState: state,
-                errorMessage: "recordingSessionId is missing.",
+                nextState: latestState,
+                skippedReason: "exactDuplicate",
             };
         }
 
         const sharedOwners =
-            state.liveShareOwnerValues.length > 0
+            latestState.liveShareOwnerValues.length > 0
                 ? Array.from(
-                      new Set(state.liveShareOwnerValues.filter(Boolean)),
+                      new Set(latestState.liveShareOwnerValues.filter(Boolean)),
                   )
                 : undefined;
 
-        savingBackgroundLocationKey = duplicateKey;
-        duplicateKeyForFinally = duplicateKey;
-
         const result = await client.models.LocationLog.create({
-            userId: state.userId,
+            id: locationLogId,
+            userId: latestState.userId,
             latitude,
             longitude,
             accuracy,
@@ -656,9 +701,21 @@ async function saveBackgroundLocation(
             recordingSessionId,
             source: "background",
             sharedOwners,
+            locationUniqueKey,
         });
 
         if (result.errors) {
+            if (
+                isDuplicateLocationCreateError(result.errors) ||
+                (await isLocationLogAlreadySaved(locationLogId))
+            ) {
+                return {
+                    saved: false,
+                    nextState: latestState,
+                    skippedReason: "exactDuplicate",
+                };
+            }
+
             const errorMessage = getErrorMessage(result.errors);
 
             console.error(
@@ -667,7 +724,7 @@ async function saveBackgroundLocation(
             );
 
             await safeSaveBackgroundLocationDebugLog({
-                userId: state.userId,
+                userId: latestState.userId,
                 recordingSessionId,
                 eventName: "backgroundLocationLogCreateFailed",
                 taskFiredAt,
@@ -676,18 +733,19 @@ async function saveBackgroundLocation(
                     recordedAt,
                     latitude,
                     longitude,
+                    locationUniqueKey,
                 },
             });
 
             return {
                 saved: false,
-                nextState: state,
+                nextState: latestState,
                 errorMessage,
             };
         }
 
         const nextState: BackgroundRecordingState = {
-            ...state,
+            ...latestState,
             lastSavedLocation: {
                 latitude,
                 longitude,
@@ -695,6 +753,9 @@ async function saveBackgroundLocation(
             },
         };
 
+        /*
+         * create成功からロック解放までの間に最終保存位置を更新する。
+         */
         await setBackgroundRecordingState(nextState);
 
         return {
@@ -708,7 +769,7 @@ async function saveBackgroundLocation(
 
         await safeSaveBackgroundLocationDebugLog({
             userId: state.userId,
-            recordingSessionId: state.recordingSessionId ?? null,
+            recordingSessionId,
             eventName: "saveBackgroundLocationUnexpectedError",
             taskFiredAt,
             errorMessage,
@@ -729,25 +790,12 @@ async function saveBackgroundLocation(
             errorMessage,
         };
     } finally {
-        if (
-            duplicateKeyForFinally &&
-            savingBackgroundLocationKey === duplicateKeyForFinally
-        ) {
-            savingBackgroundLocationKey = null;
-        }
+        await releaseLocationSaveLock(lock);
     }
 }
 
 const DEFAULT_DISTANCE_METERS = 100;
 const DEFAULT_INTERVAL_MS = 60_000;
-
-function createLocationDuplicateKey(
-    latitude: number,
-    longitude: number,
-    recordedAtMs: number,
-) {
-    return [recordedAtMs, latitude.toFixed(7), longitude.toFixed(7)].join(":");
-}
 
 function shouldSaveLocation(
     latitude: number,

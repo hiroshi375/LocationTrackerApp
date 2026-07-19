@@ -24,6 +24,7 @@ import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRec
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import {
+    type RecordingSessionBackfillProgress,
     backfillRecordingSessionsFromLocationLogs,
     upsertRecordingSessionSummary,
 } from "../services/recordingSessionService";
@@ -134,6 +135,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [liveShareStatusMessage, setLiveShareStatusMessage] = useState("");
     const [openingSharedLiveMap, setOpeningSharedLiveMap] = useState(false);
     const [backfillingSessions, setBackfillingSessions] = useState(false);
+    const [backfillProgress, setBackfillProgress] =
+        useState<RecordingSessionBackfillProgress | null>(null);
 
     useEffect(() => {
         const loadSavedHomeSettings = async () => {
@@ -1030,6 +1033,32 @@ export default function LocationHomeScreen({ navigation }: Props) {
         void ensureUserProfile();
     }, []);
 
+    const backfillProgressText = useMemo(() => {
+        if (!backfillingSessions) {
+            return "";
+        }
+
+        if (!backfillProgress) {
+            return "処理を開始しています...";
+        }
+
+        switch (backfillProgress.phase) {
+            case "loadingLocationLogs":
+                return backfillProgress.loadedLocationLogCount > 0
+                    ? `LocationLogを取得中... ${backfillProgress.loadedLocationLogCount.toLocaleString()}件`
+                    : "LocationLogを取得中...";
+
+            case "processingSessions":
+                return `${backfillProgress.processedSessionCount} / ${backfillProgress.totalSessionCount} セッション処理中`;
+
+            case "recalculatingAggregates":
+                return "月間・トータル集計を更新中...";
+
+            default:
+                return "セッション履歴を作成中...";
+        }
+    }, [backfillingSessions, backfillProgress]);
+
     const handleBackfillRecordingSessions = async () => {
         if (backfillingSessions || isRecording) {
             return;
@@ -1048,9 +1077,36 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     onPress: async () => {
                         try {
                             setBackfillingSessions(true);
+                            setBackfillProgress({
+                                phase: "loadingLocationLogs",
+                                loadedLocationLogCount: 0,
+                                processedSessionCount: 0,
+                                totalSessionCount: 0,
+                                createdOrUpdatedCount: 0,
+                                failedCount: 0,
+                                currentRecordingSessionId: null,
+                            });
 
                             const result =
-                                await backfillRecordingSessionsFromLocationLogs();
+                                await backfillRecordingSessionsFromLocationLogs(
+                                    (progress) => {
+                                        setBackfillProgress(progress);
+                                    },
+                                );
+
+                            const failureDetails =
+                                result.failures.length > 0
+                                    ? [
+                                          "",
+                                          "失敗内容:",
+                                          ...result.failures
+                                              .slice(0, 3)
+                                              .map(
+                                                  (failure) =>
+                                                      `${failure.recordingSessionId}: ${failure.errorMessage}`,
+                                              ),
+                                      ]
+                                    : [];
 
                             Alert.alert(
                                 "作成完了",
@@ -1060,6 +1116,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                     `作成・更新: ${result.createdOrUpdatedCount}件`,
                                     `失敗: ${result.failedCount}件`,
                                     `対象外ログ: ${result.skippedLogCount}件`,
+                                    ...failureDetails,
                                 ].join("\n"),
                             );
                         } catch (error) {
@@ -1074,6 +1131,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             );
                         } finally {
                             setBackfillingSessions(false);
+                            setBackfillProgress(null);
                         }
                     },
                 },
@@ -1418,13 +1476,65 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         <AppButton
                             title={
                                 backfillingSessions
-                                    ? "セッション履歴を作成中..."
+                                    ? backfillProgressText
                                     : "過去ログからセッション履歴を作成"
                             }
                             onPress={handleBackfillRecordingSessions}
                             disabled={backfillingSessions || isRecording}
                             backgroundColor="#27445c"
                         />
+
+                        {backfillingSessions && backfillProgress && (
+                            <View style={styles.backfillProgressContainer}>
+                                <ActivityIndicator size="small" />
+
+                                <Text style={styles.backfillProgressText}>
+                                    {backfillProgressText}
+                                </Text>
+
+                                {backfillProgress.phase ===
+                                    "processingSessions" &&
+                                    backfillProgress.totalSessionCount > 0 && (
+                                        <>
+                                            <View
+                                                style={
+                                                    styles.backfillProgressTrack
+                                                }
+                                            >
+                                                <View
+                                                    style={[
+                                                        styles.backfillProgressBar,
+                                                        {
+                                                            width: `${Math.min(
+                                                                100,
+                                                                Math.max(
+                                                                    0,
+                                                                    (backfillProgress.processedSessionCount /
+                                                                        backfillProgress.totalSessionCount) *
+                                                                        100,
+                                                                ),
+                                                            )}%`,
+                                                        },
+                                                    ]}
+                                                />
+                                            </View>
+
+                                            <Text
+                                                style={
+                                                    styles.backfillProgressDetail
+                                                }
+                                            >
+                                                成功:{" "}
+                                                {
+                                                    backfillProgress.createdOrUpdatedCount
+                                                }
+                                                件　失敗:{" "}
+                                                {backfillProgress.failedCount}件
+                                            </Text>
+                                        </>
+                                    )}
+                            </View>
+                        )}
                     </View>
                 )}
                 <View style={styles.signOutButtonSpace}>
@@ -2171,6 +2281,41 @@ const styles = StyleSheet.create({
         marginTop: 4,
         color: "#555",
         fontSize: 11,
+        textAlign: "center",
+    },
+
+    backfillProgressContainer: {
+        marginTop: 10,
+        alignItems: "center",
+    },
+
+    backfillProgressText: {
+        marginTop: 8,
+        fontSize: 14,
+        fontWeight: "600",
+        color: "#27445c",
+        textAlign: "center",
+    },
+
+    backfillProgressTrack: {
+        width: "100%",
+        height: 8,
+        marginTop: 10,
+        overflow: "hidden",
+        borderRadius: 4,
+        backgroundColor: "#d9e1e8",
+    },
+
+    backfillProgressBar: {
+        height: "100%",
+        borderRadius: 4,
+        backgroundColor: "#27445c",
+    },
+
+    backfillProgressDetail: {
+        marginTop: 6,
+        fontSize: 12,
+        color: "#5f6f7c",
         textAlign: "center",
     },
 });

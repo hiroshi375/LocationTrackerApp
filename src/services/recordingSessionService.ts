@@ -305,6 +305,26 @@ async function listLocationLogsBySessionId(
         );
 }
 
+export type RecordingSessionBackfillProgress = {
+    phase:
+        | "loadingLocationLogs"
+        | "processingSessions"
+        | "recalculatingAggregates";
+
+    loadedLocationLogCount: number;
+    processedSessionCount: number;
+    totalSessionCount: number;
+
+    createdOrUpdatedCount: number;
+    failedCount: number;
+
+    currentRecordingSessionId?: string | null;
+};
+
+type RecordingSessionBackfillProgressCallback = (
+    progress: RecordingSessionBackfillProgress,
+) => void;
+
 type RecordingSessionBackfillResult = {
     locationLogCount: number;
     targetSessionCount: number;
@@ -317,11 +337,29 @@ type RecordingSessionBackfillResult = {
     }[];
 };
 
-export async function backfillRecordingSessionsFromLocationLogs(): Promise<RecordingSessionBackfillResult> {
+export async function backfillRecordingSessionsFromLocationLogs(
+    onProgress?: RecordingSessionBackfillProgressCallback,
+): Promise<RecordingSessionBackfillResult> {
     const currentUser = await getCurrentUser();
     const model = client.models.LocationLog as any;
+
     const allLogs: any[] = [];
     let nextToken: string | null = null;
+
+    /*
+     * まず、過去のLocationLogを全件取得する。
+     * この時点では対象セッション総数が分からないため、
+     * LocationLogの取得件数だけを通知する。
+     */
+    onProgress?.({
+        phase: "loadingLocationLogs",
+        loadedLocationLogCount: 0,
+        processedSessionCount: 0,
+        totalSessionCount: 0,
+        createdOrUpdatedCount: 0,
+        failedCount: 0,
+        currentRecordingSessionId: null,
+    });
 
     do {
         const result = (await model.list({
@@ -337,12 +375,26 @@ export async function backfillRecordingSessionsFromLocationLogs(): Promise<Recor
 
         allLogs.push(...(result.data ?? []));
         nextToken = result.nextToken ?? null;
+
+        onProgress?.({
+            phase: "loadingLocationLogs",
+            loadedLocationLogCount: allLogs.length,
+            processedSessionCount: 0,
+            totalSessionCount: 0,
+            createdOrUpdatedCount: 0,
+            failedCount: 0,
+            currentRecordingSessionId: null,
+        });
     } while (nextToken);
 
     const sessionMap = new Map<
         string,
-        { recordingSessionName: string | null; sharedOwners: string[] }
+        {
+            recordingSessionName: string | null;
+            sharedOwners: string[];
+        }
     >();
+
     let skippedLogCount = 0;
 
     for (const log of allLogs) {
@@ -351,63 +403,136 @@ export async function backfillRecordingSessionsFromLocationLogs(): Promise<Recor
             continue;
         }
 
-        const id =
+        const recordingSessionId =
             typeof log.recordingSessionId === "string"
                 ? log.recordingSessionId.trim()
                 : "";
 
-        if (!id) {
+        if (!recordingSessionId) {
             skippedLogCount += 1;
             continue;
         }
 
-        const current = sessionMap.get(id);
-        sessionMap.set(id, {
+        const current = sessionMap.get(recordingSessionId);
+
+        sessionMap.set(recordingSessionId, {
             recordingSessionName:
                 current?.recordingSessionName ??
                 log.recordingSessionName ??
                 null,
+
             sharedOwners: Array.from(
                 new Set([
                     ...(current?.sharedOwners ?? []),
                     ...(Array.isArray(log.sharedOwners)
-                        ? log.sharedOwners.filter(Boolean)
+                        ? log.sharedOwners.filter(
+                              (owner: unknown): owner is string =>
+                                  typeof owner === "string" && owner.length > 0,
+                          )
                         : []),
                 ]),
             ),
         });
     }
 
+    const totalSessionCount = sessionMap.size;
+
+    let processedSessionCount = 0;
     let createdOrUpdatedCount = 0;
     let failedCount = 0;
+
     const failures: RecordingSessionBackfillResult["failures"] = [];
 
-    for (const [id, info] of sessionMap.entries()) {
+    onProgress?.({
+        phase: "processingSessions",
+        loadedLocationLogCount: allLogs.length,
+        processedSessionCount,
+        totalSessionCount,
+        createdOrUpdatedCount,
+        failedCount,
+        currentRecordingSessionId: null,
+    });
+
+    for (const [recordingSessionId, info] of sessionMap.entries()) {
+        onProgress?.({
+            phase: "processingSessions",
+            loadedLocationLogCount: allLogs.length,
+            processedSessionCount,
+            totalSessionCount,
+            createdOrUpdatedCount,
+            failedCount,
+            currentRecordingSessionId: recordingSessionId,
+        });
+
         try {
             await upsertRecordingSessionSummary(
-                id,
+                recordingSessionId,
                 info.recordingSessionName,
                 info.sharedOwners,
                 undefined,
                 undefined,
-                { skipAggregation: true },
+                {
+                    skipAggregation: true,
+                },
             );
+
             createdOrUpdatedCount += 1;
         } catch (error) {
             failedCount += 1;
+
             failures.push({
-                recordingSessionId: id,
+                recordingSessionId,
                 errorMessage:
                     error instanceof Error ? error.message : String(error),
             });
+
+            console.error("[RecordingSessionBackfill] session failed:", {
+                recordingSessionId,
+                error,
+            });
+        } finally {
+            processedSessionCount += 1;
+
+            console.log(
+                `[RecordingSessionBackfill] ${processedSessionCount} / ${totalSessionCount}`,
+                {
+                    recordingSessionId,
+                    createdOrUpdatedCount,
+                    failedCount,
+                },
+            );
+
+            onProgress?.({
+                phase: "processingSessions",
+                loadedLocationLogCount: allLogs.length,
+                processedSessionCount,
+                totalSessionCount,
+                createdOrUpdatedCount,
+                failedCount,
+                currentRecordingSessionId: recordingSessionId,
+            });
         }
     }
+
+    /*
+     * 各セッション処理では集計をスキップしているため、
+     * 最後に1回だけユーザー集計を再計算する。
+     */
+    onProgress?.({
+        phase: "recalculatingAggregates",
+        loadedLocationLogCount: allLogs.length,
+        processedSessionCount,
+        totalSessionCount,
+        createdOrUpdatedCount,
+        failedCount,
+        currentRecordingSessionId: null,
+    });
 
     await recalculateUserActivityAggregates(currentUser.userId);
 
     return {
         locationLogCount: allLogs.length,
-        targetSessionCount: sessionMap.size,
+        targetSessionCount: totalSessionCount,
         createdOrUpdatedCount,
         failedCount,
         skippedLogCount,

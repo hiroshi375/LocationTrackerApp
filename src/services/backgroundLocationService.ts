@@ -2,6 +2,7 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
+import * as TaskManager from "expo-task-manager";
 import { Alert, Linking } from "react-native";
 import { client } from "../lib/client";
 
@@ -9,9 +10,29 @@ import {
     BACKGROUND_LOCATION_TASK_NAME,
     BACKGROUND_RECORDING_STATE_KEY,
 } from "../tasks/backgroundLocationTask";
-import { saveBackgroundLocationDebugLog } from "./backgroundLocationDebugLogService";
+import {
+    getErrorMessage,
+    saveBackgroundLocationDebugLog,
+} from "./backgroundLocationDebugLogService";
 import { clearLocationSaveLock } from "./locationLogDeduplicationService";
 import { initializeRecordingContinuationState } from "./recordingContinuationService";
+
+type BackgroundDebugLogInput = Parameters<
+    typeof saveBackgroundLocationDebugLog
+>[0];
+
+async function safeSaveBackgroundLocationDebugLog(
+    input: BackgroundDebugLogInput,
+): Promise<void> {
+    try {
+        await saveBackgroundLocationDebugLog(input);
+    } catch (debugLogError) {
+        console.error(
+            "Failed to save background location service debug log:",
+            debugLogError,
+        );
+    }
+}
 
 export const BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED =
     "BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED";
@@ -177,111 +198,261 @@ export async function startBackgroundLocationTracking({
     intervalMs,
     distanceMeters,
     liveShareOwnerValues = [],
-    liveLocationId = null,
+    liveLocationId,
     lastSavedLocation,
 }: StartBackgroundLocationTrackingParams) {
     const normalizedLiveShareOwnerValues = Array.from(
         new Set(liveShareOwnerValues.filter(Boolean)),
     );
 
-    /*
-     * 自動記録も共有もしていない場合は追跡不要。
-     */
-    if (!isRecording && normalizedLiveShareOwnerValues.length === 0) {
-        await stopBackgroundLocationTracking();
-        return;
-    }
-
-    await ensureBackgroundLocationPermission(
-        userId,
-        recordingSessionId ?? undefined,
-    );
-
-    const previousState = await getBackgroundRecordingState();
-
-    const isNewRecordingSession =
-        isRecording &&
-        Boolean(recordingSessionId) &&
-        recordingSessionId !== previousState?.recordingSessionId;
-    /*
-     * 新しい自動記録セッション開始時は、前セッションの古いロックを除去する。
-     */
-    if (isNewRecordingSession && recordingSessionId) {
-        await clearLocationSaveLock();
-
-        await initializeRecordingContinuationState(
-            recordingSessionId,
-            startedAt ?? new Date().toISOString(),
-        );
-    }
-
-    const nextState: BackgroundRecordingState = {
-        userId,
+    const startDebugDetails = {
         isRecording,
-        recordingSessionId,
-        startedAt,
         intervalMs,
         distanceMeters,
-        liveShareOwnerValues: normalizedLiveShareOwnerValues,
-
-        liveLocationId:
-            liveLocationId !== undefined
-                ? liveLocationId
-                : (previousState?.liveLocationId ?? null),
-
-        /*
-         * 新規セッション開始時は、
-         * 前セッションの最終保存地点を引き継がない。
-         */
-        lastSavedLocation: isNewRecordingSession
-            ? null
-            : lastSavedLocation !== undefined
-              ? lastSavedLocation
-              : (previousState?.lastSavedLocation ?? null),
+        sharedOwnersCount: normalizedLiveShareOwnerValues.length,
+        hasRecordingSessionId: Boolean(recordingSessionId),
+        hasStartedAt: Boolean(startedAt),
+        hasLiveLocationId: Boolean(liveLocationId),
+        hasLastSavedLocation: Boolean(lastSavedLocation),
     };
 
-    await AsyncStorage.setItem(
-        BACKGROUND_RECORDING_STATE_KEY,
-        JSON.stringify(nextState),
-    );
+    try {
+        /*
+         * 自動記録も共有もしていない場合は追跡不要。
+         */
+        if (!isRecording && normalizedLiveShareOwnerValues.length === 0) {
+            await safeSaveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName: "backgroundLocationTrackingSkippedNoPurpose",
+                details: startDebugDetails,
+            });
 
-    const hasStarted = await Location.hasStartedLocationUpdatesAsync(
-        BACKGROUND_LOCATION_TASK_NAME,
-    );
+            await stopBackgroundLocationTracking();
+            return;
+        }
 
-    const shouldRestart = shouldRestartBackgroundLocationUpdates(
-        hasStarted,
-        previousState,
-        nextState,
-    );
+        await ensureBackgroundLocationPermission(
+            userId,
+            recordingSessionId ?? undefined,
+        );
 
-    if (shouldRestart) {
-        await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME);
+        await safeSaveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "backgroundLocationStartPermissionGranted",
+            details: startDebugDetails,
+        });
+
+        const previousState = await getBackgroundRecordingState();
+
+        const isNewRecordingSession =
+            isRecording &&
+            Boolean(recordingSessionId) &&
+            recordingSessionId !== previousState?.recordingSessionId;
+
+        /*
+         * 新しい自動記録セッション開始時は、
+         * 前セッションの古いロックを除去する。
+         */
+        if (isNewRecordingSession && recordingSessionId) {
+            await clearLocationSaveLock();
+
+            await initializeRecordingContinuationState(
+                recordingSessionId,
+                startedAt ?? new Date().toISOString(),
+            );
+        }
+
+        const nextState: BackgroundRecordingState = {
+            userId,
+            isRecording,
+            recordingSessionId,
+            startedAt,
+            intervalMs,
+            distanceMeters,
+            liveShareOwnerValues: normalizedLiveShareOwnerValues,
+
+            liveLocationId:
+                liveLocationId !== undefined
+                    ? liveLocationId
+                    : (previousState?.liveLocationId ?? null),
+
+            /*
+             * 新規セッション開始時は、
+             * 前セッションの最終保存地点を引き継がない。
+             */
+            lastSavedLocation: isNewRecordingSession
+                ? null
+                : lastSavedLocation !== undefined
+                  ? lastSavedLocation
+                  : (previousState?.lastSavedLocation ?? null),
+        };
+
+        await AsyncStorage.setItem(
+            BACKGROUND_RECORDING_STATE_KEY,
+            JSON.stringify(nextState),
+        );
+
+        await safeSaveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "backgroundLocationStateSaved",
+            details: {
+                ...startDebugDetails,
+                isNewRecordingSession,
+                previousRecordingSessionId:
+                    previousState?.recordingSessionId ?? null,
+                nextRecordingSessionId: nextState.recordingSessionId ?? null,
+                hasPreviousState: Boolean(previousState),
+                hasNextLastSavedLocation: Boolean(nextState.lastSavedLocation),
+            },
+        });
+
+        const isTaskDefined = TaskManager.isTaskDefined(
+            BACKGROUND_LOCATION_TASK_NAME,
+        );
+
+        if (!isTaskDefined) {
+            throw new Error(
+                `Background location task is not defined: ${BACKGROUND_LOCATION_TASK_NAME}`,
+            );
+        }
+
+        const hasStarted = await Location.hasStartedLocationUpdatesAsync(
+            BACKGROUND_LOCATION_TASK_NAME,
+        );
+
+        const shouldRestartByState = shouldRestartBackgroundLocationUpdates(
+            hasStarted,
+            previousState,
+            nextState,
+        );
+
+        /*
+         * 新しい記録セッションでは、OS側に古い登録が残っていても
+         * 必ず停止・再登録する。
+         */
+        const shouldRestart =
+            hasStarted && (isNewRecordingSession || shouldRestartByState);
+
+        await safeSaveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "backgroundLocationNativeStatusChecked",
+            hasStartedLocationUpdates: hasStarted,
+            details: {
+                ...startDebugDetails,
+                isTaskDefined,
+                isNewRecordingSession,
+                shouldRestartByState,
+                shouldRestart,
+                previousIsRecording: previousState?.isRecording ?? null,
+                previousRecordingSessionId:
+                    previousState?.recordingSessionId ?? null,
+                previousIntervalMs: previousState?.intervalMs ?? null,
+                previousDistanceMeters: previousState?.distanceMeters ?? null,
+            },
+        });
+
+        if (shouldRestart) {
+            await Location.stopLocationUpdatesAsync(
+                BACKGROUND_LOCATION_TASK_NAME,
+            );
+
+            await safeSaveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName: "backgroundLocationUpdatesStoppedForRestart",
+                hasStartedLocationUpdates: false,
+                details: {
+                    isNewRecordingSession,
+                    shouldRestartByState,
+                },
+            });
+        }
+
+        if (hasStarted && !shouldRestart) {
+            await safeSaveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName: "backgroundLocationTrackingAlreadyStarted",
+                hasStartedLocationUpdates: true,
+                details: {
+                    ...startDebugDetails,
+                    isTaskDefined,
+                },
+            });
+
+            return;
+        }
+
+        await Location.startLocationUpdatesAsync(
+            BACKGROUND_LOCATION_TASK_NAME,
+            {
+                accuracy: Location.Accuracy.BestForNavigation,
+                timeInterval: intervalMs,
+                distanceInterval: distanceMeters,
+                activityType: Location.ActivityType.Fitness,
+                pausesUpdatesAutomatically: false,
+                deferredUpdatesInterval: 0,
+                deferredUpdatesDistance: 0,
+                showsBackgroundLocationIndicator: true,
+                foregroundService: {
+                    notificationTitle: isRecording
+                        ? "位置情報を記録中"
+                        : "現在地を共有中",
+                    notificationBody: isRecording
+                        ? "自動記録をバックグラウンドで継続しています"
+                        : "現在地のリアルタイム共有を継続しています",
+                    notificationColor: "#4b6f8f",
+                },
+            },
+        );
+
+        const hasStartedAfterStart =
+            await Location.hasStartedLocationUpdatesAsync(
+                BACKGROUND_LOCATION_TASK_NAME,
+            );
+
+        await safeSaveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "backgroundLocationTrackingStarted",
+            hasStartedLocationUpdates: hasStartedAfterStart,
+            details: {
+                ...startDebugDetails,
+                isTaskDefined,
+                isNewRecordingSession,
+                restartedExistingRegistration: shouldRestart,
+            },
+        });
+
+        if (!hasStartedAfterStart) {
+            throw new Error(
+                "Background location updates did not become active after startLocationUpdatesAsync.",
+            );
+        }
+    } catch (error) {
+        const errorMessage = getErrorMessage(error);
+
+        console.error("Start background location tracking error:", error);
+
+        await safeSaveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "backgroundLocationTrackingStartFailed",
+            errorMessage,
+            details: {
+                ...startDebugDetails,
+                errorName: error instanceof Error ? error.name : typeof error,
+                errorStack:
+                    error instanceof Error ? (error.stack ?? null) : null,
+            },
+        });
+
+        throw error;
     }
-
-    if (hasStarted && !shouldRestart) {
-        return;
-    }
-
-    await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME, {
-        accuracy: Location.Accuracy.BestForNavigation,
-        timeInterval: intervalMs,
-        distanceInterval: distanceMeters,
-        activityType: Location.ActivityType.Fitness,
-        pausesUpdatesAutomatically: false,
-        deferredUpdatesInterval: 0,
-        deferredUpdatesDistance: 0,
-        showsBackgroundLocationIndicator: true,
-        foregroundService: {
-            notificationTitle: isRecording
-                ? "位置情報を記録中"
-                : "現在地を共有中",
-            notificationBody: isRecording
-                ? "自動記録をバックグラウンドで継続しています"
-                : "現在地のリアルタイム共有を継続しています",
-            notificationColor: "#4b6f8f",
-        },
-    });
 }
 
 type StartBackgroundLocationRecordingParams = Omit<
@@ -438,7 +609,7 @@ export async function ensureBackgroundLocationPermission(
     const foregroundPermission =
         await Location.requestForegroundPermissionsAsync();
 
-    await saveBackgroundLocationDebugLog({
+    await safeSaveBackgroundLocationDebugLog({
         userId,
         recordingSessionId,
         eventName: "foregroundPermissionChecked",
@@ -458,7 +629,7 @@ export async function ensureBackgroundLocationPermission(
 
     let backgroundPermission = await Location.getBackgroundPermissionsAsync();
 
-    await saveBackgroundLocationDebugLog({
+    await safeSaveBackgroundLocationDebugLog({
         userId,
         recordingSessionId,
         eventName: "backgroundPermissionChecked",
@@ -473,7 +644,7 @@ export async function ensureBackgroundLocationPermission(
 
     backgroundPermission = await Location.requestBackgroundPermissionsAsync();
 
-    await saveBackgroundLocationDebugLog({
+    await safeSaveBackgroundLocationDebugLog({
         userId,
         recordingSessionId,
         eventName: "backgroundPermissionRequested",

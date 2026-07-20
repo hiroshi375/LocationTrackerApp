@@ -5,6 +5,7 @@ import {
     ActivityIndicator,
     FlatList,
     Image,
+    type ImageSourcePropType,
     Pressable,
     RefreshControl,
     StyleSheet,
@@ -33,7 +34,7 @@ type ListResult = {
     nextToken?: string | null;
 };
 
-const RANKING_TROPHY_IMAGES: Record<number, number> = {
+const RANKING_TROPHY_IMAGES: Record<number, ImageSourcePropType> = {
     1: require("../../assets/images/gold_trophy.png"),
     2: require("../../assets/images/silver_trophy.png"),
     3: require("../../assets/images/bronze_trophy.png"),
@@ -234,11 +235,25 @@ export default function ActivityRankingScreen() {
                                             source={trophyImage}
                                             style={styles.trophyImage}
                                             resizeMode="contain"
+                                            fadeDuration={0}
+                                            onLoad={() => {
+                                                console.log(
+                                                    `[ActivityRanking] trophy loaded: rank=${rank}`,
+                                                );
+                                            }}
+                                            onError={(event) => {
+                                                console.error(
+                                                    `[ActivityRanking] trophy load failed: rank=${rank}`,
+                                                    event.nativeEvent.error,
+                                                );
+                                            }}
                                         />
                                     ) : (
-                                        <Text style={styles.rankText}>
-                                            {rank}
-                                        </Text>
+                                        <View style={styles.rankBadge}>
+                                            <Text style={styles.rankText}>
+                                                {rank}
+                                            </Text>
+                                        </View>
                                     )}
                                 </View>
 
@@ -417,15 +432,25 @@ const styles = StyleSheet.create({
         borderColor: "#e1e7ec",
     },
     rankArea: {
-        width: 54,
-        height: 54,
+        width: 68,
+        height: 68,
         alignItems: "center",
         justifyContent: "center",
+        overflow: "visible",
     },
 
     trophyImage: {
-        width: 52,
-        height: 52,
+        width: 64,
+        height: 64,
+    },
+
+    rankBadge: {
+        width: 42,
+        height: 42,
+        borderRadius: 21,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#e8eef3",
     },
 
     rankText: {

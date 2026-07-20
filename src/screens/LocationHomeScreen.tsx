@@ -1613,6 +1613,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 </View>
                 <View style={styles.buttonSpace}>
                     <AppButton
+                        title="アクティビティカレンダー"
+                        onPress={() => navigation.navigate("ActivityCalendar")}
+                    />
+                </View>
+                <View style={styles.buttonSpace}>
+                    <AppButton
                         title="活動ランキングを見る"
                         onPress={() => navigation.navigate("ActivityRanking")}
                     />

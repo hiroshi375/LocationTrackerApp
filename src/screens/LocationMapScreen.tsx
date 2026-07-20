@@ -188,8 +188,7 @@ export default function LocationMapScreen({ route }: Props) {
     const [hasLoaded, setHasLoaded] = useState(false);
     const [showPoints, setShowPoints] = useState(false);
     const [mapLayerMode, setMapLayerMode] = useState<MapLayerMode>("standard");
-    const [routeViewMode, setRouteViewMode] =
-        useState<RouteViewMode>("current");
+    const [routeViewMode, setRouteViewMode] = useState<RouteViewMode>("route");
     const [mapReady, setMapReady] = useState(false);
     const [currentUserIconUrl, setCurrentUserIconUrl] = useState<string | null>(
         null,
@@ -285,6 +284,8 @@ export default function LocationMapScreen({ route }: Props) {
 
     const [currentAddress, setCurrentAddress] = useState<string>("");
     const [addressLoading, setAddressLoading] = useState(false);
+
+    const [currentDateTime, setCurrentDateTime] = useState(() => new Date());
 
     const lastAddressLookupRef = useRef<{
         latitude: number;
@@ -539,6 +540,14 @@ export default function LocationMapScreen({ route }: Props) {
 
     useEffect(() => {
         const loadRouteViewMode = async () => {
+            /*
+             * 自動記録中の地図は、毎回ルート全体表示から開始する。
+             */
+            if (isLiveRecordingMap) {
+                setRouteViewMode("route");
+                return;
+            }
+
             try {
                 const savedValue = await AsyncStorage.getItem(
                     ROUTE_VIEW_MODE_STORAGE_KEY,
@@ -557,9 +566,13 @@ export default function LocationMapScreen({ route }: Props) {
         };
 
         void loadRouteViewMode();
-    }, []);
+    }, [isLiveRecordingMap]);
 
     useEffect(() => {
+        if (isLiveRecordingMap) {
+            return;
+        }
+
         const saveRouteViewMode = async () => {
             try {
                 await AsyncStorage.setItem(
@@ -572,7 +585,7 @@ export default function LocationMapScreen({ route }: Props) {
         };
 
         void saveRouteViewMode();
-    }, [routeViewMode]);
+    }, [isLiveRecordingMap, routeViewMode]);
 
     useEffect(() => {
         if (!isOwnLiveRecordingMap) {
@@ -1050,6 +1063,22 @@ export default function LocationMapScreen({ route }: Props) {
         };
     }, [shouldShowLiveCurrentLocation, currentLocation]);
 
+    useEffect(() => {
+        if (!isLiveRecordingMap) {
+            return;
+        }
+
+        setCurrentDateTime(new Date());
+
+        const timerId = setInterval(() => {
+            setCurrentDateTime(new Date());
+        }, 30_000);
+
+        return () => {
+            clearInterval(timerId);
+        };
+    }, [isLiveRecordingMap]);
+
     if (!hasLoaded || loading) {
         return (
             <View style={styles.center}>
@@ -1195,28 +1224,28 @@ export default function LocationMapScreen({ route }: Props) {
     };
 
     const toggleRouteViewMode = () => {
-        if (routeViewMode === "current") {
-            showRouteOverview();
+        if (routeViewMode === "route") {
+            showCurrentLocation();
             return;
         }
 
-        if (routeViewMode === "route") {
+        if (routeViewMode === "current") {
             disableTracking();
             return;
         }
 
-        showCurrentLocation();
+        showRouteOverview();
     };
 
     const isRouteFitButtonActive =
         isLiveRecordingMap && routeViewMode !== "none";
 
     const routeFitButtonText =
-        routeViewMode === "current"
-            ? "ルート全体を表示"
-            : routeViewMode === "route"
+        routeViewMode === "route"
+            ? "現在地を表示"
+            : routeViewMode === "current"
               ? "追跡しない"
-              : "現在地を表示";
+              : "ルート全体を表示";
 
     const routeDistanceMeters =
         activeSessionId && routeLogs.length >= 2
@@ -1255,6 +1284,11 @@ export default function LocationMapScreen({ route }: Props) {
     const sessionEndAt =
         activeSessionId && routeLogs.length > 0
             ? routeLogs[routeLogs.length - 1].recordedAt
+            : null;
+
+    const liveRecordingPeriodText =
+        isLiveRecordingMap && sessionStartAt
+            ? formatPeriod(sessionStartAt, currentDateTime.toISOString())
             : null;
 
     const shouldShowSessionPeriod =
@@ -1521,9 +1555,7 @@ export default function LocationMapScreen({ route }: Props) {
                 <Text style={styles.infoTitle}>
                     {isSharedCurrentLocationOnlyMap
                         ? "共有中の現在地"
-                        : isSelectedMode
-                          ? "記録サマリー"
-                          : "最新位置"}
+                        : "アクティビティ記録"}
                 </Text>
 
                 {isSharedCurrentLocationOnlyMap ? (
@@ -1561,19 +1593,32 @@ export default function LocationMapScreen({ route }: Props) {
                                 </Text>
                             </>
                         ) : (
-                            <View style={styles.latestInfoRow}>
+                            <View
+                                style={[
+                                    styles.latestInfoRow,
+                                    isLiveRecordingMap &&
+                                        styles.liveRecordingInfoColumn,
+                                ]}
+                            >
                                 <Text
                                     style={[
                                         styles.infoText,
-                                        styles.latestInfoText,
+                                        !isLiveRecordingMap &&
+                                            styles.latestInfoText,
                                     ]}
                                 >
-                                    日時: {displayDateTimeText}
+                                    {isLiveRecordingMap ? "期間: " : "日時: "}
+                                    {isLiveRecordingMap &&
+                                    liveRecordingPeriodText
+                                        ? liveRecordingPeriodText
+                                        : displayDateTimeText}
                                 </Text>
+
                                 <Text
                                     style={[
                                         styles.infoText,
-                                        styles.latestInfoText,
+                                        !isLiveRecordingMap &&
+                                            styles.latestInfoText,
                                     ]}
                                 >
                                     距離: {displayDistanceText}
@@ -1613,25 +1658,18 @@ export default function LocationMapScreen({ route }: Props) {
                         : "不明"}
                 </Text>
                 */}
-                {!isSharedCurrentLocationOnlyMap && !isSelectedMode && (
-                    <View style={styles.memoRow}>
-                        <Text style={[styles.infoText, styles.memoTextInRow]}>
-                            メモ:{" "}
-                            {displayLocation.memo
-                                ? displayLocation.memo
-                                : "なし"}
-                        </Text>
-
-                        {shouldShowRecordingSettings && (
+                {!isSharedCurrentLocationOnlyMap &&
+                    !isSelectedMode &&
+                    shouldShowRecordingSettings && (
+                        <View style={styles.recordingSettingRow}>
                             <View style={styles.recordingSettingBadge}>
                                 <Text style={styles.recordingSettingBadgeText}>
                                     頻度: {recordingIntervalSeconds}秒 / 距離:{" "}
                                     {recordingDistanceMeters}m
                                 </Text>
                             </View>
-                        )}
-                    </View>
-                )}
+                        </View>
+                    )}
 
                 <View style={styles.mapLayerRow}>
                     {MAP_LAYER_OPTIONS.map((option) => {
@@ -2415,5 +2453,15 @@ const styles = StyleSheet.create({
         borderBottomWidth: 1,
         borderColor: "#c8d6e0",
         transform: [{ rotate: "45deg" }],
+    },
+    liveRecordingInfoColumn: {
+        flexDirection: "column",
+        alignItems: "flex-start",
+        gap: 4,
+    },
+    recordingSettingRow: {
+        flexDirection: "row",
+        justifyContent: "flex-end",
+        alignItems: "center",
     },
 });

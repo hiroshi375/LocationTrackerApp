@@ -134,7 +134,7 @@ export async function getBackgroundRecordingState(): Promise<BackgroundRecording
                 Number.isFinite(parsed.intervalMs) &&
                 parsed.intervalMs > 0
                     ? parsed.intervalMs
-                    : 60_000,
+                    : 30_000,
 
             distanceMeters:
                 typeof parsed.distanceMeters === "number" &&
@@ -178,7 +178,7 @@ export async function startBackgroundLocationTracking({
     distanceMeters,
     liveShareOwnerValues = [],
     liveLocationId = null,
-    lastSavedLocation = null,
+    lastSavedLocation,
 }: StartBackgroundLocationTrackingParams) {
     const normalizedLiveShareOwnerValues = Array.from(
         new Set(liveShareOwnerValues.filter(Boolean)),
@@ -199,14 +199,14 @@ export async function startBackgroundLocationTracking({
 
     const previousState = await getBackgroundRecordingState();
 
+    const isNewRecordingSession =
+        isRecording &&
+        Boolean(recordingSessionId) &&
+        recordingSessionId !== previousState?.recordingSessionId;
     /*
      * 新しい自動記録セッション開始時は、前セッションの古いロックを除去する。
      */
-    if (
-        isRecording &&
-        recordingSessionId &&
-        recordingSessionId !== previousState?.recordingSessionId
-    ) {
+    if (isNewRecordingSession && recordingSessionId) {
         await clearLocationSaveLock();
 
         await initializeRecordingContinuationState(
@@ -223,9 +223,21 @@ export async function startBackgroundLocationTracking({
         intervalMs,
         distanceMeters,
         liveShareOwnerValues: normalizedLiveShareOwnerValues,
-        liveLocationId: liveLocationId ?? previousState?.liveLocationId ?? null,
-        lastSavedLocation:
-            lastSavedLocation ?? previousState?.lastSavedLocation ?? null,
+
+        liveLocationId:
+            liveLocationId !== undefined
+                ? liveLocationId
+                : (previousState?.liveLocationId ?? null),
+
+        /*
+         * 新規セッション開始時は、
+         * 前セッションの最終保存地点を引き継がない。
+         */
+        lastSavedLocation: isNewRecordingSession
+            ? null
+            : lastSavedLocation !== undefined
+              ? lastSavedLocation
+              : (previousState?.lastSavedLocation ?? null),
     };
 
     await AsyncStorage.setItem(

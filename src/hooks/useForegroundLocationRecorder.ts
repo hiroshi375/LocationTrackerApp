@@ -827,12 +827,7 @@ export function useForegroundLocationRecorder({
                     distanceMeters,
                     liveShareOwnerValues: normalizedLiveShareOwnerValues,
                     liveLocationId: liveLocationIdRef.current,
-                    lastSavedLocation: {
-                        latitude: currentLocation.coords.latitude,
-                        longitude: currentLocation.coords.longitude,
-                        recordedAt: currentLocationRecordedAtMs,
-                        accuracy: currentLocation.coords.accuracy ?? null,
-                    },
+                    lastSavedLocation: null,
                 });
             } catch (error) {
                 try {

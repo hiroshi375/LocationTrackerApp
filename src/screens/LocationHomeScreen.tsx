@@ -143,14 +143,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
         useState<RecordingSessionBackfillProgress | null>(null);
 
     useEffect(() => {
-        const resetLocationSettings = async () => {
-            await AsyncStorage.removeItem(LOCATION_HOME_SETTINGS_STORAGE_KEY);
-        };
-
-        void resetLocationSettings();
-    }, []);
-
-    useEffect(() => {
         const loadSavedHomeSettings = async () => {
             try {
                 const raw = await AsyncStorage.getItem(
@@ -193,7 +185,11 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 if (Array.isArray(savedSettings.selectedLiveShareUsers)) {
                     const savedUsers =
                         savedSettings.selectedLiveShareUsers.filter(
-                            (user) => !!user.ownerValue,
+                            (user): user is UserProfileItem =>
+                                typeof user?.id === "string" &&
+                                typeof user?.userId === "string" &&
+                                typeof user?.ownerValue === "string" &&
+                                user.ownerValue.length > 0,
                         );
 
                     try {
@@ -282,7 +278,17 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     version: LOCATION_HOME_SETTINGS_VERSION,
                     recordIntervalMs,
                     recordDistanceMeters,
-                    selectedLiveShareUsers,
+                    selectedLiveShareUsers: selectedLiveShareUsers.map(
+                        (user) => ({
+                            id: user.id,
+                            userId: user.userId,
+                            email: user.email ?? null,
+                            displayName: user.displayName ?? null,
+                            ownerValue: user.ownerValue ?? null,
+                            searchText: user.searchText ?? null,
+                            iconImagePath: user.iconImagePath ?? null,
+                        }),
+                    ),
                 };
 
                 await AsyncStorage.setItem(
@@ -472,6 +478,24 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 });
 
             setLiveShareUsers(users);
+            setSelectedLiveShareUsers((currentSelectedUsers) => {
+                if (currentSelectedUsers.length === 0) {
+                    return currentSelectedUsers;
+                }
+
+                const latestUserMap = new Map(
+                    users.map((user) => [user.userId, user]),
+                );
+
+                return currentSelectedUsers
+                    .map((selectedUser) => {
+                        return (
+                            latestUserMap.get(selectedUser.userId) ??
+                            selectedUser
+                        );
+                    })
+                    .filter((user) => Boolean(user.ownerValue));
+            });
         } catch (error) {
             console.error("Load live share users error:", error);
             Alert.alert("取得エラー", "共有先ユーザーの取得に失敗しました。");

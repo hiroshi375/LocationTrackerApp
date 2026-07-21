@@ -35,8 +35,15 @@ export const BACKGROUND_RECORDING_STATE_KEY =
  */
 const ENABLE_BACKGROUND_LOCATION_DEBUG_LOG = true;
 
-const BACKGROUND_FLUSH_MAX_ITEMS = 3;
-const BACKGROUND_FLUSH_TIME_BUDGET_MS = 4_000;
+/*
+ * Androidのバックグラウンド中は、LocationLogを最優先で1件ずつ同期する。
+ * 複数件送信やLiveLocationとの並行通信でAmplify通信を競合させない。
+ */
+const BACKGROUND_FLUSH_MAX_ITEMS = 1;
+const BACKGROUND_FLUSH_TIME_BUDGET_MS = 18_000;
+const BACKGROUND_FLUSH_FAILURE_LOG_STORAGE_KEY =
+    "location-tracker-background-flush-failure-log-last-at";
+const BACKGROUND_FLUSH_FAILURE_LOG_INTERVAL_MS = 5 * 60 * 1000;
 const BACKGROUND_TASK_HEALTH_LOG_STORAGE_KEY =
     "location-tracker-background-task-health-log-last-at";
 const BACKGROUND_TASK_HEALTH_LOG_INTERVAL_MS = 5 * 60 * 1000;
@@ -164,6 +171,22 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK_NAME, ({ data, error }) => {
             return;
         }
 
+        /*
+         * LocationLogを最優先でクラウド同期する。
+         * Android foreground service稼働中は、1件だけを最大18秒待つ。
+         * 4秒で打ち切る旧実装では、正常に完了し得るAmplify通信を
+         * タイムアウト扱いにしてforeground復帰時の後追い同期を招いていた。
+         */
+        const flushResult = await flushPendingLocationLogs({
+            recordingSessionId: ingestResult.state.recordingSessionId ?? null,
+            maxItems: BACKGROUND_FLUSH_MAX_ITEMS,
+            timeBudgetMs: BACKGROUND_FLUSH_TIME_BUDGET_MS,
+        });
+
+        /*
+         * LiveLocationはLocationLog同期開始前に並行実行しない。
+         * LocationLogの同期が終わった後に最新地点だけを非同期更新する。
+         */
         if (ingestResult.latestLocation) {
             scheduleBackgroundLiveLocationUpdate(
                 ingestResult.latestLocation,
@@ -172,40 +195,13 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK_NAME, ({ data, error }) => {
             );
         }
 
-        /*
-         * background実行中にもクラウド同期を試すが、最大4秒で処理を返す。
-         * 同期に失敗・タイムアウトしても位置情報はAsyncStorageに残り、
-         * 次回callbackまたはforeground復帰時に再送される。
-         */
-        const flushResult = await flushPendingLocationLogs({
-            recordingSessionId: ingestResult.state.recordingSessionId ?? null,
-            maxItems: BACKGROUND_FLUSH_MAX_ITEMS,
-            timeBudgetMs: BACKGROUND_FLUSH_TIME_BUDGET_MS,
-        });
-
         void maybeSaveBackgroundTaskHealthLog(
             ingestResult,
             flushResult.remainingCount,
         );
 
         if (flushResult.failedCount > 0) {
-            void safeSaveBackgroundLocationDebugLog({
-                userId: ingestResult.state.userId,
-                recordingSessionId:
-                    ingestResult.state.recordingSessionId ?? null,
-                eventName: "backgroundLocationPendingQueueFlushFailed",
-                taskFiredAt: ingestResult.taskFiredAt,
-                errorMessage: flushResult.lastErrorMessage ?? null,
-                details: {
-                    attemptedCount: flushResult.attemptedCount,
-                    syncedCount: flushResult.syncedCount,
-                    duplicateCount: flushResult.duplicateCount,
-                    failedCount: flushResult.failedCount,
-                    remainingCount: flushResult.remainingCount,
-                    timedOut: flushResult.timedOut,
-                    skippedByCooldown: flushResult.skippedByCooldown,
-                },
-            });
+            void maybeSaveBackgroundFlushFailureLog(ingestResult, flushResult);
         }
     });
 });
@@ -364,6 +360,59 @@ async function ingestBackgroundLocationTask({
         saveConditionSkippedCount,
         taskFiredAt,
     };
+}
+
+async function maybeSaveBackgroundFlushFailureLog(
+    ingestResult: BackgroundTaskIngestResult,
+    flushResult: {
+        attemptedCount: number;
+        syncedCount: number;
+        duplicateCount: number;
+        failedCount: number;
+        remainingCount: number;
+        timedOut: boolean;
+        skippedByCooldown: boolean;
+        lastErrorMessage?: string | null;
+    },
+): Promise<void> {
+    try {
+        const nowMs = Date.now();
+        const rawLastLoggedAt = await AsyncStorage.getItem(
+            BACKGROUND_FLUSH_FAILURE_LOG_STORAGE_KEY,
+        );
+        const lastLoggedAtMs = rawLastLoggedAt ? Number(rawLastLoggedAt) : 0;
+
+        if (
+            Number.isFinite(lastLoggedAtMs) &&
+            nowMs - lastLoggedAtMs < BACKGROUND_FLUSH_FAILURE_LOG_INTERVAL_MS
+        ) {
+            return;
+        }
+
+        await AsyncStorage.setItem(
+            BACKGROUND_FLUSH_FAILURE_LOG_STORAGE_KEY,
+            String(nowMs),
+        );
+
+        await safeSaveBackgroundLocationDebugLog({
+            userId: ingestResult.state.userId,
+            recordingSessionId: ingestResult.state.recordingSessionId ?? null,
+            eventName: "backgroundLocationPendingQueueFlushFailed",
+            taskFiredAt: ingestResult.taskFiredAt,
+            errorMessage: flushResult.lastErrorMessage ?? null,
+            details: {
+                attemptedCount: flushResult.attemptedCount,
+                syncedCount: flushResult.syncedCount,
+                duplicateCount: flushResult.duplicateCount,
+                failedCount: flushResult.failedCount,
+                remainingCount: flushResult.remainingCount,
+                timedOut: flushResult.timedOut,
+                skippedByCooldown: flushResult.skippedByCooldown,
+            },
+        });
+    } catch (error) {
+        console.error("Save background flush failure log marker error:", error);
+    }
 }
 
 async function maybeSaveBackgroundTaskHealthLog(

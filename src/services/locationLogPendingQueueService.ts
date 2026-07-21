@@ -17,9 +17,9 @@ const PENDING_LOCATION_LOG_QUEUE_STORAGE_KEY =
 
 const PENDING_LOCATION_LOG_QUEUE_VERSION = 1;
 const DEFAULT_MAX_ITEMS_PER_FLUSH = 20;
-const DEFAULT_FLUSH_TIME_BUDGET_MS = 8_000;
-const LOCATION_LOG_CREATE_TIMEOUT_MS = 5_000;
-const FAILED_FLUSH_COOLDOWN_MS = 15_000;
+const DEFAULT_FLUSH_TIME_BUDGET_MS = 20_000;
+const LOCATION_LOG_CREATE_TIMEOUT_MS = 15_000;
+const FAILED_FLUSH_COOLDOWN_MS = 3_000;
 const MAX_ERROR_MESSAGE_LENGTH = 1_000;
 
 export type PendingLocationLogSource = "foreground" | "background";
@@ -79,6 +79,13 @@ export type FlushPendingLocationLogsResult = {
 let queueOperationChain: Promise<unknown> = Promise.resolve();
 let activeFlushPromise: Promise<FlushPendingLocationLogsResult> | null = null;
 let nextFlushAllowedAtMs = 0;
+
+/*
+ * withTimeoutで待機を打ち切ってもAmplifyのcreate自体はキャンセルされない。
+ * 同じLocationLogに対する未完了リクエストを重複起動しないよう、
+ * 実リクエストのPromiseをid単位で保持する。
+ */
+const inFlightLocationLogCreatePromises = new Map<string, Promise<any>>();
 
 export async function enqueuePendingLocationLog(
     input: PendingLocationLogInput,
@@ -312,9 +319,7 @@ async function performFlushPendingLocationLogs(
             );
 
             const result = await withTimeout<any>(
-                (client.models.LocationLog as any).create(
-                    createLocationLogPayload(item),
-                ),
+                getOrCreateLocationLogRequest(item),
                 requestTimeoutMs,
                 `LocationLog create timed out after ${requestTimeoutMs}ms.`,
             );
@@ -367,6 +372,29 @@ async function performFlushPendingLocationLogs(
         skippedByCooldown: false,
         lastErrorMessage,
     };
+}
+
+function getOrCreateLocationLogRequest(
+    item: PendingLocationLogItem,
+): Promise<any> {
+    const existingPromise = inFlightLocationLogCreatePromises.get(item.id);
+
+    if (existingPromise) {
+        return existingPromise;
+    }
+
+    const createPromise = (client.models.LocationLog as any)
+        .create(createLocationLogPayload(item))
+        .finally(() => {
+            if (
+                inFlightLocationLogCreatePromises.get(item.id) === createPromise
+            ) {
+                inFlightLocationLogCreatePromises.delete(item.id);
+            }
+        });
+
+    inFlightLocationLogCreatePromises.set(item.id, createPromise);
+    return createPromise;
 }
 
 function createLocationLogPayload(item: PendingLocationLogItem) {

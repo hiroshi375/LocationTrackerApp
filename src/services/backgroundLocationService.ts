@@ -3,7 +3,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
-import { Alert, Linking } from "react-native";
+import { Alert, Linking, Platform } from "react-native";
 import { client } from "../lib/client";
 
 import {
@@ -99,6 +99,17 @@ export type BackgroundRecordingState = {
         accuracy?: number | null;
     } | null;
 
+    /*
+     * ネットワーク遅延などで古い位置情報が後から届いた場合に、
+     * その古い時系列内で30秒/距離条件を判定するための基準地点。
+     */
+    lastOutOfOrderLocation?: {
+        latitude: number;
+        longitude: number;
+        recordedAt: number;
+        accuracy?: number | null;
+    } | null;
+
     intervalMs: number;
     distanceMeters: number;
 };
@@ -149,6 +160,8 @@ export async function getBackgroundRecordingState(): Promise<BackgroundRecording
             liveLocationId: parsed.liveLocationId ?? null,
 
             lastSavedLocation: parsed.lastSavedLocation ?? null,
+
+            lastOutOfOrderLocation: parsed.lastOutOfOrderLocation ?? null,
 
             intervalMs:
                 typeof parsed.intervalMs === "number" &&
@@ -287,6 +300,10 @@ export async function startBackgroundLocationTracking({
                 : lastSavedLocation !== undefined
                   ? lastSavedLocation
                   : (previousState?.lastSavedLocation ?? null),
+
+            lastOutOfOrderLocation: isNewRecordingSession
+                ? null
+                : (previousState?.lastOutOfOrderLocation ?? null),
         };
 
         await AsyncStorage.setItem(
@@ -387,12 +404,22 @@ export async function startBackgroundLocationTracking({
             return;
         }
 
+        /*
+         * iOSではtimeIntervalが位置更新条件として使用されないため、
+         * native側のdistanceIntervalを小さくして位置を受け取り、
+         * 30秒または指定距離の判定はアプリ側で行う。
+         */
+        const nativeDistanceInterval =
+            Platform.OS === "ios"
+                ? Math.min(distanceMeters, 5)
+                : distanceMeters;
+
         await Location.startLocationUpdatesAsync(
             BACKGROUND_LOCATION_TASK_NAME,
             {
                 accuracy: Location.Accuracy.BestForNavigation,
                 timeInterval: intervalMs,
-                distanceInterval: distanceMeters,
+                distanceInterval: nativeDistanceInterval,
                 activityType: Location.ActivityType.Fitness,
                 pausesUpdatesAutomatically: false,
                 deferredUpdatesInterval: 0,
@@ -425,6 +452,7 @@ export async function startBackgroundLocationTracking({
                 isTaskDefined,
                 isNewRecordingSession,
                 restartedExistingRegistration: shouldRestart,
+                nativeDistanceInterval,
             },
         });
 
@@ -570,6 +598,7 @@ export async function stopBackgroundLocationRecording() {
             recordingSessionId: null,
             startedAt: null,
             lastSavedLocation: null,
+            lastOutOfOrderLocation: null,
             liveShareOwnerValues: normalizedLiveShareOwnerValues,
         });
 
@@ -707,6 +736,22 @@ export async function updateBackgroundRecordingLastSavedLocation(lastSavedLocati
     recordedAt: number;
     accuracy?: number | null;
 }) {
+    const currentState = await getBackgroundRecordingState();
+
+    if (!currentState) {
+        return;
+    }
+
+    /*
+     * 後追いで届いた古い地点により、最新の保存基準時刻を巻き戻さない。
+     */
+    if (
+        currentState.lastSavedLocation &&
+        lastSavedLocation.recordedAt < currentState.lastSavedLocation.recordedAt
+    ) {
+        return;
+    }
+
     await updateBackgroundLocationTrackingState({
         lastSavedLocation,
     });

@@ -39,6 +39,7 @@ type BackgroundDebugLogMode = "ALL" | "IMPORTANT" | "ERROR_ONLY";
 const UNKNOWN_USER_ID = "unknown";
 const MAX_ERROR_MESSAGE_LENGTH = 1000;
 const MAX_DETAILS_JSON_LENGTH = 4000;
+const DEBUG_LOG_CREATE_TIMEOUT_MS = 5_000;
 
 /*
  * ALL:
@@ -50,35 +51,56 @@ const MAX_DETAILS_JSON_LENGTH = 4000;
  * ERROR_ONLY:
  *   異常系イベントだけ保存する。
  */
-const BACKGROUND_DEBUG_LOG_MODE: BackgroundDebugLogMode = "ALL";
+const BACKGROUND_DEBUG_LOG_MODE: BackgroundDebugLogMode = "IMPORTANT";
 
 const NORMAL_EVENT_NAMES = new Set([
-    // バックグラウンドタスクの正常動作確認
+    // 記録開始・権限・ネイティブタスク状態だけを通常保存する。
+    // callbackごとのFired/Completed/SaveConditionNotMetは保存しない。
+    "foregroundPermissionChecked",
+    "backgroundPermissionChecked",
+    "backgroundPermissionRequested",
+    "backgroundLocationStartPermissionGranted",
+    "backgroundLocationStateSaved",
+    "backgroundLocationNativeStatusChecked",
+    "backgroundLocationUpdatesStoppedForRestart",
+    "backgroundLocationTrackingAlreadyStarted",
     "backgroundLocationTrackingStarted",
-    "backgroundLocationTaskFired",
-    "backgroundLocationTaskCompleted",
-    "backgroundLocationTaskSkippedNoLocations",
-    // 権限・ネイティブタスク状態
-    "backgroundLocationPermissionStatus",
-    "backgroundLocationUpdatesStatus",
+    "backgroundLocationTaskHealthSummary",
 ]);
 
 const ERROR_EVENT_NAMES = new Set([
     // バックグラウンドタスク自体の異常
     "backgroundLocationTaskError",
     "backgroundLocationTaskUnexpectedError",
-    "saveBackgroundLocationUnexpectedError",
-    // LocationLog保存失敗
+    "backgroundLocationTaskSkippedInvalidState",
+    "backgroundLocationTrackingStartFailed",
+
+    // 端末内未送信キューの異常
+    "backgroundLocationPendingQueueEnqueueFailed",
+    "backgroundLocationPendingQueueFlushFailed",
+    "foregroundLocationPendingQueueFlushFailed",
+    "stopRecordingPendingQueueFlushFailed",
+
+    // LocationLog受付・保存失敗
     "backgroundLocationLogCreateFailed",
     "foregroundLocationLogCreateFailed",
+    "foregroundLocationLogUnexpectedError",
+    "foregroundLocationLogSkippedNoUserId",
+    "foregroundLocationLogLockUnavailable",
+
     // LiveLocation作成・更新失敗
     "backgroundLiveLocationCreateFailed",
     "backgroundLiveLocationUpdateFailed",
+    "backgroundLiveLocationUnexpectedError",
     "foregroundLiveLocationCreateFailed",
     "foregroundLiveLocationUpdateFailed",
     "foregroundLiveLocationUnexpectedError",
-    // 通常起きるべきではない状態
-    "foregroundLocationLogSkippedNoUserId",
+
+    // 位置品質異常
+    "backgroundLocationLogSkippedLowAccuracy",
+    "backgroundLocationLogSkippedAbnormalSpeed",
+    "foregroundLocationLogSkippedLowAccuracy",
+    "foregroundLocationLogSkippedAbnormalSpeed",
 ]);
 
 function shouldSaveBackgroundLocationDebugLog(eventName: string): boolean {
@@ -130,51 +152,59 @@ export async function saveBackgroundLocationDebugLog(
 
         const detailsJson = stringifyDetails(input.details);
 
-        const result = await debugLogModel.create({
-            userId,
-            recordingSessionId: input.recordingSessionId ?? null,
-            eventName: input.eventName,
-            loggedAt: new Date().toISOString(),
+        const result = await withTimeout<any>(
+            debugLogModel.create({
+                userId,
+                recordingSessionId: input.recordingSessionId ?? null,
+                eventName: input.eventName,
+                loggedAt: new Date().toISOString(),
 
-            taskFiredAt: input.taskFiredAt ?? null,
-            locationsLength: input.locationsLength ?? null,
-            saveSuccessCount: input.saveSuccessCount ?? null,
-            saveFailureCount: input.saveFailureCount ?? null,
+                taskFiredAt: input.taskFiredAt ?? null,
+                locationsLength: input.locationsLength ?? null,
+                saveSuccessCount: input.saveSuccessCount ?? null,
+                saveFailureCount: input.saveFailureCount ?? null,
 
-            skippedCount: input.skippedCount ?? null,
-            invalidCoordinateSkippedCount:
-                input.invalidCoordinateSkippedCount ?? null,
-            lowAccuracySkippedCount: input.lowAccuracySkippedCount ?? null,
-            abnormalSpeedSkippedCount: input.abnormalSpeedSkippedCount ?? null,
-            inProgressDuplicateSkippedCount:
-                input.inProgressDuplicateSkippedCount ?? null,
-            exactDuplicateSkippedCount:
-                input.exactDuplicateSkippedCount ?? null,
-            nearDuplicateSkippedCount: input.nearDuplicateSkippedCount ?? null,
-            saveConditionSkippedCount: input.saveConditionSkippedCount ?? null,
+                skippedCount: input.skippedCount ?? null,
+                invalidCoordinateSkippedCount:
+                    input.invalidCoordinateSkippedCount ?? null,
+                lowAccuracySkippedCount: input.lowAccuracySkippedCount ?? null,
+                abnormalSpeedSkippedCount:
+                    input.abnormalSpeedSkippedCount ?? null,
+                inProgressDuplicateSkippedCount:
+                    input.inProgressDuplicateSkippedCount ?? null,
+                exactDuplicateSkippedCount:
+                    input.exactDuplicateSkippedCount ?? null,
+                nearDuplicateSkippedCount:
+                    input.nearDuplicateSkippedCount ?? null,
+                saveConditionSkippedCount:
+                    input.saveConditionSkippedCount ?? null,
 
-            hasStartedLocationUpdates: input.hasStartedLocationUpdates ?? null,
+                hasStartedLocationUpdates:
+                    input.hasStartedLocationUpdates ?? null,
 
-            foregroundPermissionStatus:
-                input.foregroundPermissionStatus ?? null,
-            foregroundPermissionGranted:
-                input.foregroundPermissionGranted ?? null,
-            foregroundPermissionCanAskAgain:
-                input.foregroundPermissionCanAskAgain ?? null,
+                foregroundPermissionStatus:
+                    input.foregroundPermissionStatus ?? null,
+                foregroundPermissionGranted:
+                    input.foregroundPermissionGranted ?? null,
+                foregroundPermissionCanAskAgain:
+                    input.foregroundPermissionCanAskAgain ?? null,
 
-            backgroundPermissionStatus:
-                input.backgroundPermissionStatus ?? null,
-            backgroundPermissionGranted:
-                input.backgroundPermissionGranted ?? null,
-            backgroundPermissionCanAskAgain:
-                input.backgroundPermissionCanAskAgain ?? null,
+                backgroundPermissionStatus:
+                    input.backgroundPermissionStatus ?? null,
+                backgroundPermissionGranted:
+                    input.backgroundPermissionGranted ?? null,
+                backgroundPermissionCanAskAgain:
+                    input.backgroundPermissionCanAskAgain ?? null,
 
-            errorMessage: truncateText(
-                input.errorMessage,
-                MAX_ERROR_MESSAGE_LENGTH,
-            ),
-            detailsJson: truncateText(detailsJson, MAX_DETAILS_JSON_LENGTH),
-        });
+                errorMessage: truncateText(
+                    input.errorMessage,
+                    MAX_ERROR_MESSAGE_LENGTH,
+                ),
+                detailsJson: truncateText(detailsJson, MAX_DETAILS_JSON_LENGTH),
+            }),
+            DEBUG_LOG_CREATE_TIMEOUT_MS,
+            `BackgroundLocationDebugLog create timed out: ${input.eventName}`,
+        );
 
         if (result.errors) {
             console.error(
@@ -194,6 +224,29 @@ export async function saveBackgroundLocationDebugLog(
             recordingSessionId: input.recordingSessionId ?? null,
         });
     }
+}
+
+function withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    message: string,
+): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timerId = setTimeout(() => {
+            reject(new Error(message));
+        }, timeoutMs);
+
+        promise.then(
+            (value) => {
+                clearTimeout(timerId);
+                resolve(value);
+            },
+            (error) => {
+                clearTimeout(timerId);
+                reject(error);
+            },
+        );
+    });
 }
 
 function stringifyDetails(details?: Record<string, unknown>) {

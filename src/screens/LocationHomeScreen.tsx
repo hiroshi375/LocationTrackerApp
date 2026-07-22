@@ -24,11 +24,6 @@ import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRec
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import {
-    flushPendingLocationLogs,
-    getPendingLocationLogCount,
-    removePendingLocationLogsBySessionId,
-} from "../services/locationLogPendingQueueService";
-import {
     type RecordingSessionBackfillProgress,
     backfillRecordingSessionsFromLocationLogs,
     upsertRecordingSessionSummary,
@@ -720,29 +715,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
         try {
             setSavingSessionName(true);
 
-            /*
-             * セッション集計・名称更新の前に、端末内の未送信LocationLogを同期する。
-             * 未送信が残った状態で集計すると距離・件数が欠けるため、
-             * 同期できない場合は保存処理を中断して再試行を促す。
-             */
-            await flushPendingLocationLogs({
-                force: true,
-                recordingSessionId: pendingSessionId,
-                maxItems: 1_000,
-                timeBudgetMs: 20_000,
-            });
-
-            const remainingPendingCount =
-                await getPendingLocationLogCount(pendingSessionId);
-
-            if (remainingPendingCount > 0) {
-                Alert.alert(
-                    "位置情報を同期中です",
-                    `未送信の位置情報が${remainingPendingCount}件残っています。通信状態を確認して、しばらくしてからもう一度保存してください。`,
-                );
-                return;
-            }
-
             const sessionLogs =
                 await listLocationLogsBySessionId(pendingSessionId);
 
@@ -802,12 +774,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
         try {
             setSavingSessionName(true);
-
-            /*
-             * 破棄対象セッションの未送信LocationLogも端末内キューから削除する。
-             * これを行わないと、破棄後に再送されてLocationLogが復活する。
-             */
-            await removePendingLocationLogsBySessionId(pendingSessionId);
 
             const sessionLogs =
                 await listLocationLogsBySessionId(pendingSessionId);

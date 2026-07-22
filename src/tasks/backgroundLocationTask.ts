@@ -20,6 +20,12 @@ import {
     releaseLocationSaveLock,
 } from "../services/locationLogDeduplicationService";
 import {
+    evaluateRecordingContinuation,
+    getRecordingContinuationState,
+    incrementRecordingContinuationPointCount,
+    markRecordingContinuationAutoStopped,
+} from "../services/recordingContinuationService";
+import {
     calculateDistanceMeters,
     calculateSpeedMetersPerSecond,
     isAbnormalSpeedLocation,
@@ -101,266 +107,191 @@ async function safeSaveBackgroundLocationDebugLog(
     }
 }
 
-type BackgroundTaskInput = {
-    data?: unknown;
-    error?: unknown;
-};
+TaskManager.defineTask(
+    BACKGROUND_LOCATION_TASK_NAME,
+    async ({ data, error }) => {
+        const taskFiredAt = new Date().toISOString();
 
-/*
- * OSから短時間に複数回バックグラウンドタスクが呼ばれた場合でも、
- * LocationLog保存・AsyncStorage更新・LiveLocation更新を直列に処理する。
- */
-let backgroundLocationTaskQueue: Promise<void> = Promise.resolve();
+        let locationsLength = 0;
+        let saveSuccessCount = 0;
+        let saveFailureCount = 0;
 
-TaskManager.defineTask(BACKGROUND_LOCATION_TASK_NAME, ({ data, error }) => {
-    const queuedTask = backgroundLocationTaskQueue
-        .catch((queueError) => {
-            console.error(
-                "Previous background location task queue error:",
-                queueError,
-            );
-        })
-        .then(() =>
-            handleBackgroundLocationTask({
-                data,
-                error,
-            }),
-        );
+        let skippedCount = 0;
+        let invalidCoordinateSkippedCount = 0;
+        let lowAccuracySkippedCount = 0;
+        let abnormalSpeedSkippedCount = 0;
+        let inProgressDuplicateSkippedCount = 0;
+        let exactDuplicateSkippedCount = 0;
+        let nearDuplicateSkippedCount = 0;
+        let saveConditionSkippedCount = 0;
 
-    backgroundLocationTaskQueue = queuedTask;
-    return queuedTask;
-});
+        let activeState: BackgroundRecordingState | null = null;
 
-async function handleBackgroundLocationTask({
-    data,
-    error,
-}: BackgroundTaskInput): Promise<void> {
-    const taskFiredAt = new Date().toISOString();
+        try {
+            const state = await getBackgroundRecordingState();
 
-    let locationsLength = 0;
-    let uniqueLocationsLength = 0;
-    let saveSuccessCount = 0;
-    let saveFailureCount = 0;
-
-    let skippedCount = 0;
-    let invalidCoordinateSkippedCount = 0;
-    let lowAccuracySkippedCount = 0;
-    let abnormalSpeedSkippedCount = 0;
-    let inProgressDuplicateSkippedCount = 0;
-    let exactDuplicateSkippedCount = 0;
-    let nearDuplicateSkippedCount = 0;
-    let saveConditionSkippedCount = 0;
-
-    let activeState: BackgroundRecordingState | null = null;
-
-    try {
-        const state = await getBackgroundRecordingState();
-
-        const stateDebugInfo = {
-            userId: state?.userId ?? null,
-            recordingSessionId: state?.recordingSessionId ?? null,
-            hasState: Boolean(state),
-            isRecording: state?.isRecording ?? null,
-            hasRecordingSessionId: Boolean(state?.recordingSessionId),
-            sharedOwnersCount: state?.liveShareOwnerValues?.length ?? 0,
-        };
-
-        /*
-         * 自動記録中でも現在地共有中でもない場合は、
-         * OSから遅れてタスクが呼ばれても
-         * DebugLog・LocationLog・LiveLocationを作成／更新しない。
-         */
-        if (!isValidBackgroundRecordingState(state)) {
-            console.log(
-                "Background recording state not found. Skip background task.",
-            );
-
-            await safeSaveBackgroundLocationDebugLog({
-                userId: stateDebugInfo.userId,
-                recordingSessionId: stateDebugInfo.recordingSessionId,
-                eventName: "backgroundLocationTaskSkippedInvalidState",
-                taskFiredAt,
-                details: {
-                    hasState: stateDebugInfo.hasState,
-                    isRecording: stateDebugInfo.isRecording,
-                    hasRecordingSessionId: stateDebugInfo.hasRecordingSessionId,
-                    sharedOwnersCount: stateDebugInfo.sharedOwnersCount,
-                },
-            });
-
-            return;
-        }
-        activeState = state;
-
-        if (error) {
-            await safeSaveBackgroundLocationDebugLog({
-                userId: state.userId,
-                recordingSessionId: state.recordingSessionId,
-                eventName: "backgroundLocationTaskError",
-                taskFiredAt,
-                errorMessage: getErrorMessage(error),
-            });
-
-            console.error("Background location task error:", error);
-            return;
-        }
-
-        const locations = (
-            data as { locations?: Location.LocationObject[] } | undefined
-        )?.locations;
-
-        locationsLength = locations?.length ?? 0;
-
-        /*
-         * 発火ログの保存完了を待たず、LocationLog処理を優先する。
-         */
-        void safeSaveBackgroundLocationDebugLog({
-            userId: state.userId,
-            recordingSessionId: state.recordingSessionId,
-            eventName: "backgroundLocationTaskFired",
-            taskFiredAt,
-            locationsLength,
-            details: {
-                configuredIntervalMs: state.intervalMs,
-                configuredDistanceMeters: state.distanceMeters,
-            },
-        });
-
-        if (!locations || locations.length === 0) {
-            await safeSaveBackgroundLocationDebugLog({
-                userId: state.userId,
-                recordingSessionId: state.recordingSessionId,
-                eventName: "backgroundLocationTaskSkippedNoLocations",
-                taskFiredAt,
-                locationsLength,
-                skippedCount: 1,
-            });
-
-            return;
-        }
-
-        const sortedLocations = [...locations].sort((a, b) => {
-            const aTime =
-                typeof a.timestamp === "number" && Number.isFinite(a.timestamp)
-                    ? a.timestamp
-                    : 0;
-
-            const bTime =
-                typeof b.timestamp === "number" && Number.isFinite(b.timestamp)
-                    ? b.timestamp
-                    : 0;
-
-            return aTime - bTime;
-        });
-
-        /*
-         * 1回のOS callback内に同一時刻・同一座標・同一精度の
-         * LocationObjectが複数含まれていても1件だけ処理する。
-         */
-        const uniqueLocations = deduplicateLocationBatch(sortedLocations);
-        uniqueLocationsLength = uniqueLocations.length;
-
-        let currentState = state;
-
-        /*
-         * LocationLog保存を優先する。
-         * LiveLocationはバッチ内の最新地点だけを最後に更新する。
-         */
-        for (const location of uniqueLocations) {
-            if (!currentState.isRecording || !currentState.recordingSessionId) {
-                continue;
+            /*
+             * 自動記録中でも現在地共有中でもない場合は、
+             * OSから遅れてタスクが呼ばれても
+             * DebugLog・LocationLog・LiveLocationを作成／更新しない。
+             */
+            if (!isValidBackgroundRecordingState(state)) {
+                console.log(
+                    "Background recording state not found. Skip background task.",
+                );
+                return;
             }
 
-            const result = await saveBackgroundLocation(
-                location,
-                currentState,
-                taskFiredAt,
-            );
+            activeState = state;
 
-            if (result.saved) {
-                saveSuccessCount += 1;
-            }
+            if (state.isRecording && state.recordingSessionId) {
+                const continuationEvaluation =
+                    await evaluateRecordingContinuation(
+                        state.recordingSessionId,
+                    );
 
-            if (result.errorMessage) {
-                saveFailureCount += 1;
-            }
-
-            if (result.skippedReason) {
-                skippedCount += 1;
-
-                switch (result.skippedReason) {
-                    case "invalidCoordinate":
-                        invalidCoordinateSkippedCount += 1;
-                        break;
-                    case "lowAccuracy":
-                        lowAccuracySkippedCount += 1;
-                        break;
-                    case "abnormalSpeed":
-                        abnormalSpeedSkippedCount += 1;
-                        break;
-                    case "inProgressDuplicate":
-                        inProgressDuplicateSkippedCount += 1;
-                        break;
-                    case "exactDuplicate":
-                        exactDuplicateSkippedCount += 1;
-                        break;
-                    case "nearDuplicate":
-                        nearDuplicateSkippedCount += 1;
-                        break;
-                    case "saveConditionNotMet":
-                        saveConditionSkippedCount += 1;
-                        break;
+                if (continuationEvaluation.isDeadlineExpired) {
+                    await stopBackgroundRecordingForContinuationTimeout(state);
+                    return;
                 }
             }
 
-            currentState = result.nextState;
-        }
+            if (error) {
+                await safeSaveBackgroundLocationDebugLog({
+                    userId: state.userId,
+                    recordingSessionId: state.recordingSessionId,
+                    eventName: "backgroundLocationTaskError",
+                    taskFiredAt,
+                    errorMessage: getErrorMessage(error),
+                });
 
-        /*
-         * LiveLocationはバッチ内の最新地点だけ更新する。
-         */
-        const latestLocation = uniqueLocations[uniqueLocations.length - 1];
+                console.error("Background location task error:", error);
+                return;
+            }
 
-        if (latestLocation) {
-            currentState = await updateBackgroundLiveLocationState(
-                latestLocation,
-                currentState,
-                taskFiredAt,
-            );
-        }
+            const locations = (
+                data as { locations?: Location.LocationObject[] }
+            )?.locations;
 
-        await safeSaveBackgroundLocationDebugLog({
-            userId: currentState.userId,
-            recordingSessionId: currentState.recordingSessionId ?? null,
-            eventName: "backgroundLocationTaskCompleted",
-            taskFiredAt,
-            locationsLength,
-            saveSuccessCount,
-            saveFailureCount,
-            skippedCount,
-            invalidCoordinateSkippedCount,
-            lowAccuracySkippedCount,
-            abnormalSpeedSkippedCount,
-            inProgressDuplicateSkippedCount,
-            exactDuplicateSkippedCount,
-            nearDuplicateSkippedCount,
-            saveConditionSkippedCount,
-            details: {
-                uniqueLocationsLength,
-                isRecording: currentState.isRecording,
-                isLiveSharing: currentState.liveShareOwnerValues.length > 0,
-                sharedOwnersCount: currentState.liveShareOwnerValues.length,
-                hasLiveLocationId: Boolean(currentState.liveLocationId),
-                configuredIntervalMs: currentState.intervalMs,
-                configuredDistanceMeters: currentState.distanceMeters,
-            },
-        });
-    } catch (taskError) {
-        if (activeState) {
+            locationsLength = locations?.length ?? 0;
+
             await safeSaveBackgroundLocationDebugLog({
-                userId: activeState.userId,
-                recordingSessionId: activeState.recordingSessionId,
-                eventName: "backgroundLocationTaskUnexpectedError",
+                userId: state.userId,
+                recordingSessionId: state.recordingSessionId,
+                eventName: "backgroundLocationTaskFired",
+                taskFiredAt,
+                locationsLength,
+            });
+
+            if (!locations || locations.length === 0) {
+                await safeSaveBackgroundLocationDebugLog({
+                    userId: state.userId,
+                    recordingSessionId: state.recordingSessionId,
+                    eventName: "backgroundLocationTaskSkippedNoLocations",
+                    taskFiredAt,
+                    locationsLength,
+                    skippedCount: 1,
+                });
+
+                return;
+            }
+
+            const sortedLocations = [...locations].sort((a, b) => {
+                const aTime =
+                    typeof a.timestamp === "number" &&
+                    Number.isFinite(a.timestamp)
+                        ? a.timestamp
+                        : 0;
+
+                const bTime =
+                    typeof b.timestamp === "number" &&
+                    Number.isFinite(b.timestamp)
+                        ? b.timestamp
+                        : 0;
+
+                return aTime - bTime;
+            });
+
+            /*
+             * 1回のOS callback内に同一時刻・同一座標・同一精度の
+             * LocationObjectが複数含まれていても1件だけ処理する。
+             */
+            const uniqueLocations = deduplicateLocationBatch(sortedLocations);
+
+            let currentState = state;
+
+            for (const location of uniqueLocations) {
+                /*
+                 * 自動記録の有無に関係なく、
+                 * 共有中ならLiveLocationを更新する。
+                 */
+                const stateAfterLiveLocation =
+                    await updateBackgroundLiveLocationState(
+                        location,
+                        currentState,
+                        taskFiredAt,
+                    );
+
+                /*
+                 * 自動記録していない場合はLocationLogを保存しない。
+                 */
+                if (
+                    !stateAfterLiveLocation.isRecording ||
+                    !stateAfterLiveLocation.recordingSessionId
+                ) {
+                    currentState = stateAfterLiveLocation;
+                    continue;
+                }
+
+                const result = await saveBackgroundLocation(
+                    location,
+                    stateAfterLiveLocation,
+                    taskFiredAt,
+                );
+
+                if (result.saved) {
+                    saveSuccessCount += 1;
+                }
+
+                if (result.errorMessage) {
+                    saveFailureCount += 1;
+                }
+
+                if (result.skippedReason) {
+                    skippedCount += 1;
+
+                    switch (result.skippedReason) {
+                        case "invalidCoordinate":
+                            invalidCoordinateSkippedCount += 1;
+                            break;
+                        case "lowAccuracy":
+                            lowAccuracySkippedCount += 1;
+                            break;
+                        case "abnormalSpeed":
+                            abnormalSpeedSkippedCount += 1;
+                            break;
+                        case "inProgressDuplicate":
+                            inProgressDuplicateSkippedCount += 1;
+                            break;
+                        case "exactDuplicate":
+                            exactDuplicateSkippedCount += 1;
+                            break;
+                        case "nearDuplicate":
+                            nearDuplicateSkippedCount += 1;
+                            break;
+                        case "saveConditionNotMet":
+                            saveConditionSkippedCount += 1;
+                            break;
+                    }
+                }
+
+                currentState = result.nextState;
+            }
+
+            await safeSaveBackgroundLocationDebugLog({
+                userId: currentState.userId,
+                recordingSessionId: currentState.recordingSessionId ?? null,
+                eventName: "backgroundLocationTaskCompleted",
                 taskFiredAt,
                 locationsLength,
                 saveSuccessCount,
@@ -373,17 +304,125 @@ async function handleBackgroundLocationTask({
                 exactDuplicateSkippedCount,
                 nearDuplicateSkippedCount,
                 saveConditionSkippedCount,
-                errorMessage: getErrorMessage(taskError),
                 details: {
-                    uniqueLocationsLength,
-                    configuredIntervalMs: activeState.intervalMs,
-                    configuredDistanceMeters: activeState.distanceMeters,
+                    isRecording: currentState.isRecording,
+                    isLiveSharing: currentState.liveShareOwnerValues.length > 0,
+                    sharedOwnersCount: currentState.liveShareOwnerValues.length,
+                    hasLiveLocationId: Boolean(currentState.liveLocationId),
                 },
             });
+        } catch (taskError) {
+            /*
+             * 有効な位置追跡状態を読み込めた場合だけデバッグログを保存する。
+             * 状態なしで呼ばれた古いOSタスクからレコードを復活させない。
+             */
+            if (activeState) {
+                await safeSaveBackgroundLocationDebugLog({
+                    userId: activeState.userId,
+                    recordingSessionId: activeState.recordingSessionId,
+                    eventName: "backgroundLocationTaskUnexpectedError",
+                    taskFiredAt,
+                    locationsLength,
+                    saveSuccessCount,
+                    saveFailureCount,
+
+                    skippedCount,
+                    invalidCoordinateSkippedCount,
+                    lowAccuracySkippedCount,
+                    abnormalSpeedSkippedCount,
+                    inProgressDuplicateSkippedCount,
+                    exactDuplicateSkippedCount,
+                    nearDuplicateSkippedCount,
+                    saveConditionSkippedCount,
+
+                    errorMessage: getErrorMessage(taskError),
+                });
+            }
+
+            console.error(
+                "Background location task unexpected error:",
+                taskError,
+            );
+        }
+    },
+);
+
+async function stopBackgroundRecordingForContinuationTimeout(
+    state: BackgroundRecordingState,
+): Promise<void> {
+    const recordingSessionId = state.recordingSessionId;
+
+    if (!recordingSessionId) {
+        return;
+    }
+
+    const stoppedAt = new Date().toISOString();
+
+    await markRecordingContinuationAutoStopped(recordingSessionId, stoppedAt);
+
+    const nextState: BackgroundRecordingState = {
+        ...state,
+        isRecording: false,
+        recordingSessionId: null,
+        startedAt: null,
+        lastSavedLocation: null,
+    };
+
+    await setBackgroundRecordingState(nextState);
+
+    if (state.liveLocationId) {
+        try {
+            const result = await client.models.LiveLocation.update({
+                id: state.liveLocationId,
+                isRecording: false,
+                recordingSessionId: null,
+                isActive: state.liveShareOwnerValues.length > 0,
+                updatedAt: stoppedAt,
+                sharedOwners: state.liveShareOwnerValues,
+            });
+
+            if (result.errors) {
+                console.error(
+                    "Auto stop LiveLocation update errors:",
+                    result.errors,
+                );
+            }
+        } catch (error) {
+            console.error("Auto stop LiveLocation update error:", error);
+        }
+    }
+
+    if (state.liveShareOwnerValues.length === 0) {
+        try {
+            const hasStarted = await Location.hasStartedLocationUpdatesAsync(
+                BACKGROUND_LOCATION_TASK_NAME,
+            );
+
+            if (hasStarted) {
+                await Location.stopLocationUpdatesAsync(
+                    BACKGROUND_LOCATION_TASK_NAME,
+                );
+            }
+        } catch (error) {
+            console.error(
+                "Stop background task after continuation timeout error:",
+                error,
+            );
         }
 
-        console.error("Background location task unexpected error:", taskError);
+        await AsyncStorage.removeItem(BACKGROUND_RECORDING_STATE_KEY);
     }
+
+    await safeSaveBackgroundLocationDebugLog({
+        userId: state.userId,
+        recordingSessionId,
+        eventName: "backgroundRecordingAutoStoppedContinuationTimeout",
+        details: {
+            stoppedAt,
+            savedPointCount: (await getRecordingContinuationState())
+                ?.savedPointCount,
+        },
+    });
 }
 
 async function updateBackgroundLiveLocationState(
@@ -480,14 +519,6 @@ async function getBackgroundRecordingState(): Promise<BackgroundRecordingState |
         const parsed = JSON.parse(raw) as Partial<BackgroundRecordingState>;
 
         if (typeof parsed.userId !== "string" || parsed.userId.length === 0) {
-            console.error("Invalid background recording state:", {
-                hasUserId: Boolean(parsed.userId),
-                isRecording: parsed.isRecording ?? null,
-                hasRecordingSessionId: Boolean(parsed.recordingSessionId),
-                sharedOwnersCount: Array.isArray(parsed.liveShareOwnerValues)
-                    ? parsed.liveShareOwnerValues.length
-                    : 0,
-            });
             return null;
         }
 
@@ -604,19 +635,6 @@ async function saveBackgroundLocation(
     }
 
     if (isLowAccuracyLocation(accuracy)) {
-        await safeSaveBackgroundLocationDebugLog({
-            userId: state.userId,
-            recordingSessionId,
-            eventName: "backgroundLocationLogSkippedLowAccuracy",
-            taskFiredAt,
-            details: {
-                recordedAt,
-                latitude,
-                longitude,
-                accuracy,
-            },
-        });
-
         return {
             saved: false,
             nextState: state,
@@ -729,35 +747,9 @@ async function saveBackgroundLocation(
             };
         }
 
-        const saveCondition = evaluateLocationSaveCondition(
-            latitude,
-            longitude,
-            recordedAtMs,
-            latestState,
-        );
-
-        if (!saveCondition.shouldSave) {
-            void safeSaveBackgroundLocationDebugLog({
-                userId: latestState.userId,
-                recordingSessionId,
-                eventName: "backgroundLocationSaveConditionNotMet",
-                taskFiredAt,
-                details: {
-                    recordedAt,
-                    latitude,
-                    longitude,
-                    accuracy,
-                    elapsedMs: saveCondition.elapsedMs,
-                    distanceFromLastSavedMeters:
-                        saveCondition.distanceFromLastSavedMeters,
-                    configuredIntervalMs: saveCondition.configuredIntervalMs,
-                    configuredDistanceMeters:
-                        saveCondition.configuredDistanceMeters,
-                    lastSavedRecordedAt:
-                        latestState.lastSavedLocation?.recordedAt ?? null,
-                },
-            });
-
+        if (
+            !shouldSaveLocation(latitude, longitude, recordedAtMs, latestState)
+        ) {
             return {
                 saved: false,
                 nextState: latestState,
@@ -862,6 +854,8 @@ async function saveBackgroundLocation(
          */
         await setBackgroundRecordingState(nextState);
 
+        await incrementRecordingContinuationPointCount(recordingSessionId);
+
         return {
             saved: true,
             nextState,
@@ -898,23 +892,34 @@ async function saveBackgroundLocation(
     }
 }
 
-const DEFAULT_DISTANCE_METERS = 50;
-const DEFAULT_INTERVAL_MS = 30_000;
+const DEFAULT_DISTANCE_METERS = 100;
+const DEFAULT_INTERVAL_MS = 60_000;
 
-type LocationSaveConditionEvaluation = {
-    shouldSave: boolean;
-    elapsedMs: number | null;
-    distanceFromLastSavedMeters: number | null;
-    configuredIntervalMs: number;
-    configuredDistanceMeters: number;
-};
-
-function evaluateLocationSaveCondition(
+function shouldSaveLocation(
     latitude: number,
     longitude: number,
     recordedAtMs: number,
     state: BackgroundRecordingState,
-): LocationSaveConditionEvaluation {
+) {
+    const lastSavedLocation = state.lastSavedLocation;
+
+    if (!lastSavedLocation) {
+        return true;
+    }
+
+    const elapsedMs = recordedAtMs - lastSavedLocation.recordedAt;
+
+    if (elapsedMs <= 0) {
+        return false;
+    }
+
+    const distance = calculateDistanceMeters(
+        lastSavedLocation.latitude,
+        lastSavedLocation.longitude,
+        latitude,
+        longitude,
+    );
+
     const configuredIntervalMs =
         Number.isFinite(state.intervalMs) && state.intervalMs > 0
             ? state.intervalMs
@@ -925,44 +930,16 @@ function evaluateLocationSaveCondition(
             ? state.distanceMeters
             : DEFAULT_DISTANCE_METERS;
 
-    const lastSavedLocation = state.lastSavedLocation;
-
-    if (!lastSavedLocation) {
-        return {
-            shouldSave: true,
-            elapsedMs: null,
-            distanceFromLastSavedMeters: null,
-            configuredIntervalMs,
-            configuredDistanceMeters,
-        };
+    /*
+     * 時間間隔と距離間隔のどちらかを満たした場合に保存する。
+     */
+    if (elapsedMs >= configuredIntervalMs) {
+        return true;
     }
 
-    const elapsedMs = recordedAtMs - lastSavedLocation.recordedAt;
-
-    if (elapsedMs <= 0) {
-        return {
-            shouldSave: false,
-            elapsedMs,
-            distanceFromLastSavedMeters: null,
-            configuredIntervalMs,
-            configuredDistanceMeters,
-        };
+    if (distance >= configuredDistanceMeters) {
+        return true;
     }
 
-    const distanceFromLastSavedMeters = calculateDistanceMeters(
-        lastSavedLocation.latitude,
-        lastSavedLocation.longitude,
-        latitude,
-        longitude,
-    );
-
-    return {
-        shouldSave:
-            elapsedMs >= configuredIntervalMs ||
-            distanceFromLastSavedMeters >= configuredDistanceMeters,
-        elapsedMs,
-        distanceFromLastSavedMeters,
-        configuredIntervalMs,
-        configuredDistanceMeters,
-    };
+    return false;
 }

@@ -689,7 +689,34 @@ export function useForegroundLocationRecorder({
         try {
             const { hasStarted, state } = await getBackgroundRecordingStatus();
 
+            console.log(
+                "[BackgroundLocation] restored task status:",
+                hasStarted,
+            );
+
+            console.log("[BackgroundLocation] restored recording state:", {
+                hasStarted,
+                hasState: Boolean(state),
+                isRecording: state?.isRecording ?? false,
+                recordingSessionId: state?.recordingSessionId ?? null,
+                userId: state?.userId ?? null,
+                startedAt: state?.startedAt ?? null,
+            });
+
             if (!hasStarted || !state?.userId) {
+                console.warn(
+                    "[BackgroundLocation] recording state was not restored:",
+                    {
+                        reason: !hasStarted
+                            ? "background task is not started"
+                            : "recording state userId is missing",
+                        hasStarted,
+                        hasState: Boolean(state),
+                        isRecording: state?.isRecording ?? false,
+                        recordingSessionId: state?.recordingSessionId ?? null,
+                        userId: state?.userId ?? null,
+                    },
+                );
                 return;
             }
 
@@ -1193,17 +1220,55 @@ export function useForegroundLocationRecorder({
                 } else {
                     await ensureBackgroundLocationPermission(userId, null);
 
-                    await startBackgroundLocationTracking({
-                        userId,
-                        isRecording: false,
-                        recordingSessionId: null,
-                        startedAt: null,
-                        intervalMs,
-                        distanceMeters,
-                        liveShareOwnerValues: normalizedLiveShareOwnerValues,
-                        liveLocationId: liveLocationIdRef.current,
-                        lastSavedLocation: null,
-                    });
+                    /*
+                     * 権限確認などのawait中に自動記録が開始される可能性があるため、
+                     * バックグラウンド状態を直前に再取得する。
+                     */
+                    const { hasStarted, state: latestBackgroundState } =
+                        await getBackgroundRecordingStatus();
+
+                    const latestRecordingSessionId =
+                        recordingSessionIdRef.current ??
+                        latestBackgroundState?.recordingSessionId ??
+                        null;
+
+                    const isRecordingNow =
+                        Boolean(latestRecordingSessionId) ||
+                        latestBackgroundState?.isRecording === true;
+
+                    if (hasStarted && latestBackgroundState) {
+                        /*
+                         * 既存タスクが動いている場合は、記録状態を壊さず
+                         * 現在地共有に関する項目だけを更新する。
+                         */
+                        await updateBackgroundLocationTrackingState({
+                            liveShareOwnerValues:
+                                normalizedLiveShareOwnerValues,
+                            liveLocationId: liveLocationIdRef.current,
+                        });
+                    } else {
+                        await startBackgroundLocationTracking({
+                            userId,
+                            isRecording: isRecordingNow,
+                            recordingSessionId: isRecordingNow
+                                ? latestRecordingSessionId
+                                : null,
+                            startedAt: isRecordingNow
+                                ? (latestBackgroundState?.startedAt ?? null)
+                                : null,
+                            intervalMs:
+                                latestBackgroundState?.intervalMs ?? intervalMs,
+                            distanceMeters:
+                                latestBackgroundState?.distanceMeters ??
+                                distanceMeters,
+                            liveShareOwnerValues:
+                                normalizedLiveShareOwnerValues,
+                            liveLocationId: liveLocationIdRef.current,
+                            lastSavedLocation:
+                                latestBackgroundState?.lastSavedLocation ??
+                                null,
+                        });
+                    }
                 }
 
                 await ensureForegroundLocationWatcher();

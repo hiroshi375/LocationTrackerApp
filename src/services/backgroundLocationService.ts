@@ -152,23 +152,6 @@ export async function getBackgroundRecordingState(): Promise<BackgroundRecording
     }
 }
 
-function shouldRestartBackgroundLocationUpdates(
-    hasStarted: boolean,
-    previousState: BackgroundRecordingState | null,
-    nextState: BackgroundRecordingState,
-): boolean {
-    if (!hasStarted) {
-        return false;
-    }
-
-    return (
-        previousState?.isRecording !== nextState.isRecording ||
-        previousState?.recordingSessionId !== nextState.recordingSessionId ||
-        previousState?.intervalMs !== nextState.intervalMs ||
-        previousState?.distanceMeters !== nextState.distanceMeters
-    );
-}
-
 export async function startBackgroundLocationTracking({
     userId,
     isRecording,
@@ -180,6 +163,18 @@ export async function startBackgroundLocationTracking({
     liveLocationId = null,
     lastSavedLocation,
 }: StartBackgroundLocationTrackingParams) {
+    console.log("[BackgroundLocation] start tracking requested", {
+        userId,
+        isRecording,
+        recordingSessionId,
+        startedAt,
+        intervalMs,
+        distanceMeters,
+        liveShareOwnerValuesCount: liveShareOwnerValues.length,
+        liveLocationId,
+        requestedAt: new Date().toISOString(),
+    });
+
     const normalizedLiveShareOwnerValues = Array.from(
         new Set(liveShareOwnerValues.filter(Boolean)),
     );
@@ -245,21 +240,38 @@ export async function startBackgroundLocationTracking({
         JSON.stringify(nextState),
     );
 
+    console.log("[BackgroundLocation] tracking state saved", {
+        isRecording: nextState.isRecording,
+        recordingSessionId: nextState.recordingSessionId ?? null,
+        intervalMs: nextState.intervalMs,
+        distanceMeters: nextState.distanceMeters,
+        liveShareOwnerValuesCount: nextState.liveShareOwnerValues.length,
+        savedAt: new Date().toISOString(),
+    });
+
     const hasStarted = await Location.hasStartedLocationUpdatesAsync(
         BACKGROUND_LOCATION_TASK_NAME,
     );
 
-    const shouldRestart = shouldRestartBackgroundLocationUpdates(
-        hasStarted,
-        previousState,
-        nextState,
-    );
+    if (hasStarted) {
+        console.log(
+            "[BackgroundLocation] location task already started. Skip restart.",
+            {
+                previousIsRecording: previousState?.isRecording ?? null,
+                nextIsRecording: nextState.isRecording,
 
-    if (shouldRestart) {
-        await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME);
-    }
+                previousRecordingSessionId:
+                    previousState?.recordingSessionId ?? null,
+                nextRecordingSessionId: nextState.recordingSessionId ?? null,
 
-    if (hasStarted && !shouldRestart) {
+                previousIntervalMs: previousState?.intervalMs ?? null,
+                nextIntervalMs: nextState.intervalMs,
+
+                previousDistanceMeters: previousState?.distanceMeters ?? null,
+                nextDistanceMeters: nextState.distanceMeters,
+            },
+        );
+
         return;
     }
 

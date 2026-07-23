@@ -832,12 +832,6 @@ export function useForegroundLocationRecorder({
                 return;
             }
 
-            const currentLocationRecordedAtMs =
-                typeof currentLocation.timestamp === "number" &&
-                Number.isFinite(currentLocation.timestamp)
-                    ? currentLocation.timestamp
-                    : Date.now();
-
             startLocationRef.current = {
                 latitude: currentLocation.coords.latitude,
                 longitude: currentLocation.coords.longitude,

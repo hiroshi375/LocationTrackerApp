@@ -6,45 +6,17 @@ import { Alert, AppState } from "react-native";
 import * as Battery from "expo-battery";
 import { client } from "../lib/client";
 import {
-    getErrorMessage,
-    saveBackgroundLocationDebugLog,
-} from "../services/backgroundLocationDebugLogService";
-import {
     ensureBackgroundLocationPermission,
     getBackgroundRecordingStatus,
     isBackgroundLocationPermissionError,
     startBackgroundLocationRecording,
-    startBackgroundLocationTracking,
     stopBackgroundLocationRecording,
-    stopBackgroundLocationTracking,
-    updateBackgroundLocationTrackingState,
     updateBackgroundRecordingLastSavedLocation,
     updateBackgroundRecordingLiveLocationId,
 } from "../services/backgroundLocationService";
 import {
-    acquireLocationSaveLock,
-    createLocationLogId,
-    createLocationSaveLockScopeKey,
-    createLocationUniqueKey,
-    isDuplicateLocationCreateError,
-    isLocationLogAlreadySaved,
-    releaseLocationSaveLock,
-} from "../services/locationLogDeduplicationService";
-import {
-    type RecordingContinuationState,
-    clearRecordingContinuationState,
-    confirmRecordingContinuation,
-    evaluateRecordingContinuation,
-    getRecordingContinuationState,
-    incrementRecordingContinuationPointCount,
-    markRecordingContinuationAutoStopped,
-} from "../services/recordingContinuationService";
-import {
     calculateDistanceMeters,
-    calculateSpeedMetersPerSecond,
-    isAbnormalSpeedLocation,
     isExactDuplicateLocation,
-    isLowAccuracyLocation,
     isNearDuplicateLocation,
 } from "../utils/locationDuplicate";
 
@@ -67,23 +39,6 @@ type LiveLocationMutationResult = {
     errors?: unknown;
 };
 
-type BackgroundDebugLogInput = Parameters<
-    typeof saveBackgroundLocationDebugLog
->[0];
-
-async function safeSaveBackgroundLocationDebugLog(
-    input: BackgroundDebugLogInput,
-): Promise<void> {
-    try {
-        await saveBackgroundLocationDebugLog(input);
-    } catch (debugLogError) {
-        console.error(
-            "Failed to save foreground location debug log:",
-            debugLogError,
-        );
-    }
-}
-
 export function useForegroundLocationRecorder({
     intervalMs,
     distanceMeters,
@@ -96,17 +51,9 @@ export function useForegroundLocationRecorder({
 
     const subscriptionRef = useRef<Location.LocationSubscription | null>(null);
     const lastSavedLocationRef = useRef<SavedLocation | null>(null);
+    const savingLocationKeyRef = useRef<string | null>(null);
     const recordingSessionIdRef = useRef<string | null>(null);
     const liveLocationIdRef = useRef<string | null>(null);
-    const recordingUserIdRef = useRef<string | null>(null);
-    const [hasRestoredTrackingState, setHasRestoredTrackingState] =
-        useState(false);
-
-    const [continuationPrompt, setContinuationPrompt] =
-        useState<RecordingContinuationState | null>(null);
-    const [autoStoppedSessionId, setAutoStoppedSessionId] = useState<
-        string | null
-    >(null);
 
     const [activeRecordingSessionId, setActiveRecordingSessionId] = useState<
         string | null
@@ -119,29 +66,55 @@ export function useForegroundLocationRecorder({
 
     const appStateRef = useRef(AppState.currentState);
 
-    /*
-     * watchPositionAsyncのコールバックなどから、
-     * 最新の自動記録状態を参照するためのref。
-     */
-    const isRecordingRef = useRef(false);
-
-    const isSyncingLiveSharingRef = useRef(false);
-    const isStartingRef = useRef(false);
-
-    /*
-     * Reactのstateとrefを同期する。
-     */
-    useEffect(() => {
-        isRecordingRef.current = isRecording;
-    }, [isRecording]);
-
     const [distanceFromStartMeters, setDistanceFromStartMeters] = useState<
         number | null
     >(null);
 
+    const forceDistanceMeters = Math.max(distanceMeters * 5, 100);
+
     const normalizedLiveShareOwnerValues = useMemo(() => {
         return Array.from(new Set(liveShareOwnerValues.filter(Boolean)));
     }, [liveShareOwnerValues]);
+
+    // 位置を保存すべきか判定する関数
+    const shouldSaveLocation = useCallback(
+        (latitude: number, longitude: number, recordedAtMs: number) => {
+            if (!lastSavedLocationRef.current) {
+                return true;
+            }
+
+            const elapsedMs =
+                recordedAtMs - lastSavedLocationRef.current.recordedAt;
+
+            if (elapsedMs <= 0) {
+                return false;
+            }
+
+            const distance = calculateDistanceMeters(
+                lastSavedLocationRef.current.latitude,
+                lastSavedLocationRef.current.longitude,
+                latitude,
+                longitude,
+            );
+
+            //指定間隔未満なら保存しない
+            if (elapsedMs < intervalMs && distance < forceDistanceMeters) {
+                return false;
+            }
+
+            if (elapsedMs >= intervalMs) {
+                return true;
+            }
+
+            //100m以上動いた場合は例外的に保存
+            if (distance >= forceDistanceMeters) {
+                return true;
+            }
+
+            return false;
+        },
+        [intervalMs, forceDistanceMeters],
+    );
 
     //
     const updateDistanceFromStart = useCallback(
@@ -170,27 +143,16 @@ export function useForegroundLocationRecorder({
     );
 
     //
-
     const updateLiveLocation = useCallback(
         async (location: Location.LocationObject) => {
             if (normalizedLiveShareOwnerValues.length === 0) {
                 return;
             }
 
-            let userId = recordingUserIdRef.current;
+            const recordingSessionId = recordingSessionIdRef.current;
 
-            if (!userId) {
-                try {
-                    const currentUser = await getCurrentUser();
-                    userId = currentUser.userId;
-                    recordingUserIdRef.current = userId;
-                } catch (error) {
-                    console.error(
-                        "Get current user for LiveLocation error:",
-                        error,
-                    );
-                    return;
-                }
+            if (!recordingSessionId) {
+                return;
             }
 
             const latitude = location.coords.latitude;
@@ -200,19 +162,15 @@ export function useForegroundLocationRecorder({
                 return;
             }
 
-            const isCurrentlyRecording = isRecordingRef.current;
-            const recordingSessionId = isCurrentlyRecording
-                ? recordingSessionIdRef.current
-                : null;
-
             try {
                 const liveLocationModel = client.models.LiveLocation as any;
+
+                const currentUser = await getCurrentUser();
                 const updatedAt = new Date().toISOString();
 
                 const payload = {
-                    userId,
+                    userId: currentUser.userId,
                     recordingSessionId,
-                    isRecording: isCurrentlyRecording,
                     latitude,
                     longitude,
                     accuracy: location.coords.accuracy ?? null,
@@ -228,28 +186,10 @@ export function useForegroundLocationRecorder({
                     })) as LiveLocationMutationResult;
 
                     if (result.errors) {
-                        const errorMessage = getErrorMessage(result.errors);
-
                         console.error(
                             "LiveLocation update errors:",
                             result.errors,
                         );
-
-                        await safeSaveBackgroundLocationDebugLog({
-                            userId,
-                            recordingSessionId,
-                            eventName: "foregroundLiveLocationUpdateFailed",
-                            errorMessage,
-                            details: {
-                                liveLocationId: liveLocationIdRef.current,
-                                isRecording: isCurrentlyRecording,
-                                sharedOwnersCount:
-                                    normalizedLiveShareOwnerValues.length,
-                                payloadKeys: Object.keys(payload),
-                            },
-                        });
-
-                        return;
                     }
 
                     return;
@@ -260,23 +200,7 @@ export function useForegroundLocationRecorder({
                 )) as LiveLocationMutationResult;
 
                 if (result.errors) {
-                    const errorMessage = getErrorMessage(result.errors);
-
                     console.error("LiveLocation create errors:", result.errors);
-
-                    await safeSaveBackgroundLocationDebugLog({
-                        userId,
-                        recordingSessionId,
-                        eventName: "foregroundLiveLocationCreateFailed",
-                        errorMessage,
-                        details: {
-                            isRecording: isCurrentlyRecording,
-                            sharedOwnersCount:
-                                normalizedLiveShareOwnerValues.length,
-                            payloadKeys: Object.keys(payload),
-                        },
-                    });
-
                     return;
                 }
 
@@ -287,19 +211,6 @@ export function useForegroundLocationRecorder({
                 );
             } catch (error) {
                 console.error("LiveLocation update error:", error);
-
-                await safeSaveBackgroundLocationDebugLog({
-                    userId,
-                    recordingSessionId,
-                    eventName: "foregroundLiveLocationUnexpectedError",
-                    errorMessage: getErrorMessage(error),
-                    details: {
-                        liveLocationId: liveLocationIdRef.current,
-                        isRecording: isCurrentlyRecording,
-                        sharedOwnersCount:
-                            normalizedLiveShareOwnerValues.length,
-                    },
-                });
             }
         },
         [normalizedLiveShareOwnerValues],
@@ -311,16 +222,6 @@ export function useForegroundLocationRecorder({
             location: Location.LocationObject,
             forceSave: boolean = false,
         ) => {
-            /*
-             * LocationLogは自動記録中だけ保存する。
-             * 現在地共有のみの場合はLiveLocationだけを更新する。
-             */
-            const recordingSessionId = recordingSessionIdRef.current;
-
-            if (!isRecordingRef.current || !recordingSessionId) {
-                return;
-            }
-
             const latitude = location.coords.latitude;
             const longitude = location.coords.longitude;
 
@@ -335,164 +236,93 @@ export function useForegroundLocationRecorder({
                     : Date.now();
 
             const recordedAt = new Date(recordedAtMs).toISOString();
-            const accuracy = location.coords.accuracy ?? null;
-
-            if (isLowAccuracyLocation(accuracy)) {
-                await saveBackgroundLocationDebugLog({
-                    userId: recordingUserIdRef.current,
-                    recordingSessionId,
-                    eventName: "foregroundLocationLogSkippedLowAccuracy",
-                    details: {
-                        recordedAt,
-                        latitude,
-                        longitude,
-                        accuracy,
-                    },
-                });
-
-                return;
-            }
 
             updateDistanceFromStart(location);
 
-            const userId = recordingUserIdRef.current;
+            const duplicateKey = createLocationDuplicateKey(
+                latitude,
+                longitude,
+                recordedAtMs,
+            );
 
-            if (!userId) {
-                console.error(
-                    "Skip foreground LocationLog create: userId is missing",
-                );
+            if (savingLocationKeyRef.current === duplicateKey) {
+                return;
+            }
 
-                await saveBackgroundLocationDebugLog({
-                    userId: null,
-                    recordingSessionId,
-                    eventName: "foregroundLocationLogSkippedNoUserId",
-                    details: {
-                        recordedAt,
-                        latitude,
-                        longitude,
-                    },
+            if (
+                isExactDuplicateLocation(
+                    lastSavedLocationRef.current,
+                    latitude,
+                    longitude,
+                    recordedAtMs,
+                ) ||
+                isNearDuplicateLocation(
+                    lastSavedLocationRef.current,
+                    latitude,
+                    longitude,
+                    recordedAtMs,
+                )
+            ) {
+                console.log("Skip duplicate foreground location:", {
+                    latitude,
+                    longitude,
+                    recordedAt,
                 });
 
                 return;
             }
 
-            const lockScopeKey = createLocationSaveLockScopeKey(
-                userId,
-                recordingSessionId,
-            );
-            const lock = await acquireLocationSaveLock(lockScopeKey);
+            if (!forceSave) {
+                try {
+                    const { state } = await getBackgroundRecordingStatus();
 
-            if (!lock) {
+                    const backgroundLastSavedLocation =
+                        state?.lastSavedLocation ?? null;
+
+                    if (
+                        isExactDuplicateLocation(
+                            backgroundLastSavedLocation,
+                            latitude,
+                            longitude,
+                            recordedAtMs,
+                        ) ||
+                        isNearDuplicateLocation(
+                            backgroundLastSavedLocation,
+                            latitude,
+                            longitude,
+                            recordedAtMs,
+                        )
+                    ) {
+                        console.log(
+                            "Skip duplicate foreground location by background state:",
+                            {
+                                latitude,
+                                longitude,
+                                recordedAt,
+                            },
+                        );
+
+                        return;
+                    }
+                } catch (error) {
+                    console.error(
+                        "Check background duplicate location error:",
+                        error,
+                    );
+                }
+            }
+
+            if (
+                !forceSave &&
+                !shouldSaveLocation(latitude, longitude, recordedAtMs)
+            ) {
                 return;
             }
 
             try {
-                /*
-                 * ロック取得後に共有状態を再取得し、
-                 * background側が直前に保存した地点を反映する。
-                 */
-                const { state } = await getBackgroundRecordingStatus();
+                savingLocationKeyRef.current = duplicateKey;
 
-                if (
-                    !isRecordingRef.current ||
-                    recordingSessionIdRef.current !== recordingSessionId ||
-                    !state?.isRecording ||
-                    state.recordingSessionId !== recordingSessionId
-                ) {
-                    return;
-                }
-
-                const latestLastSavedLocation =
-                    state.lastSavedLocation ??
-                    lastSavedLocationRef.current ??
-                    null;
-
-                if (
-                    !forceSave &&
-                    isAbnormalSpeedLocation(
-                        latestLastSavedLocation,
-                        latitude,
-                        longitude,
-                        recordedAtMs,
-                    )
-                ) {
-                    const speedMetersPerSecond = calculateSpeedMetersPerSecond(
-                        latestLastSavedLocation,
-                        latitude,
-                        longitude,
-                        recordedAtMs,
-                    );
-
-                    await saveBackgroundLocationDebugLog({
-                        userId,
-                        recordingSessionId,
-                        eventName: "foregroundLocationLogSkippedAbnormalSpeed",
-                        details: {
-                            recordedAt,
-                            latitude,
-                            longitude,
-                            accuracy,
-                            speedMetersPerSecond,
-                            speedKmPerHour:
-                                speedMetersPerSecond == null
-                                    ? null
-                                    : speedMetersPerSecond * 3.6,
-                        },
-                    });
-
-                    return;
-                }
-
-                /*
-                 * 開始・停止地点のforceSaveでは、状態に先行設定された
-                 * lastSavedLocationによって自分自身を除外しない。
-                 * DBの決定的idによる完全重複防止は常に実施する。
-                 */
-                if (
-                    !forceSave &&
-                    (isExactDuplicateLocation(
-                        latestLastSavedLocation,
-                        latitude,
-                        longitude,
-                        recordedAtMs,
-                    ) ||
-                        isNearDuplicateLocation(
-                            latestLastSavedLocation,
-                            latitude,
-                            longitude,
-                            recordedAtMs,
-                        ))
-                ) {
-                    return;
-                }
-
-                if (
-                    !forceSave &&
-                    !shouldSaveLocationFromSavedLocation(
-                        latestLastSavedLocation,
-                        latitude,
-                        longitude,
-                        recordedAtMs,
-                        intervalMs,
-                        distanceMeters,
-                    )
-                ) {
-                    return;
-                }
-
-                const locationUniqueKey = createLocationUniqueKey({
-                    userId,
-                    recordingSessionId,
-                    recordedAt,
-                    latitude,
-                    longitude,
-                    accuracy,
-                });
-                const locationLogId = createLocationLogId(locationUniqueKey);
-
-                if (await isLocationLogAlreadySaved(locationLogId)) {
-                    return;
-                }
+                const currentUser = await getCurrentUser();
 
                 const batterySnapshot = await getBatterySnapshot();
 
@@ -502,51 +332,27 @@ export function useForegroundLocationRecorder({
                         : undefined;
 
                 const result = await client.models.LocationLog.create({
-                    id: locationLogId,
-                    userId,
+                    userId: currentUser.userId,
                     latitude,
                     longitude,
-                    accuracy,
+                    accuracy: location.coords.accuracy ?? null,
                     recordedAt,
                     memo: "自動記録",
-                    recordingSessionId,
+                    recordingSessionId: recordingSessionIdRef.current,
                     source: "foreground",
+
                     sharedOwners,
-                    locationUniqueKey,
+
                     batteryLevel: batterySnapshot.batteryLevel ?? undefined,
                     batteryState: batterySnapshot.batteryState ?? undefined,
                     lowPowerMode: batterySnapshot.lowPowerMode ?? undefined,
                 });
 
                 if (result.errors) {
-                    if (
-                        isDuplicateLocationCreateError(result.errors) ||
-                        (await isLocationLogAlreadySaved(locationLogId))
-                    ) {
-                        return;
-                    }
-
-                    const errorMessage = getErrorMessage(result.errors);
-
                     console.error(
                         "Auto LocationLog create errors:",
                         result.errors,
                     );
-
-                    await saveBackgroundLocationDebugLog({
-                        userId,
-                        recordingSessionId,
-                        eventName: "foregroundLocationLogCreateFailed",
-                        errorMessage,
-                        details: {
-                            recordedAt,
-                            latitude,
-                            longitude,
-                            source: "foreground",
-                            locationUniqueKey,
-                        },
-                    });
-
                     return;
                 }
 
@@ -556,24 +362,11 @@ export function useForegroundLocationRecorder({
                     recordedAt: recordedAtMs,
                 };
 
-                /*
-                 * create成功後、ロックを解放する前にforeground refと
-                 * AsyncStorageの最終保存位置を両方更新する。
-                 */
                 lastSavedLocationRef.current = nextSavedLocation;
 
                 await updateBackgroundRecordingLastSavedLocation(
                     nextSavedLocation,
                 );
-
-                const continuationEvaluation =
-                    await incrementRecordingContinuationPointCount(
-                        recordingSessionId,
-                    );
-
-                if (continuationEvaluation.shouldShowConfirmation) {
-                    setContinuationPrompt(continuationEvaluation.state);
-                }
 
                 console.log("Auto location saved:", {
                     latitude,
@@ -583,94 +376,23 @@ export function useForegroundLocationRecorder({
             } catch (error) {
                 console.error("Auto LocationLog create error:", error);
             } finally {
-                await releaseLocationSaveLock(lock);
+                if (savingLocationKeyRef.current === duplicateKey) {
+                    savingLocationKeyRef.current = null;
+                }
             }
         },
         [
-            intervalMs,
-            distanceMeters,
+            shouldSaveLocation,
             updateDistanceFromStart,
             normalizedLiveShareOwnerValues,
         ],
     );
 
-    const handleForegroundLocation = useCallback(
-        async (location: Location.LocationObject) => {
-            if (appStateRef.current !== "active") {
-                return;
-            }
+    const resetRecordingState = useCallback(() => {
+        subscriptionRef.current?.remove();
+        subscriptionRef.current = null;
 
-            /*
-             * LiveLocationは自動記録状態に関係なく更新する。
-             * 共有先が0人の場合、updateLiveLocation内で何もしない。
-             */
-            await updateLiveLocation(location);
-
-            /*
-             * LocationLogはsaveLocationLog内のガードにより、
-             * 自動記録中だけ保存される。
-             */
-            await saveLocationLog(location);
-        },
-        [saveLocationLog, updateLiveLocation],
-    );
-
-    const ensureForegroundLocationWatcher = useCallback(async () => {
-        if (subscriptionRef.current) {
-            return;
-        }
-
-        const subscription = await Location.watchPositionAsync(
-            {
-                accuracy: Location.Accuracy.Balanced,
-                timeInterval: intervalMs,
-                distanceInterval: distanceMeters,
-            },
-            (location) => {
-                void handleForegroundLocation(location);
-            },
-        );
-
-        subscriptionRef.current = subscription;
-    }, [intervalMs, distanceMeters, handleForegroundLocation]);
-
-    const deactivateLiveLocation = useCallback(async () => {
-        const liveLocationId = liveLocationIdRef.current;
-
-        if (!liveLocationId) {
-            return;
-        }
-
-        try {
-            const result = await client.models.LiveLocation.update({
-                id: liveLocationId,
-                isActive: false,
-                isRecording: false,
-                recordingSessionId: null,
-                updatedAt: new Date().toISOString(),
-                sharedOwners: [],
-            });
-
-            if (result.errors) {
-                console.error("Deactivate LiveLocation errors:", result.errors);
-                return;
-            }
-
-            liveLocationIdRef.current = null;
-
-            await updateBackgroundRecordingLiveLocationId(null);
-        } catch (error) {
-            console.error("Deactivate LiveLocation error:", error);
-        }
-    }, []);
-
-    /*
-     * 自動記録状態だけを初期化する。
-     * 現在地共有に必要なユーザーID、LiveLocation ID、
-     * Foreground位置監視はここでは解除しない。
-     */
-    const resetAutomaticRecordingState = useCallback(() => {
-        isRecordingRef.current = false;
+        liveLocationIdRef.current = null;
         recordingSessionIdRef.current = null;
         startLocationRef.current = null;
         lastSavedLocationRef.current = null;
@@ -681,87 +403,45 @@ export function useForegroundLocationRecorder({
         setIsRecording(false);
     }, []);
 
+    const isStartingRef = useRef(false);
+
     const restoreRecordingState = useCallback(async () => {
-        if (isStartingRef.current) {
+        if (isRecording || isStartingRef.current) {
             return;
         }
 
         try {
             const { hasStarted, state } = await getBackgroundRecordingStatus();
 
-            console.log(
-                "[BackgroundLocation] restored task status:",
-                hasStarted,
-            );
-
-            console.log("[BackgroundLocation] restored recording state:", {
-                hasStarted,
-                hasState: Boolean(state),
-                isRecording: state?.isRecording ?? false,
-                recordingSessionId: state?.recordingSessionId ?? null,
-                userId: state?.userId ?? null,
-                startedAt: state?.startedAt ?? null,
-            });
-
-            if (!hasStarted || !state?.userId) {
-                console.warn(
-                    "[BackgroundLocation] recording state was not restored:",
-                    {
-                        reason: !hasStarted
-                            ? "background task is not started"
-                            : "recording state userId is missing",
-                        hasStarted,
-                        hasState: Boolean(state),
-                        isRecording: state?.isRecording ?? false,
-                        recordingSessionId: state?.recordingSessionId ?? null,
-                        userId: state?.userId ?? null,
-                    },
-                );
+            if (!hasStarted) {
                 return;
             }
 
-            recordingUserIdRef.current = state.userId;
+            if (!state?.recordingSessionId || !state.userId) {
+                return;
+            }
+
+            recordingSessionIdRef.current = state.recordingSessionId;
             liveLocationIdRef.current = state.liveLocationId ?? null;
+            lastSavedLocationRef.current = state.lastSavedLocation ?? null;
 
-            if (state.isRecording && state.recordingSessionId) {
-                isRecordingRef.current = true;
-                recordingSessionIdRef.current = state.recordingSessionId;
-                lastSavedLocationRef.current = state.lastSavedLocation ?? null;
+            setActiveRecordingSessionId(state.recordingSessionId);
+            setRecordingStartedAt(state.startedAt ?? null);
+            setDistanceFromStartMeters(null);
+            setIsRecording(true);
 
-                setActiveRecordingSessionId(state.recordingSessionId);
-                setRecordingStartedAt(state.startedAt ?? null);
-                setDistanceFromStartMeters(null);
-                setIsRecording(true);
-
-                console.log("Restored background recording state:", {
-                    isRecording: true,
-                    recordingSessionId: state.recordingSessionId,
-                    startedAt: state.startedAt,
-                });
-            } else {
-                isRecordingRef.current = false;
-                recordingSessionIdRef.current = null;
-                lastSavedLocationRef.current = null;
-
-                setActiveRecordingSessionId(null);
-                setRecordingStartedAt(null);
-                setDistanceFromStartMeters(null);
-                setIsRecording(false);
-            }
-
-            try {
-                await ensureForegroundLocationWatcher();
-            } catch (watchError) {
-                console.error("Restore foreground watcher error:", watchError);
-            }
+            console.log("Restored background recording state:", {
+                recordingSessionId: state.recordingSessionId,
+                startedAt: state.startedAt,
+            });
         } catch (error) {
             console.error("Restore recording state error:", error);
         }
-    }, [ensureForegroundLocationWatcher]);
+    }, [isRecording]);
 
-    // 自動記録開始
+    // 記録開始関数
     const startRecording = useCallback(async () => {
-        if (isRecordingRef.current || isStartingRef.current) {
+        if (isRecording || subscriptionRef.current || isStartingRef.current) {
             return;
         }
 
@@ -785,29 +465,8 @@ export function useForegroundLocationRecorder({
             }
 
             const newSessionId = createRecordingSessionId();
-            let recordingUserId: string;
 
-            try {
-                const currentUser = await getCurrentUser();
-                recordingUserId = currentUser.userId;
-            } catch (error) {
-                resetAutomaticRecordingState();
-
-                console.error("Get current user for recording error:", error);
-
-                Alert.alert(
-                    "ユーザー情報の取得に失敗しました",
-                    "ログイン状態を確認してから、もう一度自動記録を開始してください。",
-                );
-                return;
-            }
-
-            recordingUserIdRef.current = recordingUserId;
             recordingSessionIdRef.current = newSessionId;
-            setContinuationPrompt(null);
-            setAutoStoppedSessionId(null);
-            isRecordingRef.current = true;
-
             setActiveRecordingSessionId(newSessionId);
             lastSavedLocationRef.current = null;
 
@@ -821,7 +480,7 @@ export function useForegroundLocationRecorder({
                     accuracy: Location.Accuracy.Balanced,
                 });
             } catch (error) {
-                resetAutomaticRecordingState();
+                resetRecordingState();
 
                 console.error("Get current location error:", error);
 
@@ -832,6 +491,12 @@ export function useForegroundLocationRecorder({
                 return;
             }
 
+            const currentLocationRecordedAtMs =
+                typeof currentLocation.timestamp === "number" &&
+                Number.isFinite(currentLocation.timestamp)
+                    ? currentLocation.timestamp
+                    : Date.now();
+
             startLocationRef.current = {
                 latitude: currentLocation.coords.latitude,
                 longitude: currentLocation.coords.longitude,
@@ -840,15 +505,20 @@ export function useForegroundLocationRecorder({
             setDistanceFromStartMeters(0);
 
             try {
+                const currentUser = await getCurrentUser();
+
                 await startBackgroundLocationRecording({
-                    userId: recordingUserId,
+                    userId: currentUser.userId,
                     recordingSessionId: newSessionId,
                     startedAt,
                     intervalMs,
                     distanceMeters,
                     liveShareOwnerValues: normalizedLiveShareOwnerValues,
-                    liveLocationId: liveLocationIdRef.current,
-                    lastSavedLocation: null,
+                    lastSavedLocation: {
+                        latitude: currentLocation.coords.latitude,
+                        longitude: currentLocation.coords.longitude,
+                        recordedAt: currentLocationRecordedAtMs,
+                    },
                 });
             } catch (error) {
                 try {
@@ -860,7 +530,7 @@ export function useForegroundLocationRecorder({
                     );
                 }
 
-                resetAutomaticRecordingState();
+                resetRecordingState();
 
                 if (isBackgroundLocationPermissionError(error)) {
                     return;
@@ -879,238 +549,101 @@ export function useForegroundLocationRecorder({
             }
 
             try {
-                await ensureForegroundLocationWatcher();
+                const subscription = await Location.watchPositionAsync(
+                    {
+                        accuracy: Location.Accuracy.Balanced,
+                        timeInterval: intervalMs,
+                        distanceInterval: distanceMeters,
+                    },
+                    async (location) => {
+                        if (appStateRef.current !== "active") {
+                            return;
+                        }
+
+                        await updateLiveLocation(location);
+                        await saveLocationLog(location);
+                    },
+                );
+
+                subscriptionRef.current = subscription;
             } catch (error) {
                 console.error("Foreground watch position start error:", error);
 
-                /*
-                 * Background位置更新は開始済みなので、
-                 * Foreground監視に失敗しても自動記録は継続する。
-                 */
+                // backgroundLocationRecording はすでに開始済みのため止めない。
+                // foreground の watchPositionAsync に失敗しても、
+                // background task による自動記録は継続させる。
             }
 
             setIsRecording(true);
 
             await updateLiveLocation(currentLocation);
+            await updateBackgroundRecordingLiveLocationId(
+                liveLocationIdRef.current,
+            );
             await saveLocationLog(currentLocation, true);
         } finally {
             isStartingRef.current = false;
         }
     }, [
+        isRecording,
         saveLocationLog,
         updateLiveLocation,
         intervalMs,
         distanceMeters,
         normalizedLiveShareOwnerValues,
-        resetAutomaticRecordingState,
-        ensureForegroundLocationWatcher,
+        resetRecordingState,
     ]);
 
-    // 自動記録停止
-    const stopRecording = useCallback(
-        async (
-            reason: "MANUAL" | "AUTO" = "MANUAL",
-        ): Promise<string | null> => {
-            const finishedSessionId = recordingSessionIdRef.current;
+    // 記録停止関数
+    const stopRecording = useCallback(async (): Promise<string | null> => {
+        const finishedSessionId = recordingSessionIdRef.current;
 
-            let stopLocation: Location.LocationObject | null = null;
+        subscriptionRef.current?.remove();
+        subscriptionRef.current = null;
 
-            /*
-             * 自動記録状態を解除する前に最終地点を保存する。
-             */
-            if (reason === "MANUAL" && recordingSessionIdRef.current) {
-                try {
-                    stopLocation = await Location.getCurrentPositionAsync({
-                        accuracy: Location.Accuracy.Balanced,
-                    });
+        try {
+            await stopBackgroundLocationRecording();
+        } catch (error) {
+            console.error("Stop background location recording error:", error);
+        }
 
-                    await updateLiveLocation(stopLocation);
-                    await saveLocationLog(stopLocation, true);
-                } catch (error) {
-                    console.error("Save stop location error:", error);
-                }
-            }
-
-            /*
-             * 以降の位置情報をLocationLogへ保存しないよう、
-             * 自動記録状態を先に解除する。
-             */
-            isRecordingRef.current = false;
-            recordingSessionIdRef.current = null;
-
-            setActiveRecordingSessionId(null);
-            setRecordingStartedAt(null);
-            setIsRecording(false);
-
-            startLocationRef.current = null;
-            lastSavedLocationRef.current = null;
-            setDistanceFromStartMeters(null);
-
+        if (recordingSessionIdRef.current) {
             try {
-                /*
-                 * 共有先が残っている場合、
-                 * backgroundLocationService側では追跡を停止せず、
-                 * isRecordingだけfalseへ変更する。
-                 */
-                await stopBackgroundLocationRecording();
+                const currentLocation = await Location.getCurrentPositionAsync({
+                    accuracy: Location.Accuracy.Balanced,
+                });
+
+                await updateLiveLocation(currentLocation);
+                await saveLocationLog(currentLocation, true);
             } catch (error) {
-                console.error(
-                    "Stop background location recording error:",
-                    error,
-                );
+                console.error("Save stop location error:", error);
             }
-
-            if (normalizedLiveShareOwnerValues.length > 0) {
-                /*
-                 * 同じLiveLocationレコードを非記録中の共有状態へ更新する。
-                 */
-                if (stopLocation) {
-                    await updateLiveLocation(stopLocation);
-                } else {
-                    try {
-                        const currentLocation =
-                            await Location.getCurrentPositionAsync({
-                                accuracy: Location.Accuracy.Balanced,
-                            });
-
-                        await updateLiveLocation(currentLocation);
-                    } catch (error) {
-                        console.error(
-                            "Update shared location after stop error:",
-                            error,
-                        );
-                    }
-                }
-
-                try {
-                    await ensureForegroundLocationWatcher();
-                } catch (error) {
-                    console.error(
-                        "Keep foreground sharing after stop error:",
-                        error,
-                    );
-                }
-            } else {
-                subscriptionRef.current?.remove();
-                subscriptionRef.current = null;
-
-                liveLocationIdRef.current = null;
-                recordingUserIdRef.current = null;
-            }
-
-            if (finishedSessionId) {
-                if (reason === "AUTO") {
-                    await markRecordingContinuationAutoStopped(
-                        finishedSessionId,
-                    );
-                    setAutoStoppedSessionId(finishedSessionId);
-                } else {
-                    await clearRecordingContinuationState(finishedSessionId);
-                }
-            }
-
-            setContinuationPrompt(null);
-
-            return finishedSessionId;
-        },
-        [
-            saveLocationLog,
-            updateLiveLocation,
-            normalizedLiveShareOwnerValues,
-            ensureForegroundLocationWatcher,
-        ],
-    );
-
-    const confirmContinuation = useCallback(async () => {
-        const recordingSessionId = recordingSessionIdRef.current;
-
-        if (!recordingSessionId) {
-            return;
         }
 
-        await confirmRecordingContinuation(recordingSessionId);
-        setContinuationPrompt(null);
-    }, []);
-
-    const clearAutoStoppedSession = useCallback(async () => {
-        const sessionId = autoStoppedSessionId;
-
-        if (sessionId) {
-            await clearRecordingContinuationState(sessionId);
-        }
-
-        setAutoStoppedSessionId(null);
-    }, [autoStoppedSessionId]);
-
-    useEffect(() => {
-        if (!hasRestoredTrackingState) {
-            return;
-        }
-
-        let cancelled = false;
-        let stoppingForTimeout = false;
-
-        const checkContinuation = async () => {
+        if (liveLocationIdRef.current) {
             try {
-                const continuationState = await getRecordingContinuationState();
-
-                if (cancelled || !continuationState) {
-                    return;
-                }
-
-                if (continuationState.autoStoppedAt) {
-                    if (isRecordingRef.current) {
-                        isRecordingRef.current = false;
-                        recordingSessionIdRef.current = null;
-                        setIsRecording(false);
-                        setRecordingStartedAt(null);
-                        setActiveRecordingSessionId(null);
-                    }
-
-                    setContinuationPrompt(null);
-                    setAutoStoppedSessionId(
-                        continuationState.recordingSessionId,
-                    );
-                    return;
-                }
-
-                const recordingSessionId = recordingSessionIdRef.current;
-
-                if (!isRecordingRef.current || !recordingSessionId) {
-                    return;
-                }
-
-                const evaluation =
-                    await evaluateRecordingContinuation(recordingSessionId);
-
-                if (cancelled) {
-                    return;
-                }
-
-                if (evaluation.isDeadlineExpired && !stoppingForTimeout) {
-                    stoppingForTimeout = true;
-                    await stopRecording("AUTO");
-                    return;
-                }
-
-                setContinuationPrompt(
-                    evaluation.shouldShowConfirmation ? evaluation.state : null,
-                );
+                await client.models.LiveLocation.update({
+                    id: liveLocationIdRef.current,
+                    isActive: false,
+                    updatedAt: new Date().toISOString(),
+                });
             } catch (error) {
-                console.error("Check recording continuation error:", error);
+                console.error("LiveLocation stop update error:", error);
             }
-        };
+        }
 
-        void checkContinuation();
-        const timerId = setInterval(() => {
-            void checkContinuation();
-        }, 1000);
+        liveLocationIdRef.current = null;
+        recordingSessionIdRef.current = null;
+        setActiveRecordingSessionId(null);
+        setRecordingStartedAt(null);
+        setIsRecording(false);
 
-        return () => {
-            cancelled = true;
-            clearInterval(timerId);
-        };
-    }, [hasRestoredTrackingState, stopRecording]);
+        startLocationRef.current = null;
+        lastSavedLocationRef.current = null;
+        setDistanceFromStartMeters(null);
+
+        return finishedSessionId;
+    }, [saveLocationLog, updateLiveLocation]);
 
     useEffect(() => {
         return () => {
@@ -1133,227 +666,26 @@ export function useForegroundLocationRecorder({
     }, []);
 
     useEffect(() => {
-        let mounted = true;
-
-        const restore = async () => {
-            try {
-                await restoreRecordingState();
-            } finally {
-                if (mounted) {
-                    setHasRestoredTrackingState(true);
-                }
-            }
-        };
-
-        void restore();
-
-        return () => {
-            mounted = false;
-        };
+        void restoreRecordingState();
     }, [restoreRecordingState]);
-
-    /*
-     * 共有先・記録間隔・距離間隔の変更を、
-     * Foreground/Backgroundの位置追跡状態へ反映する。
-     */
-    useEffect(() => {
-        if (!hasRestoredTrackingState) {
-            return;
-        }
-
-        if (isSyncingLiveSharingRef.current) {
-            return;
-        }
-
-        let cancelled = false;
-
-        const syncLiveSharing = async () => {
-            isSyncingLiveSharingRef.current = true;
-
-            try {
-                const isCurrentlyRecording = isRecordingRef.current;
-
-                if (normalizedLiveShareOwnerValues.length === 0) {
-                    await deactivateLiveLocation();
-
-                    if (isCurrentlyRecording) {
-                        await updateBackgroundLocationTrackingState({
-                            isRecording: true,
-                            recordingSessionId: recordingSessionIdRef.current,
-                            liveShareOwnerValues: [],
-                            liveLocationId: null,
-                        });
-                        return;
-                    }
-
-                    subscriptionRef.current?.remove();
-                    subscriptionRef.current = null;
-
-                    await stopBackgroundLocationTracking();
-
-                    recordingUserIdRef.current = null;
-                    liveLocationIdRef.current = null;
-                    return;
-                }
-
-                let userId = recordingUserIdRef.current;
-
-                if (!userId) {
-                    const currentUser = await getCurrentUser();
-                    userId = currentUser.userId;
-                    recordingUserIdRef.current = userId;
-                }
-
-                if (isCurrentlyRecording) {
-                    await updateBackgroundLocationTrackingState({
-                        isRecording: true,
-                        recordingSessionId: recordingSessionIdRef.current,
-                        liveShareOwnerValues: normalizedLiveShareOwnerValues,
-                        liveLocationId: liveLocationIdRef.current,
-                    });
-                } else {
-                    await ensureBackgroundLocationPermission(userId, null);
-
-                    /*
-                     * 権限確認などのawait中に自動記録が開始される可能性があるため、
-                     * バックグラウンド状態を直前に再取得する。
-                     */
-                    const { hasStarted, state: latestBackgroundState } =
-                        await getBackgroundRecordingStatus();
-
-                    const latestRecordingSessionId =
-                        recordingSessionIdRef.current ??
-                        latestBackgroundState?.recordingSessionId ??
-                        null;
-
-                    const isRecordingNow =
-                        Boolean(latestRecordingSessionId) ||
-                        latestBackgroundState?.isRecording === true;
-
-                    if (hasStarted && latestBackgroundState) {
-                        /*
-                         * 既存タスクが動いている場合は、記録状態を壊さず
-                         * 現在地共有に関する項目だけを更新する。
-                         */
-                        await updateBackgroundLocationTrackingState({
-                            liveShareOwnerValues:
-                                normalizedLiveShareOwnerValues,
-                            liveLocationId: liveLocationIdRef.current,
-                        });
-                    } else {
-                        await startBackgroundLocationTracking({
-                            userId,
-                            isRecording: isRecordingNow,
-                            recordingSessionId: isRecordingNow
-                                ? latestRecordingSessionId
-                                : null,
-                            startedAt: isRecordingNow
-                                ? (latestBackgroundState?.startedAt ?? null)
-                                : null,
-                            intervalMs:
-                                latestBackgroundState?.intervalMs ?? intervalMs,
-                            distanceMeters:
-                                latestBackgroundState?.distanceMeters ??
-                                distanceMeters,
-                            liveShareOwnerValues:
-                                normalizedLiveShareOwnerValues,
-                            liveLocationId: liveLocationIdRef.current,
-                            lastSavedLocation:
-                                latestBackgroundState?.lastSavedLocation ??
-                                null,
-                        });
-                    }
-                }
-
-                await ensureForegroundLocationWatcher();
-
-                const currentLocation = await Location.getCurrentPositionAsync({
-                    accuracy: Location.Accuracy.Balanced,
-                });
-
-                if (!cancelled) {
-                    await updateLiveLocation(currentLocation);
-                }
-            } catch (error) {
-                console.error("Sync live sharing error:", error);
-
-                if (!isBackgroundLocationPermissionError(error)) {
-                    Alert.alert(
-                        "現在地共有エラー",
-                        "リアルタイム共有を開始できませんでした。位置情報の権限設定を確認してください。",
-                    );
-                }
-            } finally {
-                isSyncingLiveSharingRef.current = false;
-            }
-        };
-
-        void syncLiveSharing();
-
-        return () => {
-            cancelled = true;
-        };
-    }, [
-        hasRestoredTrackingState,
-        intervalMs,
-        distanceMeters,
-        normalizedLiveShareOwnerValues,
-        ensureForegroundLocationWatcher,
-        updateLiveLocation,
-        deactivateLiveLocation,
-    ]);
 
     return {
         isRecording,
+        //lastRecordedAtText,
         recordingStartedAt,
         activeRecordingSessionId,
         distanceFromStartMeters,
-        continuationPrompt,
-        autoStoppedSessionId,
         startRecording,
         stopRecording,
-        confirmContinuation,
-        clearAutoStoppedSession,
     };
 }
 
-function shouldSaveLocationFromSavedLocation(
-    lastSavedLocation: SavedLocation | null,
+function createLocationDuplicateKey(
     latitude: number,
     longitude: number,
     recordedAtMs: number,
-    intervalMs: number,
-    distanceMeters: number,
 ) {
-    if (!lastSavedLocation) {
-        return true;
-    }
-
-    const elapsedMs = recordedAtMs - lastSavedLocation.recordedAt;
-
-    if (elapsedMs <= 0) {
-        return false;
-    }
-
-    const distance = calculateDistanceMeters(
-        lastSavedLocation.latitude,
-        lastSavedLocation.longitude,
-        latitude,
-        longitude,
-    );
-
-    const configuredIntervalMs =
-        Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : 60_000;
-
-    const configuredDistanceMeters =
-        Number.isFinite(distanceMeters) && distanceMeters > 0
-            ? distanceMeters
-            : 100;
-
-    return (
-        elapsedMs >= configuredIntervalMs ||
-        distance >= configuredDistanceMeters
-    );
+    return [recordedAtMs, latitude.toFixed(7), longitude.toFixed(7)].join(":");
 }
 
 function createRecordingSessionId() {

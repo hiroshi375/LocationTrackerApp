@@ -476,7 +476,7 @@ export function useForegroundLocationRecorder({
         } catch (error) {
             console.error("Restore recording state error:", error);
         }
-    }, [isRecording]);
+    }, [isRecording, resetRecordingState]);
 
     // 記録開始関数
     const startRecording = useCallback(async () => {

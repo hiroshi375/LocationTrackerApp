@@ -744,7 +744,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 );
                 Alert.alert(
                     "保存エラー",
-                    "セッション名を保存できませんでした。",
+                    "アクティビティ名を保存できませんでした。",
                 );
                 return;
             }
@@ -789,7 +789,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
             setPendingRecordingDistanceMeters(null);
         } catch (error) {
             console.error("Save session name error:", error);
-            Alert.alert("保存エラー", "セッション名の保存に失敗しました。");
+            Alert.alert("保存エラー", "アクティビティ名の保存に失敗しました。");
         } finally {
             setSavingSessionName(false);
         }
@@ -916,7 +916,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
         Alert.alert(
             "自動記録を停止しますか？",
-            "自動記録を停止すると、このセッションの位置情報記録が終了します。",
+            "自動記録を停止すると、このアクティビティの位置情報記録が終了します。",
             [
                 {
                     text: "キャンセル",
@@ -1297,7 +1297,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 return "月間・トータル集計を更新中...";
 
             default:
-                return "セッション履歴を作成中...";
+                return "アクティビティ履歴を作成中...";
         }
     }, [backfillingSessions, backfillProgress]);
 
@@ -1307,8 +1307,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
         }
 
         Alert.alert(
-            "セッション履歴を作成",
-            "過去の位置情報ログからセッション履歴を作成しますか？",
+            "アクティビティ履歴を作成",
+            "過去の位置情報ログからアクティビティ履歴を作成しますか？",
             [
                 {
                     text: "キャンセル",
@@ -1369,7 +1369,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
                             Alert.alert(
                                 "作成エラー",
-                                "過去ログからセッション履歴を作成できませんでした。",
+                                "過去ログからアクティビティ履歴を作成できませんでした。",
                             );
                         } finally {
                             setBackfillingSessions(false);
@@ -1684,7 +1684,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
                 <View style={styles.buttonSpace}>
                     <AppButton
-                        title="セッション履歴を見る"
+                        title="アクティビティ履歴を見る"
                         onPress={() => navigation.navigate("LocationLog")}
                     />
                 </View>
@@ -1696,7 +1696,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 </View>
                 <View style={styles.buttonSpace}>
                     <AppButton
-                        title="活動ランキングを見る"
+                        title="アクティビティランキングを見る"
                         onPress={() => navigation.navigate("ActivityRanking")}
                     />
                 </View>
@@ -1725,7 +1725,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             title={
                                 backfillingSessions
                                     ? backfillProgressText
-                                    : "過去ログからセッション履歴を作成"
+                                    : "過去ログからアクティビティ履歴を作成"
                             }
                             onPress={handleBackfillRecordingSessions}
                             disabled={backfillingSessions || isRecording}

@@ -103,7 +103,7 @@ export async function upsertRecordingSessionSummary(
         recordingSessionName ??
         lastLog.recordingSessionName ??
         firstLog.recordingSessionName ??
-        "自動記録セッション";
+        "自動記録アクティビティ";
 
     const model = client.models.RecordingSession as any;
 
@@ -401,7 +401,7 @@ export async function updateRecordingSessionActivityType(
     }
 
     if (session.userId !== currentUser.userId) {
-        throw new Error("自分以外のセッション区分は変更できません。");
+        throw new Error("自分以外のアクティビティ区分は変更できません。");
     }
 
     const isAggregationTarget = isAggregationTargetActivityType(activityType);

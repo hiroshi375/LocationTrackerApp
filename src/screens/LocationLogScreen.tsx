@@ -133,6 +133,12 @@ export default function LocationLogScreen({ navigation }: Props) {
     const [savingEditSessionName, setSavingEditSessionName] = useState(false);
 
     const editSessionNameInputRef = useRef<TextInput | null>(null);
+    const lastOpenedSessionRef = useRef<RecordingSessionDisplayItem | null>(
+        null,
+    );
+
+    const recordingSessionListRef =
+        useRef<FlatList<RecordingSessionDisplayItem> | null>(null);
 
     const loadRecordingSessions = useCallback(
         async ({
@@ -175,7 +181,7 @@ export default function LocationLogScreen({ navigation }: Props) {
 
                     Alert.alert(
                         "取得エラー",
-                        "セッション履歴を取得できませんでした。",
+                        "アクティビティ履歴を取得できませんでした。",
                     );
 
                     return;
@@ -190,7 +196,8 @@ export default function LocationLogScreen({ navigation }: Props) {
                         userId: item.userId ?? "",
                         recordingSessionId: item.recordingSessionId,
                         recordingSessionName:
-                            item.recordingSessionName ?? "自動記録セッション",
+                            item.recordingSessionName ??
+                            "自動記録アクティビティ",
                         startAt: item.startedAt,
                         endAt: item.endedAt,
                         distanceMeters: Number(item.distanceMeters ?? 0),
@@ -259,7 +266,45 @@ export default function LocationLogScreen({ navigation }: Props) {
 
                 setRecordingSessions((currentItems) => {
                     if (reset) {
-                        return nextItems;
+                        const lastOpenedSession = lastOpenedSessionRef.current;
+
+                        /*
+                         * 通常の初期表示・更新では、取得した最新15件をそのまま表示する。
+                         */
+                        if (!lastOpenedSession) {
+                            return nextItems;
+                        }
+
+                        /*
+                         * 地図を開いたセッションを先頭へ移動する。
+                         *
+                         * 対象が最新15件に含まれている場合：
+                         *   対象を除外してから先頭へ追加する。
+                         *
+                         * 対象が15件より後の場合：
+                         *   refに保持していた対象を先頭へ追加する。
+                         */
+                        const reorderedItems = [
+                            lastOpenedSession,
+                            ...nextItems.filter(
+                                (item) => item.id !== lastOpenedSession.id,
+                            ),
+                        ];
+
+                        /*
+                         * 今回の戻り表示で使用した後は解除する。
+                         * 以降の通常更新では日時順の表示へ戻す。
+                         */
+                        lastOpenedSessionRef.current = null;
+
+                        requestAnimationFrame(() => {
+                            recordingSessionListRef.current?.scrollToOffset({
+                                offset: 0,
+                                animated: false,
+                            });
+                        });
+
+                        return reorderedItems;
                     }
 
                     /*
@@ -292,7 +337,7 @@ export default function LocationLogScreen({ navigation }: Props) {
 
                 Alert.alert(
                     "取得エラー",
-                    "セッション履歴の取得に失敗しました。",
+                    "アクティビティ履歴の取得に失敗しました。",
                 );
             } finally {
                 setLoading(false);
@@ -466,6 +511,13 @@ export default function LocationLogScreen({ navigation }: Props) {
     }, [shareUsers, shareSearchText]);
 
     const handleOpenSessionMap = (item: RecordingSessionDisplayItem) => {
+        /*
+         * 地図画面から戻った際、このセッションを一覧の先頭へ表示する。
+         * 15件より後から開いたセッションでも保持できるよう、
+         * セッション全体をrefへ保存する。
+         */
+        lastOpenedSessionRef.current = item;
+
         navigation.push("LocationMap", {
             recordingSessionId: item.recordingSessionId,
         });
@@ -555,7 +607,7 @@ export default function LocationLogScreen({ navigation }: Props) {
 
     const handleChangeActivityType = (item: RecordingSessionDisplayItem) => {
         Alert.alert(
-            "セッション区分を変更",
+            "アクティビティ区分を変更",
             "徒歩・ランニングはランキング集計対象です。自転車・乗り物・複合移動・未判定は集計対象外です。",
             [
                 ...ACTIVITY_TYPES.map((activityType) => ({
@@ -604,7 +656,7 @@ export default function LocationLogScreen({ navigation }: Props) {
             console.error("Activity type update error:", error);
             Alert.alert(
                 "区分変更エラー",
-                "セッション区分を変更できませんでした。",
+                "アクティビティ区分を変更できませんでした。",
             );
         } finally {
             setUpdatingActivitySessionId(null);
@@ -613,10 +665,10 @@ export default function LocationLogScreen({ navigation }: Props) {
 
     const handleDeleteSession = (item: RecordingSessionDisplayItem) => {
         Alert.alert(
-            "自動記録セッションを削除",
+            "自動記録アクティビティを削除",
             `${formatDateTime(item.startAt)} 〜 ${formatDateTime(
                 item.endAt,
-            )} の自動記録セッションを削除しますか？\n\n記録ポイント ${item.pointCount}件が削除されます。`,
+            )} の自動記録アクティビティを削除しますか？\n\n記録ポイント ${item.pointCount}件が削除されます。`,
             [
                 {
                     text: "キャンセル",
@@ -660,7 +712,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                 );
                 Alert.alert(
                     "削除エラー",
-                    "自動記録セッションを削除できませんでした。",
+                    "自動記録アクティビティを削除できませんでした。",
                 );
                 return;
             }
@@ -679,7 +731,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                 );
                 Alert.alert(
                     "一部削除エラー",
-                    "位置履歴は削除しましたが、セッション集計情報の削除に失敗しました。",
+                    "位置履歴は削除しましたが、アクティビティ集計情報の削除に失敗しました。",
                 );
                 return;
             }
@@ -697,7 +749,7 @@ export default function LocationLogScreen({ navigation }: Props) {
             console.error("RecordingSession delete error:", error);
             Alert.alert(
                 "削除エラー",
-                "自動記録セッションの削除に失敗しました。",
+                "自動記録アクティビティの削除に失敗しました。",
             );
         } finally {
             setDeletingId(null);
@@ -888,7 +940,7 @@ export default function LocationLogScreen({ navigation }: Props) {
         }
 
         const trimmedName = editSessionNameInput.trim();
-        const nextSessionName = trimmedName || "自動記録セッション";
+        const nextSessionName = trimmedName || "アクティビティ";
 
         try {
             setSavingEditSessionName(true);
@@ -908,7 +960,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                 );
                 Alert.alert(
                     "保存エラー",
-                    "セッション名を更新できませんでした。",
+                    "アクティビティ名を更新できませんでした。",
                 );
                 return;
             }
@@ -952,11 +1004,11 @@ export default function LocationLogScreen({ navigation }: Props) {
                 }),
             );
 
-            Alert.alert("保存完了", "セッション名を更新しました。");
+            Alert.alert("保存完了", "アクティビティ名を更新しました。");
             closeEditNameModal();
         } catch (error) {
             console.error("Edit session name error:", error);
-            Alert.alert("保存エラー", "セッション名の更新に失敗しました。");
+            Alert.alert("保存エラー", "アクティビティ名の更新に失敗しました。");
         } finally {
             setSavingEditSessionName(false);
         }
@@ -997,13 +1049,13 @@ export default function LocationLogScreen({ navigation }: Props) {
     return (
         <View style={styles.container}>
             <View style={styles.searchBox}>
-                <Text style={styles.searchLabel}>セッション検索</Text>
+                <Text style={styles.searchLabel}>アクティビティ検索</Text>
 
                 <TextInput
                     style={styles.searchInput}
                     value={searchText}
                     onChangeText={setSearchText}
-                    placeholder="セッション名で検索"
+                    placeholder="アクティビティ名で検索"
                     autoCapitalize="none"
                     autoCorrect={false}
                 />
@@ -1026,6 +1078,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                 <ActivityIndicator />
             ) : (
                 <FlatList
+                    ref={recordingSessionListRef}
                     data={filteredItems}
                     keyExtractor={(item) => item.id}
                     refreshControl={
@@ -1037,8 +1090,8 @@ export default function LocationLogScreen({ navigation }: Props) {
                     ListEmptyComponent={
                         <Text style={styles.emptyText}>
                             {searchText.trim().length > 0
-                                ? "検索条件に一致するセッション履歴がありません。"
-                                : "まだセッション履歴がありません。"}
+                                ? "検索条件に一致するアクティビティ履歴がありません。"
+                                : "まだアクティビティ履歴がありません。"}
                         </Text>
                     }
                     ListFooterComponent={
@@ -1065,7 +1118,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                             </Pressable>
                         ) : filteredItems.length > 0 ? (
                             <Text style={styles.listEndText}>
-                                すべてのセッション履歴を表示しました。
+                                すべてのアクティビティ履歴を表示しました。
                             </Text>
                         ) : null
                     }
@@ -1424,11 +1477,11 @@ export default function LocationLogScreen({ navigation }: Props) {
                     <View style={styles.modalOverlay}>
                         <View style={styles.modalContent}>
                             <Text style={styles.modalTitle}>
-                                セッション名を編集
+                                アクティビティ名を編集
                             </Text>
 
                             <Text style={styles.modalDescription}>
-                                この自動記録セッションの名前を変更します。
+                                この自動記録アクティビティの名前を変更します。
                             </Text>
 
                             <TextInput

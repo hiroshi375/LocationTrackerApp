@@ -87,7 +87,7 @@ export default function RootNavigator() {
                 <Stack.Screen
                     name="ActivityRanking"
                     component={ActivityRankingScreen}
-                    options={{ title: "活動ランキング" }}
+                    options={{ title: "アクティビティランキング" }}
                 />
                 <Stack.Screen
                     name="LiveLocationMap"

@@ -181,7 +181,6 @@ export async function confirmRecordingContinuation(
 
     const elapsedHours = calculateElapsedHours(state.recordingStartedAt, nowMs);
     const pointMilestone = calculatePointMilestone(state.savedPointCount);
-    const confirmedAt = new Date(nowMs).toISOString();
 
     const nextState: RecordingContinuationState = {
         ...state,

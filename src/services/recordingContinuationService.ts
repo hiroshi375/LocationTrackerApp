@@ -21,6 +21,7 @@ export type RecordingContinuationState = {
     confirmationRequestedAt: string | null;
     confirmationDeadlineAt: string | null;
 
+    recordingExpiresAt: string | null;
     requestedElapsedHours: number;
     requestedPointMilestone: number;
 
@@ -50,6 +51,7 @@ export async function initializeRecordingContinuationState(
         confirmationReason: null,
         confirmationRequestedAt: null,
         confirmationDeadlineAt: null,
+        recordingExpiresAt: null,
         requestedElapsedHours: 0,
         requestedPointMilestone: 0,
 
@@ -104,6 +106,12 @@ export async function getRecordingContinuationState(): Promise<RecordingContinua
                 typeof parsed.confirmationDeadlineAt === "string"
                     ? parsed.confirmationDeadlineAt
                     : null,
+            recordingExpiresAt:
+                typeof parsed.recordingExpiresAt === "string"
+                    ? parsed.recordingExpiresAt
+                    : typeof parsed.confirmationDeadlineAt === "string"
+                      ? parsed.confirmationDeadlineAt
+                      : null,
             requestedElapsedHours: normalizeNonNegativeInteger(
                 parsed.requestedElapsedHours,
             ),
@@ -181,6 +189,7 @@ export async function confirmRecordingContinuation(
 
     const elapsedHours = calculateElapsedHours(state.recordingStartedAt, nowMs);
     const pointMilestone = calculatePointMilestone(state.savedPointCount);
+    const confirmedAt = new Date(nowMs).toISOString();
 
     const nextState: RecordingContinuationState = {
         ...state,
@@ -198,8 +207,11 @@ export async function confirmRecordingContinuation(
         confirmationReason: null,
         confirmationRequestedAt: null,
         confirmationDeadlineAt: null,
+        recordingExpiresAt: null,
         requestedElapsedHours: 0,
         requestedPointMilestone: 0,
+        lastConfirmedAt: confirmedAt,
+        confirmationCount: state.confirmationCount + 1,
     };
 
     await writeRecordingContinuationState(nextState);
@@ -219,6 +231,8 @@ export async function markRecordingContinuationAutoStopped(
     const nextState: RecordingContinuationState = {
         ...state,
         confirmationRequired: false,
+        recordingExpiresAt:
+            state.recordingExpiresAt ?? state.confirmationDeadlineAt ?? nowIso,
         autoStoppedAt: nowIso,
     };
 
@@ -293,6 +307,7 @@ async function evaluateAndPersist(
         confirmationReason: reason,
         confirmationRequestedAt: requestedAt,
         confirmationDeadlineAt: deadlineAt,
+        recordingExpiresAt: deadlineAt,
         requestedElapsedHours: timeReached ? elapsedHours : 0,
         requestedPointMilestone: pointsReached ? pointMilestone : 0,
     };

@@ -24,6 +24,10 @@ import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRec
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import {
+    clearRecordingContinuationState,
+    getRecordingContinuationState,
+} from "../services/recordingContinuationService";
+import {
     type RecordingSessionBackfillProgress,
     backfillRecordingSessionsFromLocationLogs,
     upsertRecordingSessionSummary,
@@ -745,13 +749,37 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 return;
             }
 
+            const continuationState = await getRecordingContinuationState();
+
+            const matchingContinuationState =
+                continuationState?.recordingSessionId === pendingSessionId
+                    ? continuationState
+                    : null;
+
             await upsertRecordingSessionSummary(
                 pendingSessionId,
                 sessionName,
                 pendingSessionShareOwnerValues,
                 pendingRecordingIntervalMs,
                 pendingRecordingDistanceMeters,
+                {
+                    lastContinuationConfirmedAt:
+                        matchingContinuationState?.lastConfirmedAt ?? undefined,
+
+                    continuationConfirmationCount:
+                        matchingContinuationState?.confirmationCount ??
+                        undefined,
+
+                    autoStoppedAt:
+                        matchingContinuationState?.autoStoppedAt ?? undefined,
+
+                    autoStopReason: matchingContinuationState?.autoStoppedAt
+                        ? "CONTINUATION_TIMEOUT"
+                        : undefined,
+                },
             );
+
+            await clearRecordingContinuationState(pendingSessionId);
 
             setSessionNameModalVisible(false);
             setSessionNameInput("");
@@ -976,29 +1004,78 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
         handledAutoStoppedSessionIdRef.current = autoStoppedSessionId;
 
-        const stoppedShareOwnerValues = selectedLiveShareUsers
-            .map((user) => user.ownerValue)
-            .filter((ownerValue): ownerValue is string => !!ownerValue);
+        const finalizeAutoStoppedSession = async () => {
+            const stoppedShareOwnerValues = selectedLiveShareUsers
+                .map((user) => user.ownerValue)
+                .filter((ownerValue): ownerValue is string => !!ownerValue);
 
-        setElapsedSeconds((current) => current);
-        setPendingSessionId(autoStoppedSessionId);
-        setPendingSessionShareOwnerValues(stoppedShareOwnerValues);
-        setPendingRecordingIntervalMs(recordIntervalMs);
-        setPendingRecordingDistanceMeters(recordDistanceMeters);
-        setSessionNameInput("");
-        setSessionNameModalVisible(true);
-        setLiveShareStatusMessage(
-            selectedLiveShareUsers.length > 0
-                ? "継続確認がなかったため自動記録を停止しました。現在地共有は継続中です。"
-                : "継続確認がなかったため自動記録を停止しました。",
-        );
+            try {
+                const continuationState = await getRecordingContinuationState();
 
-        Alert.alert(
-            "自動記録を停止しました",
-            "継続確認から3分以内に操作がなかったため、自動記録を停止しました。",
-        );
+                const matchingContinuationState =
+                    continuationState?.recordingSessionId ===
+                    autoStoppedSessionId
+                        ? continuationState
+                        : null;
 
-        void clearAutoStoppedSession();
+                /*
+                 * セッション名入力前でも、自動停止状態を先にDBへ確定する。
+                 * 後から名前を保存した場合は同じRecordingSessionを更新する。
+                 */
+                await upsertRecordingSessionSummary(
+                    autoStoppedSessionId,
+                    null,
+                    stoppedShareOwnerValues,
+                    recordIntervalMs,
+                    recordDistanceMeters,
+                    {
+                        lastContinuationConfirmedAt:
+                            matchingContinuationState?.lastConfirmedAt ?? null,
+
+                        continuationConfirmationCount:
+                            matchingContinuationState?.confirmationCount ?? 0,
+
+                        autoStoppedAt:
+                            matchingContinuationState?.autoStoppedAt ??
+                            new Date().toISOString(),
+
+                        autoStopReason: "CONTINUATION_TIMEOUT",
+                    },
+                );
+            } catch (error) {
+                console.error(
+                    "Finalize auto-stopped RecordingSession error:",
+                    error,
+                );
+
+                /*
+                 * RecordingSession更新に失敗しても、
+                 * セッション名入力と停止通知は表示する。
+                 */
+            }
+
+            setPendingSessionId(autoStoppedSessionId);
+            setPendingSessionShareOwnerValues(stoppedShareOwnerValues);
+            setPendingRecordingIntervalMs(recordIntervalMs);
+            setPendingRecordingDistanceMeters(recordDistanceMeters);
+            setSessionNameInput("");
+            setSessionNameModalVisible(true);
+
+            setLiveShareStatusMessage(
+                selectedLiveShareUsers.length > 0
+                    ? "継続確認がなかったため自動記録を停止しました。現在地共有は継続中です。"
+                    : "継続確認がなかったため自動記録を停止しました。",
+            );
+
+            Alert.alert(
+                "自動記録を停止しました",
+                "継続確認から3分以内に操作がなかったため、自動記録を停止しました。",
+            );
+
+            await clearAutoStoppedSession();
+        };
+
+        void finalizeAutoStoppedSession();
     }, [
         autoStoppedSessionId,
         clearAutoStoppedSession,

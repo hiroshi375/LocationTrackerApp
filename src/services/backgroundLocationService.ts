@@ -35,6 +35,7 @@ type StartBackgroundLocationRecordingParams = {
     userId: string;
     recordingSessionId: string;
     startedAt?: string | null;
+    recordingExpiresAt?: string | null;
     intervalMs: number;
     distanceMeters: number;
     liveShareOwnerValues?: string[];
@@ -44,11 +45,11 @@ type StartBackgroundLocationRecordingParams = {
         recordedAt: number;
     } | null;
 };
-
 export type BackgroundRecordingState = {
     userId: string;
     recordingSessionId: string;
     startedAt?: string | null;
+    recordingExpiresAt?: string | null;
     liveShareOwnerValues?: string[];
     liveLocationId?: string | null;
     lastSavedLocation?: {
@@ -64,6 +65,7 @@ export async function startBackgroundLocationRecording({
     userId,
     recordingSessionId,
     startedAt = null,
+    recordingExpiresAt = null,
     intervalMs,
     distanceMeters,
     liveShareOwnerValues = [],
@@ -75,6 +77,7 @@ export async function startBackgroundLocationRecording({
         eventName: "startBackgroundLocationRecordingCalled",
         details: {
             startedAt,
+            recordingExpiresAt,
             intervalMs,
             distanceMeters,
             liveShareOwnerValues,
@@ -90,6 +93,7 @@ export async function startBackgroundLocationRecording({
             userId,
             recordingSessionId,
             startedAt,
+            recordingExpiresAt,
             intervalMs,
             distanceMeters,
             liveShareOwnerValues: Array.from(new Set(liveShareOwnerValues)),
@@ -392,6 +396,35 @@ export async function getBackgroundRecordingStatus(): Promise<{
             hasStarted,
             state: null,
         };
+    }
+}
+
+export async function updateBackgroundRecordingExpiresAt(
+    recordingSessionId: string,
+    recordingExpiresAt: string | null,
+): Promise<void> {
+    const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);
+
+    if (!raw) {
+        return;
+    }
+
+    try {
+        const state = JSON.parse(raw) as BackgroundRecordingState;
+
+        if (state.recordingSessionId !== recordingSessionId) {
+            return;
+        }
+
+        await AsyncStorage.setItem(
+            BACKGROUND_RECORDING_STATE_KEY,
+            JSON.stringify({
+                ...state,
+                recordingExpiresAt,
+            }),
+        );
+    } catch (error) {
+        console.error("Update background recordingExpiresAt error:", error);
     }
 }
 

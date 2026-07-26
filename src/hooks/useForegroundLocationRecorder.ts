@@ -44,6 +44,10 @@ type RecorderOptions = {
     liveShareOwnerValues?: string[];
 };
 
+type StopRecordingOptions = {
+    skipFinalLocationSave?: boolean;
+};
+
 type LiveLocationMutationResult = {
     data?: {
         id?: string | null;
@@ -624,6 +628,7 @@ export function useForegroundLocationRecorder({
                     userId: currentUser.userId,
                     recordingSessionId: newSessionId,
                     startedAt,
+                    recordingExpiresAt: null,
                     intervalMs,
                     distanceMeters,
                     liveShareOwnerValues: normalizedLiveShareOwnerValues,
@@ -708,55 +713,66 @@ export function useForegroundLocationRecorder({
     ]);
 
     // 記録停止関数
-    const stopRecording = useCallback(async (): Promise<string | null> => {
-        const finishedSessionId = recordingSessionIdRef.current;
+    const stopRecording = useCallback(
+        async (options: StopRecordingOptions = {}): Promise<string | null> => {
+            const finishedSessionId = recordingSessionIdRef.current;
 
-        subscriptionRef.current?.remove();
-        subscriptionRef.current = null;
+            subscriptionRef.current?.remove();
+            subscriptionRef.current = null;
 
-        try {
-            await stopBackgroundLocationRecording();
-        } catch (error) {
-            console.error("Stop background location recording error:", error);
-        }
-
-        if (recordingSessionIdRef.current) {
             try {
-                const currentLocation = await Location.getCurrentPositionAsync({
-                    accuracy: Location.Accuracy.Balanced,
-                });
-
-                await updateLiveLocation(currentLocation);
-                await saveLocationLog(currentLocation, true);
+                await stopBackgroundLocationRecording();
             } catch (error) {
-                console.error("Save stop location error:", error);
+                console.error(
+                    "Stop background location recording error:",
+                    error,
+                );
             }
-        }
 
-        if (liveLocationIdRef.current) {
-            try {
-                await client.models.LiveLocation.update({
-                    id: liveLocationIdRef.current,
-                    isActive: false,
-                    updatedAt: new Date().toISOString(),
-                });
-            } catch (error) {
-                console.error("LiveLocation stop update error:", error);
+            if (
+                !options.skipFinalLocationSave &&
+                recordingSessionIdRef.current
+            ) {
+                try {
+                    const currentLocation =
+                        await Location.getCurrentPositionAsync({
+                            accuracy: Location.Accuracy.Balanced,
+                        });
+
+                    await updateLiveLocation(currentLocation);
+                    await saveLocationLog(currentLocation, true);
+                } catch (error) {
+                    console.error("Save stop location error:", error);
+                }
             }
-        }
 
-        liveLocationIdRef.current = null;
-        recordingSessionIdRef.current = null;
-        setActiveRecordingSessionId(null);
-        setRecordingStartedAt(null);
-        setIsRecording(false);
+            if (liveLocationIdRef.current) {
+                try {
+                    await client.models.LiveLocation.update({
+                        id: liveLocationIdRef.current,
+                        isActive: false,
+                        isRecording: false,
+                        updatedAt: new Date().toISOString(),
+                    });
+                } catch (error) {
+                    console.error("LiveLocation stop update error:", error);
+                }
+            }
 
-        startLocationRef.current = null;
-        lastSavedLocationRef.current = null;
-        setDistanceFromStartMeters(null);
+            liveLocationIdRef.current = null;
+            recordingSessionIdRef.current = null;
+            setActiveRecordingSessionId(null);
+            setRecordingStartedAt(null);
+            setIsRecording(false);
 
-        return finishedSessionId;
-    }, [saveLocationLog, updateLiveLocation]);
+            startLocationRef.current = null;
+            lastSavedLocationRef.current = null;
+            setDistanceFromStartMeters(null);
+
+            return finishedSessionId;
+        },
+        [saveLocationLog, updateLiveLocation],
+    );
 
     // ここに追加
     const checkRecordingContinuation = useCallback(async (): Promise<void> => {

@@ -36,6 +36,14 @@ type SessionLogItem = {
     batteryLevel?: number | null;
 };
 
+type RecordingSessionSummaryOptions = {
+    skipAggregation?: boolean;
+    lastContinuationConfirmedAt?: string | null;
+    continuationConfirmationCount?: number | null;
+    autoStoppedAt?: string | null;
+    autoStopReason?: string | null;
+};
+
 function createRecordingSessionRecordId(
     userId: string,
     recordingSessionId: string,
@@ -49,7 +57,7 @@ export async function upsertRecordingSessionSummary(
     shareOwnerValues: string[] = [],
     recordingIntervalMs?: number | null,
     recordingDistanceMeters?: number | null,
-    options?: { skipAggregation?: boolean },
+    options?: RecordingSessionSummaryOptions,
 ) {
     const logs = await listLocationLogsBySessionId(recordingSessionId);
     const routeLogs = normalizeRouteLogs(logs);
@@ -190,6 +198,25 @@ export async function upsertRecordingSessionSummary(
             typeof recordingDistanceMeters === "number"
                 ? recordingDistanceMeters
                 : (existing?.recordingDistanceMeters ?? null),
+        lastContinuationConfirmedAt:
+            options?.lastContinuationConfirmedAt !== undefined
+                ? options.lastContinuationConfirmedAt
+                : (existing?.lastContinuationConfirmedAt ?? null),
+
+        continuationConfirmationCount:
+            options?.continuationConfirmationCount !== undefined
+                ? options.continuationConfirmationCount
+                : (existing?.continuationConfirmationCount ?? 0),
+
+        autoStoppedAt:
+            options?.autoStoppedAt !== undefined
+                ? options.autoStoppedAt
+                : (existing?.autoStoppedAt ?? null),
+
+        autoStopReason:
+            options?.autoStopReason !== undefined
+                ? options.autoStopReason
+                : (existing?.autoStopReason ?? null),
         activityType,
         isAggregationTarget,
         classificationSource: useManualClassification ? "MANUAL" : "AUTO",

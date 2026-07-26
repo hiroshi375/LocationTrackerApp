@@ -54,6 +54,11 @@ const schema = a.schema({
             recordingIntervalMs: a.integer(),
             recordingDistanceMeters: a.float(),
 
+            lastContinuationConfirmedAt: a.datetime(),
+            continuationConfirmationCount: a.integer(),
+            autoStoppedAt: a.datetime(),
+            autoStopReason: a.string(),
+
             activityType: a.string(),
             isAggregationTarget: a.boolean(),
             classificationSource: a.string(),

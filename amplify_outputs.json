@@ -312,6 +312,34 @@
               "isRequired": false,
               "attributes": []
             },
+            "lastContinuationConfirmedAt": {
+              "name": "lastContinuationConfirmedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": []
+            },
+            "continuationConfirmationCount": {
+              "name": "continuationConfirmationCount",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "autoStoppedAt": {
+              "name": "autoStoppedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": []
+            },
+            "autoStopReason": {
+              "name": "autoStopReason",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
             "activityType": {
               "name": "activityType",
               "isArray": false,

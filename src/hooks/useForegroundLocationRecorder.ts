@@ -19,7 +19,13 @@ import {
     createLocationUniqueKey,
     isDuplicateLocationCreateError,
 } from "../services/locationLogDeduplicationService";
-import type { RecordingContinuationState } from "../services/recordingContinuationService";
+import {
+    confirmRecordingContinuation,
+    evaluateRecordingContinuation,
+    initializeRecordingContinuationState,
+    markRecordingContinuationAutoStopped,
+    type RecordingContinuationState,
+} from "../services/recordingContinuationService";
 import {
     calculateDistanceMeters,
     isExactDuplicateLocation,
@@ -575,6 +581,9 @@ export function useForegroundLocationRecorder({
             lastSavedLocationRef.current = null;
 
             const startedAt = new Date().toISOString();
+
+            await initializeRecordingContinuationState(newSessionId, startedAt);
+
             setRecordingStartedAt(startedAt);
 
             let currentLocation: Location.LocationObject;
@@ -749,12 +758,74 @@ export function useForegroundLocationRecorder({
         return finishedSessionId;
     }, [saveLocationLog, updateLiveLocation]);
 
+    // ここに追加
+    const checkRecordingContinuation = useCallback(async (): Promise<void> => {
+        const recordingSessionId = recordingSessionIdRef.current;
+
+        if (!recordingSessionId) {
+            return;
+        }
+
+        try {
+            const evaluation =
+                await evaluateRecordingContinuation(recordingSessionId);
+
+            /*
+             * 期限切れを先に判定する。
+             * shouldShowConfirmationもtrueになる可能性があるため、
+             * ダイアログ表示より前に処理する。
+             */
+            if (evaluation.isDeadlineExpired) {
+                const stoppedAt = new Date().toISOString();
+
+                await markRecordingContinuationAutoStopped(
+                    recordingSessionId,
+                    stoppedAt,
+                );
+
+                const finishedSessionId = await stopRecording();
+
+                setContinuationPrompt(null);
+
+                if (finishedSessionId) {
+                    setAutoStoppedSessionId(finishedSessionId);
+                }
+
+                return;
+            }
+
+            if (
+                evaluation.shouldShowConfirmation &&
+                evaluation.state?.confirmationRequired
+            ) {
+                setContinuationPrompt(evaluation.state);
+                return;
+            }
+
+            setContinuationPrompt(null);
+        } catch (error) {
+            /*
+             * 継続確認処理でエラーが発生しても、
+             * 位置情報の記録は停止しない。
+             */
+            console.error("Check recording continuation error:", error);
+        }
+    }, [stopRecording]);
+
     const confirmContinuation = useCallback(async (): Promise<void> => {
-        /*
-         * 7月12日の安定版バックグラウンド処理を維持するため、
-         * 現時点では継続確認のバックエンド処理を実行しない。
-         */
-        setContinuationPrompt(null);
+        const recordingSessionId = recordingSessionIdRef.current;
+
+        if (!recordingSessionId) {
+            setContinuationPrompt(null);
+            return;
+        }
+
+        try {
+            await confirmRecordingContinuation(recordingSessionId);
+            setContinuationPrompt(null);
+        } catch (error) {
+            console.error("Confirm recording continuation error:", error);
+        }
     }, []);
 
     const clearAutoStoppedSession = useCallback(async (): Promise<void> => {
@@ -775,14 +846,46 @@ export function useForegroundLocationRecorder({
         const subscription = AppState.addEventListener(
             "change",
             (nextState) => {
+                const previousState = appStateRef.current;
                 appStateRef.current = nextState;
+
+                const returnedToForeground =
+                    previousState !== "active" && nextState === "active";
+
+                if (returnedToForeground) {
+                    void checkRecordingContinuation();
+                }
             },
         );
 
         return () => {
             subscription.remove();
         };
-    }, []);
+    }, [checkRecordingContinuation]);
+
+    // ここに追加
+    useEffect(() => {
+        if (!isRecording) {
+            return;
+        }
+
+        /*
+         * 記録開始・復元直後にも一度確認する。
+         */
+        void checkRecordingContinuation();
+
+        /*
+         * アプリがforegroundで動作している間だけ、
+         * 30秒ごとに継続確認条件と期限切れを確認する。
+         */
+        const timerId = setInterval(() => {
+            void checkRecordingContinuation();
+        }, 30_000);
+
+        return () => {
+            clearInterval(timerId);
+        };
+    }, [isRecording, checkRecordingContinuation]);
 
     useEffect(() => {
         void restoreRecordingState();

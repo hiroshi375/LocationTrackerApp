@@ -15,12 +15,18 @@ export type RecordingContinuationState = {
     savedPointCount: number;
     confirmedElapsedHours: number;
     confirmedPointMilestone: number;
+
     confirmationRequired: boolean;
     confirmationReason: RecordingContinuationReason | null;
     confirmationRequestedAt: string | null;
     confirmationDeadlineAt: string | null;
+
     requestedElapsedHours: number;
     requestedPointMilestone: number;
+
+    lastConfirmedAt: string | null;
+    confirmationCount: number;
+
     autoStoppedAt: string | null;
 };
 
@@ -46,6 +52,10 @@ export async function initializeRecordingContinuationState(
         confirmationDeadlineAt: null,
         requestedElapsedHours: 0,
         requestedPointMilestone: 0,
+
+        lastConfirmedAt: null,
+        confirmationCount: 0,
+
         autoStoppedAt: null,
     };
 
@@ -100,6 +110,15 @@ export async function getRecordingContinuationState(): Promise<RecordingContinua
             requestedPointMilestone: normalizeNonNegativeInteger(
                 parsed.requestedPointMilestone,
             ),
+            lastConfirmedAt:
+                typeof parsed.lastConfirmedAt === "string"
+                    ? parsed.lastConfirmedAt
+                    : null,
+
+            confirmationCount: normalizeNonNegativeInteger(
+                parsed.confirmationCount,
+            ),
+
             autoStoppedAt:
                 typeof parsed.autoStoppedAt === "string"
                     ? parsed.autoStoppedAt
@@ -162,6 +181,7 @@ export async function confirmRecordingContinuation(
 
     const elapsedHours = calculateElapsedHours(state.recordingStartedAt, nowMs);
     const pointMilestone = calculatePointMilestone(state.savedPointCount);
+    const confirmedAt = new Date(nowMs).toISOString();
 
     const nextState: RecordingContinuationState = {
         ...state,

@@ -24,6 +24,11 @@ import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRec
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import {
+    isBackgroundLocationDisclosureDeclined,
+    isBackgroundLocationPermissionError,
+    isForegroundLocationPermissionError,
+} from "../services/backgroundLocationService";
+import {
     clearRecordingContinuationState,
     getRecordingContinuationState,
 } from "../services/recordingContinuationService";
@@ -381,6 +386,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
     const recordingBlinkAnim = useRef(new Animated.Value(1)).current;
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
+    const [startingRecording, setStartingRecording] = useState(false);
     const [stoppingRecording, setStoppingRecording] = useState(false);
     const continuationAlertKeyRef = useRef<string | null>(null);
     const handledAutoStoppedSessionIdRef = useRef<string | null>(null);
@@ -559,9 +565,45 @@ export default function LocationHomeScreen({ navigation }: Props) {
                   .join("、");
 
     const handleStartRecording = async () => {
-        setLiveShareStatusMessage("");
+        if (startingRecording) {
+            return;
+        }
 
-        await startRecording();
+        try {
+            setStartingRecording(true);
+            setLiveShareStatusMessage("");
+
+            await startRecording();
+        } catch (error) {
+            if (isBackgroundLocationDisclosureDeclined(error)) {
+                /*
+                 * 事前説明で「キャンセル」を選択した場合。
+                 * ユーザーによる通常操作なのでエラー表示はしない。
+                 */
+                return;
+            }
+
+            if (isForegroundLocationPermissionError(error)) {
+                return;
+            }
+
+            if (isBackgroundLocationPermissionError(error)) {
+                /*
+                 * backgroundLocationService側で、
+                 * 「常に許可」や設定画面への案内を表示済み。
+                 */
+                return;
+            }
+
+            console.error("Start recording error:", error);
+
+            Alert.alert(
+                "自動記録開始エラー",
+                "自動記録を開始できませんでした。",
+            );
+        } finally {
+            setStartingRecording(false);
+        }
     };
 
     useFocusEffect(
@@ -1664,19 +1706,25 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 styles.autoRecordStartButton,
                                 pressed &&
                                     hasLoadedSavedHomeSettings &&
+                                    !startingRecording &&
                                     styles.buttonPressed,
-                                !hasLoadedSavedHomeSettings &&
+                                (!hasLoadedSavedHomeSettings ||
+                                    startingRecording) &&
                                     styles.appButtonDisabled,
                             ]}
                             onPress={handleStartRecording}
-                            disabled={!hasLoadedSavedHomeSettings}
+                            disabled={
+                                !hasLoadedSavedHomeSettings || startingRecording
+                            }
                         >
                             <Text style={styles.autoRecordButtonText}>
                                 {!hasLoadedSavedHomeSettings
                                     ? "設定を読み込み中..."
-                                    : selectedLiveShareUsers.length > 0
-                                      ? "自動記録開始＋共有"
-                                      : "自動記録開始"}
+                                    : startingRecording
+                                      ? "自動記録を開始中..."
+                                      : selectedLiveShareUsers.length > 0
+                                        ? "自動記録開始＋共有"
+                                        : "自動記録開始"}
                             </Text>
                         </Pressable>
                     )}

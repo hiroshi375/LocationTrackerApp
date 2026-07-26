@@ -8,7 +8,9 @@ import { client } from "../lib/client";
 import {
     ensureBackgroundLocationPermission,
     getBackgroundRecordingStatus,
+    isBackgroundLocationDisclosureDeclined,
     isBackgroundLocationPermissionError,
+    isForegroundLocationPermissionError,
     startBackgroundLocationRecording,
     stopBackgroundLocationRecording,
     updateBackgroundRecordingLastSavedLocation,
@@ -561,17 +563,26 @@ export function useForegroundLocationRecorder({
             try {
                 await ensureBackgroundLocationPermission();
             } catch (error) {
-                if (isBackgroundLocationPermissionError(error)) {
-                    return;
+                const isExpectedPermissionResult =
+                    isBackgroundLocationDisclosureDeclined(error) ||
+                    isForegroundLocationPermissionError(error) ||
+                    isBackgroundLocationPermissionError(error);
+
+                if (isExpectedPermissionResult) {
+                    /*
+                     * 事前説明のキャンセルや権限拒否は、
+                     * LocationHomeScreen側で判定するため呼び出し元へ返す。
+                     */
+                    throw error;
                 }
 
                 console.error("Location permission error:", error);
 
-                Alert.alert(
-                    "位置情報の許可が必要です",
-                    "自動記録を使うには位置情報の許可が必要です。",
-                );
-                return;
+                /*
+                 * 画面側でエラーを表示するため、
+                 * このフック内ではAlertを表示しない。
+                 */
+                throw error;
             }
 
             const newSessionId = createRecordingSessionId();
@@ -650,8 +661,17 @@ export function useForegroundLocationRecorder({
 
                 resetRecordingState();
 
-                if (isBackgroundLocationPermissionError(error)) {
-                    return;
+                const isExpectedPermissionResult =
+                    isBackgroundLocationDisclosureDeclined(error) ||
+                    isForegroundLocationPermissionError(error) ||
+                    isBackgroundLocationPermissionError(error);
+
+                if (isExpectedPermissionResult) {
+                    /*
+                     * 想定された権限関連の結果は、
+                     * LocationHomeScreen側へ返す。
+                     */
+                    throw error;
                 }
 
                 console.error(
@@ -659,11 +679,11 @@ export function useForegroundLocationRecorder({
                     error,
                 );
 
-                Alert.alert(
-                    "バックグラウンド記録エラー",
-                    "バックグラウンドでの位置記録を開始できませんでした。位置情報の権限設定を確認してください。",
-                );
-                return;
+                /*
+                 * 画面側でエラーを表示するため、
+                 * このフック内ではAlertを表示しない。
+                 */
+                throw error;
             }
 
             try {

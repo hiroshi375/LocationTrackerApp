@@ -2,7 +2,7 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
-import { Alert, Linking } from "react-native";
+import { Alert, Linking, Platform } from "react-native";
 import { client } from "../lib/client";
 
 import {
@@ -14,6 +14,9 @@ import { saveBackgroundLocationDebugLog } from "./backgroundLocationDebugLogServ
 export const BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED =
     "BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED";
 
+export const BACKGROUND_LOCATION_DISCLOSURE_DECLINED =
+    "BACKGROUND_LOCATION_DISCLOSURE_DECLINED";
+
 export class BackgroundLocationPermissionError extends Error {
     code = BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED;
 
@@ -21,6 +24,23 @@ export class BackgroundLocationPermissionError extends Error {
         super(BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED);
         this.name = "BackgroundLocationPermissionError";
     }
+}
+
+export const FOREGROUND_LOCATION_PERMISSION_NOT_GRANTED =
+    "FOREGROUND_LOCATION_PERMISSION_NOT_GRANTED";
+
+export function isForegroundLocationPermissionError(error: unknown) {
+    return (
+        error instanceof Error &&
+        error.message === FOREGROUND_LOCATION_PERMISSION_NOT_GRANTED
+    );
+}
+
+export function isBackgroundLocationDisclosureDeclined(error: unknown) {
+    return (
+        error instanceof Error &&
+        error.message === BACKGROUND_LOCATION_DISCLOSURE_DECLINED
+    );
 }
 
 export function isBackgroundLocationPermissionError(error: unknown) {
@@ -266,32 +286,212 @@ export async function stopBackgroundLocationRecording() {
     });
 }
 
+function showBackgroundLocationDisclosure(): Promise<boolean> {
+    return new Promise((resolve) => {
+        let resolved = false;
+
+        const finish = (accepted: boolean) => {
+            if (resolved) {
+                return;
+            }
+
+            resolved = true;
+            resolve(accepted);
+        };
+
+        Alert.alert(
+            "バックグラウンド位置情報について",
+            [
+                "このアプリは、自動記録中の移動ルートを作成するため、アプリを閉じている間や使用していない間も、バックグラウンドで位置情報を取得して保存します。",
+                "",
+                "位置情報は、移動履歴の作成、ルートの地図表示、およびユーザーが明示的に開始した現在地共有に使用します。",
+                "",
+                "現在地共有を開始した場合は、ユーザーが選択した共有相手に位置情報が表示されます。",
+            ].join("\n"),
+            [
+                {
+                    text: "キャンセル",
+                    style: "cancel",
+                    onPress: () => {
+                        finish(false);
+                    },
+                },
+                {
+                    text: "次へ",
+                    onPress: () => {
+                        finish(true);
+                    },
+                },
+            ],
+            {
+                cancelable: true,
+                onDismiss: () => {
+                    /*
+                     * Androidの戻るボタンやダイアログ外タップは、
+                     * 同意として扱わない。
+                     */
+                    finish(false);
+                },
+            },
+        );
+    });
+}
+
 export async function ensureBackgroundLocationPermission(
     userId?: string | null,
     recordingSessionId?: string | null,
 ) {
-    const foregroundPermission =
-        await Location.requestForegroundPermissionsAsync();
+    /*
+     * 最初はrequestではなくgetで、現在の権限状態だけを確認する。
+     *
+     * Androidでは、OS権限ダイアログより先に
+     * アプリ内の事前説明を表示する必要がある。
+     */
+    let foregroundPermission = await Location.getForegroundPermissionsAsync();
+
+    let backgroundPermission = await Location.getBackgroundPermissionsAsync();
 
     await saveBackgroundLocationDebugLog({
         userId,
         recordingSessionId,
-        eventName: "foregroundPermissionChecked",
+        eventName: "locationPermissionsCheckedBeforeDisclosure",
         foregroundPermissionStatus: foregroundPermission.status,
         foregroundPermissionGranted: foregroundPermission.granted,
         foregroundPermissionCanAskAgain: foregroundPermission.canAskAgain,
+        backgroundPermissionStatus: backgroundPermission.status,
+        backgroundPermissionGranted: backgroundPermission.granted,
+        backgroundPermissionCanAskAgain: backgroundPermission.canAskAgain,
+        details: {
+            platform: Platform.OS,
+            requiresForegroundPermission:
+                foregroundPermission.status !==
+                Location.PermissionStatus.GRANTED,
+            requiresBackgroundPermission:
+                backgroundPermission.status !==
+                Location.PermissionStatus.GRANTED,
+        },
     });
 
-    if (foregroundPermission.status !== Location.PermissionStatus.GRANTED) {
-        Alert.alert(
-            "位置情報の許可が必要です",
-            "自動記録を使うには、位置情報の使用を許可してください。",
-        );
+    const requiresForegroundPermission =
+        foregroundPermission.status !== Location.PermissionStatus.GRANTED;
 
-        throw new Error("FOREGROUND_LOCATION_PERMISSION_NOT_GRANTED");
+    const requiresBackgroundPermission =
+        backgroundPermission.status !== Location.PermissionStatus.GRANTED;
+
+    /*
+     * Androidでこれから位置権限を要求する場合は、
+     * OS権限ダイアログより先に事前説明を表示する。
+     *
+     * 既に両方許可済みの場合は表示しない。
+     */
+    if (
+        Platform.OS === "android" &&
+        (requiresForegroundPermission || requiresBackgroundPermission)
+    ) {
+        await saveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "backgroundLocationDisclosureShown",
+            foregroundPermissionStatus: foregroundPermission.status,
+            foregroundPermissionGranted: foregroundPermission.granted,
+            foregroundPermissionCanAskAgain: foregroundPermission.canAskAgain,
+            backgroundPermissionStatus: backgroundPermission.status,
+            backgroundPermissionGranted: backgroundPermission.granted,
+            backgroundPermissionCanAskAgain: backgroundPermission.canAskAgain,
+        });
+
+        const accepted = await showBackgroundLocationDisclosure();
+
+        await saveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: accepted
+                ? "backgroundLocationDisclosureAccepted"
+                : "backgroundLocationDisclosureDeclined",
+            foregroundPermissionStatus: foregroundPermission.status,
+            foregroundPermissionGranted: foregroundPermission.granted,
+            foregroundPermissionCanAskAgain: foregroundPermission.canAskAgain,
+            backgroundPermissionStatus: backgroundPermission.status,
+            backgroundPermissionGranted: backgroundPermission.granted,
+            backgroundPermissionCanAskAgain: backgroundPermission.canAskAgain,
+        });
+
+        if (!accepted) {
+            throw new Error(BACKGROUND_LOCATION_DISCLOSURE_DECLINED);
+        }
     }
 
-    let backgroundPermission = await Location.getBackgroundPermissionsAsync();
+    /*
+     * 前景権限が未許可の場合だけ要求する。
+     */
+    if (foregroundPermission.status !== Location.PermissionStatus.GRANTED) {
+        foregroundPermission =
+            await Location.requestForegroundPermissionsAsync();
+
+        await saveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "foregroundPermissionRequested",
+            foregroundPermissionStatus: foregroundPermission.status,
+            foregroundPermissionGranted: foregroundPermission.granted,
+            foregroundPermissionCanAskAgain: foregroundPermission.canAskAgain,
+        });
+    } else {
+        await saveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "foregroundPermissionAlreadyGranted",
+            foregroundPermissionStatus: foregroundPermission.status,
+            foregroundPermissionGranted: foregroundPermission.granted,
+            foregroundPermissionCanAskAgain: foregroundPermission.canAskAgain,
+        });
+    }
+
+    if (foregroundPermission.status !== Location.PermissionStatus.GRANTED) {
+        if (foregroundPermission.canAskAgain) {
+            Alert.alert(
+                "位置情報の許可が必要です",
+                [
+                    "自動記録を使うには、位置情報の使用を許可してください。",
+                    "",
+                    "もう一度「自動記録開始」を押し、OSの権限画面で「アプリの使用中のみ」を選択してください。",
+                ].join("\n"),
+                [{ text: "OK" }],
+            );
+        } else {
+            Alert.alert(
+                "位置情報の設定が必要です",
+                [
+                    "位置情報の権限が無効になっています。",
+                    "",
+                    "端末の設定で、このアプリの位置情報を「アプリの使用中のみ許可」または「常に許可」に変更してください。",
+                    "",
+                    "変更後はアプリへ戻り、もう一度「自動記録開始」を押してください。",
+                ].join("\n"),
+                [
+                    {
+                        text: "キャンセル",
+                        style: "cancel",
+                    },
+                    {
+                        text: "設定を開く",
+                        onPress: () => {
+                            void Linking.openSettings();
+                        },
+                    },
+                ],
+            );
+        }
+
+        throw new Error(FOREGROUND_LOCATION_PERMISSION_NOT_GRANTED);
+    }
+
+    /*
+     * 前景権限取得後に、背景権限を再確認する。
+     *
+     * Androidでは前景権限取得によって状態が変化する可能性がある。
+     */
+    backgroundPermission = await Location.getBackgroundPermissionsAsync();
 
     await saveBackgroundLocationDebugLog({
         userId,
@@ -306,16 +506,25 @@ export async function ensureBackgroundLocationPermission(
         return;
     }
 
-    backgroundPermission = await Location.requestBackgroundPermissionsAsync();
+    /*
+     * OSが再質問を許可している場合だけ権限要求を実行する。
+     *
+     * canAskAgain=falseの場合、requestを繰り返しても
+     * ダイアログが表示されないため設定画面へ案内する。
+     */
+    if (backgroundPermission.canAskAgain) {
+        backgroundPermission =
+            await Location.requestBackgroundPermissionsAsync();
 
-    await saveBackgroundLocationDebugLog({
-        userId,
-        recordingSessionId,
-        eventName: "backgroundPermissionRequested",
-        backgroundPermissionStatus: backgroundPermission.status,
-        backgroundPermissionGranted: backgroundPermission.granted,
-        backgroundPermissionCanAskAgain: backgroundPermission.canAskAgain,
-    });
+        await saveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "backgroundPermissionRequested",
+            backgroundPermissionStatus: backgroundPermission.status,
+            backgroundPermissionGranted: backgroundPermission.granted,
+            backgroundPermissionCanAskAgain: backgroundPermission.canAskAgain,
+        });
+    }
 
     if (backgroundPermission.status === Location.PermissionStatus.GRANTED) {
         return;
@@ -323,7 +532,11 @@ export async function ensureBackgroundLocationPermission(
 
     Alert.alert(
         "位置情報の「常に許可」が必要です",
-        "バックグラウンドで自動記録を続けるには、端末の設定で位置情報を「常に許可」に変更してください。変更後はアプリに戻り、もう一度「自動記録開始」を押してください。",
+        [
+            "バックグラウンドで自動記録を続けるには、端末の設定で位置情報を「常に許可」に変更してください。",
+            "",
+            "変更後はアプリに戻り、もう一度「自動記録開始」を押してください。",
+        ].join("\n"),
         [
             {
                 text: "キャンセル",

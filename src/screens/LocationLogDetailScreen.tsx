@@ -24,6 +24,7 @@ type LocationLogDetail = {
     recordedAt: string;
     memo?: string | null;
     recordingSessionId: string | null;
+    source?: string | null;
 };
 
 export default function LocationLogDetailScreen({ route, navigation }: Props) {
@@ -94,6 +95,7 @@ export default function LocationLogDetailScreen({ route, navigation }: Props) {
                 recordedAt: log.recordedAt,
                 memo: log.memo,
                 recordingSessionId: log.recordingSessionId ?? null,
+                source: log.source ?? null,
             };
 
             setLog(item);
@@ -155,6 +157,7 @@ export default function LocationLogDetailScreen({ route, navigation }: Props) {
                 recordedAt: log.recordedAt,
                 memo: memo.trim() || null,
                 recordingSessionId: log.recordingSessionId ?? null,
+                source: log.source ?? null,
             },
         });
     };

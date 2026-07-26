@@ -86,6 +86,7 @@ const CURRENT_LOCATION_LONGITUDE_DELTA = 0.005;
 
 const MAP_LAYER_MODE_STORAGE_KEY = "location-map-layer-mode";
 const ROUTE_VIEW_MODE_STORAGE_KEY = "location-map-route-view-mode";
+const SHOW_POINTS_STORAGE_KEY = "location-map-show-points";
 
 const MAP_LAYER_OPTIONS: MapLayerOption[] = [
     {
@@ -292,6 +293,10 @@ export default function LocationMapScreen({ route }: Props) {
         longitude: number;
         lookedUpAt: number;
     } | null>(null);
+
+    const [hasLoadedMapPreferences, setHasLoadedMapPreferences] =
+        useState(false);
+    const [hasLoadedMapLayerMode, setHasLoadedMapLayerMode] = useState(false);
 
     const updateCurrentLocationScreenPoint = useCallback(async () => {
         if (
@@ -501,6 +506,77 @@ export default function LocationMapScreen({ route }: Props) {
     }, [sharedLiveUserId]);
 
     useEffect(() => {
+        const loadMapPreferences = async () => {
+            try {
+                const [savedShowPoints, savedRouteViewMode] = await Promise.all(
+                    [
+                        AsyncStorage.getItem(SHOW_POINTS_STORAGE_KEY),
+                        AsyncStorage.getItem(ROUTE_VIEW_MODE_STORAGE_KEY),
+                    ],
+                );
+
+                if (savedShowPoints === "true") {
+                    setShowPoints(true);
+                } else if (savedShowPoints === "false") {
+                    setShowPoints(false);
+                }
+
+                if (
+                    savedRouteViewMode === "current" ||
+                    savedRouteViewMode === "route" ||
+                    savedRouteViewMode === "none"
+                ) {
+                    setRouteViewMode(savedRouteViewMode);
+                }
+            } catch (error) {
+                console.error("Load map preferences error:", error);
+            } finally {
+                setHasLoadedMapPreferences(true);
+            }
+        };
+
+        void loadMapPreferences();
+    }, []);
+
+    useEffect(() => {
+        if (!hasLoadedMapPreferences) {
+            return;
+        }
+
+        const saveShowPoints = async () => {
+            try {
+                await AsyncStorage.setItem(
+                    SHOW_POINTS_STORAGE_KEY,
+                    String(showPoints),
+                );
+            } catch (error) {
+                console.error("Save show points setting error:", error);
+            }
+        };
+
+        void saveShowPoints();
+    }, [hasLoadedMapPreferences, showPoints]);
+
+    useEffect(() => {
+        if (!hasLoadedMapPreferences) {
+            return;
+        }
+
+        const saveRouteViewMode = async () => {
+            try {
+                await AsyncStorage.setItem(
+                    ROUTE_VIEW_MODE_STORAGE_KEY,
+                    routeViewMode,
+                );
+            } catch (error) {
+                console.error("Save route view mode error:", error);
+            }
+        };
+
+        void saveRouteViewMode();
+    }, [hasLoadedMapPreferences, routeViewMode]);
+
+    useEffect(() => {
         const loadMapLayerMode = async () => {
             try {
                 const savedValue = await AsyncStorage.getItem(
@@ -517,6 +593,8 @@ export default function LocationMapScreen({ route }: Props) {
                 }
             } catch (error) {
                 console.error("Load map layer mode error:", error);
+            } finally {
+                setHasLoadedMapLayerMode(true);
             }
         };
 
@@ -524,6 +602,10 @@ export default function LocationMapScreen({ route }: Props) {
     }, []);
 
     useEffect(() => {
+        if (!hasLoadedMapLayerMode) {
+            return;
+        }
+
         const saveMapLayerMode = async () => {
             try {
                 await AsyncStorage.setItem(
@@ -536,56 +618,7 @@ export default function LocationMapScreen({ route }: Props) {
         };
 
         void saveMapLayerMode();
-    }, [mapLayerMode]);
-
-    useEffect(() => {
-        const loadRouteViewMode = async () => {
-            /*
-             * 自動記録中の地図は、毎回ルート全体表示から開始する。
-             */
-            if (isLiveRecordingMap) {
-                setRouteViewMode("route");
-                return;
-            }
-
-            try {
-                const savedValue = await AsyncStorage.getItem(
-                    ROUTE_VIEW_MODE_STORAGE_KEY,
-                );
-
-                if (
-                    savedValue === "current" ||
-                    savedValue === "route" ||
-                    savedValue === "none"
-                ) {
-                    setRouteViewMode(savedValue);
-                }
-            } catch (error) {
-                console.error("Load route view mode error:", error);
-            }
-        };
-
-        void loadRouteViewMode();
-    }, [isLiveRecordingMap]);
-
-    useEffect(() => {
-        if (isLiveRecordingMap) {
-            return;
-        }
-
-        const saveRouteViewMode = async () => {
-            try {
-                await AsyncStorage.setItem(
-                    ROUTE_VIEW_MODE_STORAGE_KEY,
-                    routeViewMode,
-                );
-            } catch (error) {
-                console.error("Save route view mode error:", error);
-            }
-        };
-
-        void saveRouteViewMode();
-    }, [isLiveRecordingMap, routeViewMode]);
+    }, [hasLoadedMapLayerMode, mapLayerMode]);
 
     useEffect(() => {
         if (!isOwnLiveRecordingMap) {
@@ -779,6 +812,10 @@ export default function LocationMapScreen({ route }: Props) {
     ]);
 
     useEffect(() => {
+        if (!hasLoadedMapPreferences) {
+            return;
+        }
+
         if (!mapReady) {
             return;
         }
@@ -791,7 +828,6 @@ export default function LocationMapScreen({ route }: Props) {
             return;
         }
 
-        // 「現在地を表示」モード以外では、自動でカメラを追跡しない
         if (routeViewMode !== "current") {
             return;
         }
@@ -801,6 +837,7 @@ export default function LocationMapScreen({ route }: Props) {
             500,
         );
     }, [
+        hasLoadedMapPreferences,
         mapReady,
         shouldShowLiveCurrentLocation,
         currentLocation,
@@ -808,6 +845,10 @@ export default function LocationMapScreen({ route }: Props) {
     ]);
 
     useEffect(() => {
+        if (!hasLoadedMapPreferences) {
+            return;
+        }
+
         if (!mapReady) {
             return;
         }
@@ -872,6 +913,7 @@ export default function LocationMapScreen({ route }: Props) {
             clearTimeout(timerId);
         };
     }, [
+        hasLoadedMapPreferences,
         mapReady,
         isLiveRecordingMap,
         routeViewMode,
@@ -885,6 +927,10 @@ export default function LocationMapScreen({ route }: Props) {
     }, [activeSessionId, isLiveRecordingMap]);
 
     useEffect(() => {
+        if (!hasLoadedMapPreferences) {
+            return;
+        }
+
         if (!mapReady) {
             return;
         }
@@ -949,6 +995,8 @@ export default function LocationMapScreen({ route }: Props) {
             clearTimeout(timerId);
         };
     }, [
+        hasLoadedMapPreferences,
+        routeViewMode,
         mapReady,
         hasLoaded,
         loading,
@@ -1179,9 +1227,7 @@ export default function LocationMapScreen({ route }: Props) {
             return;
         }
 
-        if (isLiveRecordingMap) {
-            setRouteViewMode("route");
-        }
+        setRouteViewMode("route");
 
         if (fitTargetCoordinates.length === 1) {
             mapRef.current?.animateCamera(
@@ -1267,8 +1313,25 @@ export default function LocationMapScreen({ route }: Props) {
             ? routeLogs[routeLogs.length - 1]
             : null;
 
-    const recordPointCount =
-        recordingSessionSummary?.pointCount ?? visibleLogs.length;
+    /*
+     * 表示対象セッションのLocationLogを記録元ごとに集計する。
+     *
+     * 過去データなどsourceが未設定のログは、
+     * 従来のforeground記録として扱う。
+     */
+    const foregroundPointCount = visibleLogs.filter(
+        (log) => log.source !== "background",
+    ).length;
+
+    const backgroundPointCount = visibleLogs.filter(
+        (log) => log.source === "background",
+    ).length;
+
+    /*
+     * F件数とB件数の合計が必ず総件数と一致するよう、
+     * RecordingSession.pointCountではなく取得済みLocationLogから計算する。
+     */
+    const recordPointCount = foregroundPointCount + backgroundPointCount;
 
     const displayedPointCount = showPoints
         ? routeLogs.filter(
@@ -1400,11 +1463,16 @@ export default function LocationMapScreen({ route }: Props) {
                                 >
                                     <View
                                         collapsable={false}
-                                        style={
-                                            isSelected
-                                                ? styles.selectedPointMarker
-                                                : styles.logPointMarker
-                                        }
+                                        style={[
+                                            styles.logPointMarker,
+
+                                            log.source === "background"
+                                                ? styles.backgroundLogPointMarker
+                                                : styles.foregroundLogPointMarker,
+
+                                            isSelected &&
+                                                styles.selectedPointMarker,
+                                        ]}
                                     />
                                 </View>
                             </Marker>
@@ -1483,7 +1551,17 @@ export default function LocationMapScreen({ route }: Props) {
                             anchor={{ x: 0.5, y: 0.5 }}
                             tracksViewChanges={false}
                         >
-                            <View style={styles.selectedPointMarker} />
+                            <View
+                                style={[
+                                    styles.logPointMarker,
+
+                                    selectedLocation.source === "background"
+                                        ? styles.backgroundLogPointMarker
+                                        : styles.foregroundLogPointMarker,
+
+                                    styles.selectedPointMarker,
+                                ]}
+                            />
                         </Marker>
                     )}
             </MapView>
@@ -1555,7 +1633,9 @@ export default function LocationMapScreen({ route }: Props) {
                 <Text style={styles.infoTitle}>
                     {isSharedCurrentLocationOnlyMap
                         ? "共有中の現在地"
-                        : "アクティビティ記録"}
+                        : recordingSessionSummary?.recordingSessionName?.trim()
+                          ? recordingSessionSummary.recordingSessionName.trim()
+                          : "アクティビティ記録"}
                 </Text>
 
                 {isSharedCurrentLocationOnlyMap ? (
@@ -1626,11 +1706,13 @@ export default function LocationMapScreen({ route }: Props) {
                             </View>
                         )}
 
-                        <View style={styles.pointCountRow}>
+                        <View style={styles.pointCountColumn}>
                             <Text
                                 style={[styles.infoText, styles.pointCountText]}
                             >
-                                記録ポイント: {recordPointCount}件
+                                記録ポイント: {recordPointCount}件（F:{" "}
+                                {foregroundPointCount}
+                                件、B: {backgroundPointCount}件）
                             </Text>
 
                             <Text
@@ -2201,15 +2283,22 @@ const styles = StyleSheet.create({
         width: 12,
         height: 12,
         borderRadius: 6,
-        backgroundColor: "rgba(75,111,143,0.9)",
         borderWidth: 2,
         borderColor: "#ffffff",
     },
+
+    foregroundLogPointMarker: {
+        backgroundColor: "rgba(75, 111, 143, 0.95)",
+    },
+
+    backgroundLogPointMarker: {
+        backgroundColor: "rgba(79, 85, 91, 0.95)",
+    },
+
     selectedPointMarker: {
         width: 18,
         height: 18,
         borderRadius: 9,
-        backgroundColor: "rgba(0, 122, 255, 0.95)",
         borderWidth: 3,
         borderColor: "#ffffff",
     },
@@ -2368,9 +2457,6 @@ const styles = StyleSheet.create({
         marginTop: 2,
         marginBottom: 2,
     },
-    pointCountText: {
-        marginBottom: 0,
-    },
     currentUserOverlayMarker: {
         position: "absolute",
         width: 70,
@@ -2463,5 +2549,17 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         justifyContent: "flex-end",
         alignItems: "center",
+    },
+    recordPointCountText: {
+        flex: 1,
+        flexShrink: 1,
+        marginRight: 8,
+    },
+    pointCountColumn: {
+        marginTop: 4,
+    },
+
+    pointCountText: {
+        marginBottom: 4,
     },
 });

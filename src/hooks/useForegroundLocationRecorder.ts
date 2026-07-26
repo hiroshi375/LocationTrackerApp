@@ -14,6 +14,11 @@ import {
     updateBackgroundRecordingLastSavedLocation,
     updateBackgroundRecordingLiveLocationId,
 } from "../services/backgroundLocationService";
+import {
+    createLocationLogId,
+    createLocationUniqueKey,
+    isDuplicateLocationCreateError,
+} from "../services/locationLogDeduplicationService";
 import type { RecordingContinuationState } from "../services/recordingContinuationService";
 import {
     calculateDistanceMeters,
@@ -239,6 +244,12 @@ export function useForegroundLocationRecorder({
                 return;
             }
 
+            const recordingSessionId = recordingSessionIdRef.current;
+
+            if (!recordingSessionId) {
+                return;
+            }
+
             const recordedAtMs =
                 typeof location.timestamp === "number" &&
                 Number.isFinite(location.timestamp)
@@ -341,17 +352,33 @@ export function useForegroundLocationRecorder({
                         ? normalizedLiveShareOwnerValues
                         : undefined;
 
+                const accuracy = location.coords.accuracy ?? null;
+
+                const locationUniqueKey = createLocationUniqueKey({
+                    userId: currentUser.userId,
+                    recordingSessionId,
+                    recordedAt,
+                    latitude,
+                    longitude,
+                    accuracy,
+                });
+
+                const locationLogId = createLocationLogId(locationUniqueKey);
+
                 const result = await client.models.LocationLog.create({
+                    id: locationLogId,
+
                     userId: currentUser.userId,
                     latitude,
                     longitude,
-                    accuracy: location.coords.accuracy ?? null,
+                    accuracy,
                     recordedAt,
                     memo: "自動記録",
-                    recordingSessionId: recordingSessionIdRef.current,
+                    recordingSessionId,
                     source: "foreground",
 
                     sharedOwners,
+                    locationUniqueKey,
 
                     batteryLevel: batterySnapshot.batteryLevel ?? undefined,
                     batteryState: batterySnapshot.batteryState ?? undefined,
@@ -359,10 +386,30 @@ export function useForegroundLocationRecorder({
                 });
 
                 if (result.errors) {
+                    /*
+                     * 同じIDがすでに存在する場合は、
+                     * foreground/background間の重複を正常に防止できたと判断する。
+                     */
+                    if (isDuplicateLocationCreateError(result.errors)) {
+                        console.log(
+                            "Skip duplicate foreground LocationLog by deterministic id:",
+                            {
+                                locationLogId,
+                                recordingSessionId,
+                                recordedAt,
+                                latitude,
+                                longitude,
+                            },
+                        );
+
+                        return;
+                    }
+
                     console.error(
                         "Auto LocationLog create errors:",
                         result.errors,
                     );
+
                     return;
                 }
 
@@ -384,6 +431,20 @@ export function useForegroundLocationRecorder({
                     recordedAt,
                 });
             } catch (error) {
+                if (isDuplicateLocationCreateError(error)) {
+                    console.log(
+                        "Skip duplicate foreground LocationLog exception by deterministic id:",
+                        {
+                            recordingSessionId,
+                            recordedAt,
+                            latitude,
+                            longitude,
+                        },
+                    );
+
+                    return;
+                }
+
                 console.error("Auto LocationLog create error:", error);
             } finally {
                 if (savingLocationKeyRef.current === duplicateKey) {

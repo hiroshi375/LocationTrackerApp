@@ -795,8 +795,8 @@ async function saveBackgroundLocation(
     }
 }
 
-const DEFAULT_DISTANCE_METERS = 100;
-const DEFAULT_INTERVAL_MS = 60_000;
+const DEFAULT_DISTANCE_METERS = 50;
+const DEFAULT_INTERVAL_MS = 30_000;
 
 function shouldSaveLocation(
     latitude: number,

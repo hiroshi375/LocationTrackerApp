@@ -739,6 +739,31 @@ async function saveBackgroundLocation(
             nextState,
         };
     } catch (error) {
+        /*
+         * LocationLog.create()が重複をresult.errorsではなく
+         * 例外としてthrowした場合も、正常な重複スキップとして扱う。
+         *
+         * errorMessageを返さないため、バッチのsaveFailureCountには
+         * 加算されず、exactDuplicateSkippedCountへ加算される。
+         */
+        if (isDuplicateLocationCreateError(error)) {
+            console.log(
+                "Skip duplicate background LocationLog exception by deterministic id:",
+                {
+                    recordingSessionId,
+                    recordedAt,
+                    latitude,
+                    longitude,
+                },
+            );
+
+            return {
+                saved: false,
+                nextState: state,
+                skippedReason: "exactDuplicate",
+            };
+        }
+
         const errorMessage = getErrorMessage(error);
 
         console.error("saveBackgroundLocation unexpected error:", error);

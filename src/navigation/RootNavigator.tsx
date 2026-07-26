@@ -3,12 +3,16 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
 import ActivityCalendarScreen from "../screens/ActivityCalendarScreen";
 import ActivityRankingScreen from "../screens/ActivityRankingScreen";
+import AppInfoScreen from "../screens/AppInfoScreen";
+import ContactScreen from "../screens/ContactScreen";
 import LiveLocationMapScreen from "../screens/LiveLocationMapScreen";
 import LocationHomeScreen from "../screens/LocationHomeScreen";
 import LocationLogDetailScreen from "../screens/LocationLogDetailScreen";
 import LocationLogScreen from "../screens/LocationLogScreen";
 import LocationMapScreen from "../screens/LocationMapScreen";
+import PrivacyPolicyScreen from "../screens/PrivacyPolicyScreen";
 import ProfileScreen from "../screens/ProfileScreen";
+import TermsOfServiceScreen from "../screens/TermsOfServiceScreen";
 
 export type RootStackParamList = {
     LocationHome: undefined;
@@ -46,6 +50,10 @@ export type RootStackParamList = {
     Profile: undefined;
     LiveLocationMap: undefined;
     ActivityRanking: undefined;
+    AppInfo: undefined;
+    PrivacyPolicy: undefined;
+    TermsOfService: undefined;
+    Contact: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -93,6 +101,29 @@ export default function RootNavigator() {
                     name="LiveLocationMap"
                     component={LiveLocationMapScreen}
                     options={{ title: "共有中の現在地" }}
+                />
+                <Stack.Screen
+                    name="AppInfo"
+                    component={AppInfoScreen}
+                    options={{ title: "アプリ情報" }}
+                />
+
+                <Stack.Screen
+                    name="PrivacyPolicy"
+                    component={PrivacyPolicyScreen}
+                    options={{ title: "プライバシーポリシー" }}
+                />
+
+                <Stack.Screen
+                    name="TermsOfService"
+                    component={TermsOfServiceScreen}
+                    options={{ title: "利用規約" }}
+                />
+
+                <Stack.Screen
+                    name="Contact"
+                    component={ContactScreen}
+                    options={{ title: "お問い合わせ" }}
                 />
             </Stack.Navigator>
         </NavigationContainer>

@@ -8,6 +8,7 @@ import {
     KeyboardAvoidingView,
     Platform,
     Pressable,
+    ScrollView,
     StyleSheet,
     Text,
     TextInput,
@@ -19,6 +20,10 @@ import * as ImagePicker from "expo-image-picker";
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import {
+    deleteCurrentAccount,
+    type AccountDeletionProgress,
+} from "../services/accountDeletionService";
+import {
     getCurrentUserProfile,
     updateUserProfileDisplayName,
 } from "../services/userProfileService";
@@ -28,6 +33,9 @@ type Props = NativeStackScreenProps<RootStackParamList, "Profile">;
 export default function ProfileScreen({ navigation }: Props) {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [deletingAccount, setDeletingAccount] = useState(false);
+    const [deleteAccountProgress, setDeleteAccountProgress] =
+        useState<AccountDeletionProgress | null>(null);
 
     const [profileId, setProfileId] = useState<string | null>(null);
     const [email, setEmail] = useState("");
@@ -35,6 +43,7 @@ export default function ProfileScreen({ navigation }: Props) {
     const [iconImageUrl, setIconImageUrl] = useState<string | null>(null);
     const [uploadingIcon, setUploadingIcon] = useState(false);
     const [selectedIconUri, setSelectedIconUri] = useState<string | null>(null);
+    const isProcessing = saving || uploadingIcon || deletingAccount;
 
     const loadProfile = useCallback(async () => {
         try {
@@ -193,6 +202,95 @@ export default function ProfileScreen({ navigation }: Props) {
         }
     };
 
+    const handleDeleteAccount = () => {
+        if (isProcessing) {
+            return;
+        }
+
+        Alert.alert(
+            "アカウントを削除",
+            [
+                "アカウントと関連するすべてのデータを完全に削除します。",
+                "",
+                "削除されるデータ",
+                "・プロフィール",
+                "・プロフィール画像",
+                "・位置履歴",
+                "・アクティビティ履歴",
+                "・現在地共有情報",
+                "・月次集計情報",
+                "・端末内の記録状態",
+                "",
+                "この操作は元に戻せません。",
+            ].join("\n"),
+            [
+                {
+                    text: "キャンセル",
+                    style: "cancel",
+                },
+                {
+                    text: "削除する",
+                    style: "destructive",
+                    onPress: confirmDeleteAccount,
+                },
+            ],
+        );
+    };
+
+    const confirmDeleteAccount = () => {
+        Alert.alert("最終確認", "本当にアカウントを完全に削除しますか？", [
+            {
+                text: "キャンセル",
+                style: "cancel",
+            },
+            {
+                text: "完全に削除",
+                style: "destructive",
+                onPress: () => {
+                    void executeDeleteAccount();
+                },
+            },
+        ]);
+    };
+
+    const executeDeleteAccount = async () => {
+        try {
+            setDeletingAccount(true);
+            setDeleteAccountProgress("stoppingRecording");
+
+            await deleteCurrentAccount({
+                onProgress: setDeleteAccountProgress,
+            });
+
+            /*
+             * deleteUser()に成功すると未認証状態になるため、
+             * Authenticator側でサインイン画面へ切り替わる。
+             */
+        } catch (error) {
+            console.error("Delete account error:", error);
+
+            const errorMessage =
+                error instanceof Error
+                    ? error.message
+                    : "不明なエラーが発生しました。";
+
+            Alert.alert(
+                "アカウント削除エラー",
+                [
+                    "アカウントを完全に削除できませんでした。",
+                    "一部のデータが既に削除されている可能性があります。",
+                    "",
+                    errorMessage,
+                    "",
+                    "通信状態を確認して、もう一度実行してください。",
+                ].join("\n"),
+            );
+        } finally {
+            setDeletingAccount(false);
+            setDeleteAccountProgress(null);
+        }
+    };
+
     useFocusEffect(
         useCallback(() => {
             void loadProfile();
@@ -212,106 +310,206 @@ export default function ProfileScreen({ navigation }: Props) {
             style={styles.container}
             behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
-            <View style={styles.card}>
-                <Text style={styles.title}>プロフィール</Text>
+            <ScrollView
+                contentContainerStyle={styles.scrollContent}
+                keyboardShouldPersistTaps="handled"
+            >
+                <View style={styles.card}>
+                    <Text style={styles.title}>プロフィール</Text>
 
-                <View style={styles.iconSection}>
-                    {selectedIconUri || iconImageUrl ? (
-                        <Image
-                            source={{
-                                uri: selectedIconUri ?? iconImageUrl ?? "",
-                            }}
-                            style={styles.profileIcon}
-                        />
-                    ) : (
-                        <View style={styles.profileIconPlaceholder}>
-                            <Text style={styles.profileIconPlaceholderText}>
-                                アイコン未登録
+                    <View style={styles.iconSection}>
+                        {selectedIconUri || iconImageUrl ? (
+                            <Image
+                                source={{
+                                    uri: selectedIconUri ?? iconImageUrl ?? "",
+                                }}
+                                style={styles.profileIcon}
+                            />
+                        ) : (
+                            <View style={styles.profileIconPlaceholder}>
+                                <Text style={styles.profileIconPlaceholderText}>
+                                    アイコン未登録
+                                </Text>
+                            </View>
+                        )}
+
+                        <Pressable
+                            style={[
+                                styles.iconButton,
+                                isProcessing && styles.disabledButton,
+                            ]}
+                            onPress={pickProfileIcon}
+                            disabled={isProcessing}
+                        >
+                            <Text style={styles.iconButtonText}>
+                                画像を選択
                             </Text>
-                        </View>
-                    )}
+                        </Pressable>
+
+                        {selectedIconUri && (
+                            <>
+                                <Pressable
+                                    style={[
+                                        styles.iconSaveButton,
+                                        isProcessing && styles.disabledButton,
+                                    ]}
+                                    onPress={saveSelectedProfileIcon}
+                                    disabled={isProcessing}
+                                >
+                                    <Text style={styles.iconButtonText}>
+                                        {uploadingIcon
+                                            ? "アップロード中..."
+                                            : "このアイコンを保存"}
+                                    </Text>
+                                </Pressable>
+
+                                <Pressable
+                                    style={[
+                                        styles.iconCancelButton,
+                                        isProcessing && styles.disabledButton,
+                                    ]}
+                                    onPress={() => setSelectedIconUri(null)}
+                                    disabled={isProcessing}
+                                >
+                                    <Text style={styles.iconCancelButtonText}>
+                                        選択を取り消す
+                                    </Text>
+                                </Pressable>
+                            </>
+                        )}
+                    </View>
+
+                    <Text style={styles.label}>メールアドレス</Text>
+                    <TextInput
+                        style={[styles.input, styles.readOnlyInput]}
+                        value={email}
+                        editable={false}
+                    />
+
+                    <Text style={styles.label}>ユーザー名</Text>
+                    <TextInput
+                        style={styles.input}
+                        value={displayName}
+                        onChangeText={setDisplayName}
+                        placeholder="例：佐藤"
+                        editable={!isProcessing}
+                    />
+
+                    <Text style={styles.description}>
+                        このユーザー名は、共有先ユーザー検索で表示されます。
+                    </Text>
 
                     <Pressable
                         style={[
-                            styles.iconButton,
-                            uploadingIcon && styles.disabledButton,
+                            styles.saveButton,
+                            isProcessing && styles.disabledButton,
                         ]}
-                        onPress={pickProfileIcon}
-                        disabled={uploadingIcon || saving}
+                        onPress={saveProfile}
+                        disabled={isProcessing}
                     >
-                        <Text style={styles.iconButtonText}>画像を選択</Text>
+                        <Text style={styles.saveButtonText}>
+                            {saving ? "保存中..." : "保存"}
+                        </Text>
                     </Pressable>
 
-                    {selectedIconUri && (
-                        <>
-                            <Pressable
-                                style={[
-                                    styles.iconSaveButton,
-                                    uploadingIcon && styles.disabledButton,
-                                ]}
-                                onPress={saveSelectedProfileIcon}
-                                disabled={uploadingIcon || saving}
-                            >
-                                <Text style={styles.iconButtonText}>
-                                    {uploadingIcon
-                                        ? "アップロード中..."
-                                        : "このアイコンを保存"}
-                                </Text>
-                            </Pressable>
+                    <Pressable
+                        style={[
+                            styles.backButton,
+                            isProcessing && styles.disabledButton,
+                        ]}
+                        onPress={() => navigation.goBack()}
+                        disabled={isProcessing}
+                    >
+                        <Text style={styles.backButtonText}>戻る</Text>
+                    </Pressable>
 
-                            <Pressable
-                                style={styles.iconCancelButton}
-                                onPress={() => setSelectedIconUri(null)}
-                                disabled={uploadingIcon}
-                            >
-                                <Text style={styles.iconCancelButtonText}>
-                                    選択を取り消す
+                    <View style={styles.dangerZone}>
+                        <Text style={styles.dangerZoneTitle}>
+                            アカウント管理
+                        </Text>
+
+                        <Text style={styles.dangerZoneDescription}>
+                            アカウントを削除すると、位置履歴、アクティビティ履歴、
+                            プロフィール、プロフィール画像、共有情報などが削除されます。
+                            この操作は元に戻せません。
+                        </Text>
+
+                        <Pressable
+                            style={[
+                                styles.deleteAccountButton,
+                                deletingAccount && styles.disabledButton,
+                            ]}
+                            onPress={handleDeleteAccount}
+                            disabled={isProcessing}
+                        >
+                            {deletingAccount ? (
+                                <View style={styles.deleteAccountProgressRow}>
+                                    <ActivityIndicator
+                                        size="small"
+                                        color="#ffffff"
+                                    />
+
+                                    <Text
+                                        style={styles.deleteAccountButtonText}
+                                    >
+                                        {getDeleteAccountProgressText(
+                                            deleteAccountProgress,
+                                        )}
+                                    </Text>
+                                </View>
+                            ) : (
+                                <Text style={styles.deleteAccountButtonText}>
+                                    アカウントを削除
                                 </Text>
-                            </Pressable>
-                        </>
-                    )}
+                            )}
+                        </Pressable>
+                    </View>
                 </View>
-
-                <Text style={styles.label}>メールアドレス</Text>
-                <TextInput
-                    style={[styles.input, styles.readOnlyInput]}
-                    value={email}
-                    editable={false}
-                />
-
-                <Text style={styles.label}>ユーザー名</Text>
-                <TextInput
-                    style={styles.input}
-                    value={displayName}
-                    onChangeText={setDisplayName}
-                    placeholder="例：佐藤"
-                    editable={!saving}
-                />
-
-                <Text style={styles.description}>
-                    このユーザー名は、共有先ユーザー検索で表示されます。
-                </Text>
-
-                <Pressable
-                    style={[styles.saveButton, saving && styles.disabledButton]}
-                    onPress={saveProfile}
-                    disabled={saving}
-                >
-                    <Text style={styles.saveButtonText}>
-                        {saving ? "保存中..." : "保存"}
-                    </Text>
-                </Pressable>
-
-                <Pressable
-                    style={styles.backButton}
-                    onPress={() => navigation.goBack()}
-                    disabled={saving}
-                >
-                    <Text style={styles.backButtonText}>戻る</Text>
-                </Pressable>
-            </View>
+            </ScrollView>
         </KeyboardAvoidingView>
     );
+}
+
+function getDeleteAccountProgressText(
+    progress: AccountDeletionProgress | null,
+): string {
+    switch (progress) {
+        case "stoppingRecording":
+            return "自動記録を停止中...";
+
+        case "loadingProfile":
+            return "プロフィールを確認中...";
+
+        case "deletingLocationLogs":
+            return "位置履歴を削除中...";
+
+        case "deletingRecordingSessions":
+            return "アクティビティ履歴を削除中...";
+
+        case "deletingLiveLocations":
+            return "現在地共有情報を削除中...";
+
+        case "deletingMonthlySummaries":
+            return "月次集計を削除中...";
+
+        case "deletingDebugLogs":
+            return "記録ログを削除中...";
+
+        case "deletingProfileImage":
+            return "プロフィール画像を削除中...";
+
+        case "deletingProfile":
+            return "プロフィールを削除中...";
+
+        case "deletingLocalData":
+            return "端末内データを削除中...";
+
+        case "deletingCognitoUser":
+            return "アカウントを削除中...";
+
+        default:
+            return "削除中...";
+    }
 }
 
 const styles = StyleSheet.create({
@@ -452,5 +650,53 @@ const styles = StyleSheet.create({
         color: "#2f4f66",
         fontSize: 13,
         fontWeight: "bold",
+    },
+    scrollContent: {
+        paddingBottom: 40,
+    },
+
+    dangerZone: {
+        marginTop: 28,
+        paddingTop: 20,
+        borderTopWidth: 1,
+        borderTopColor: "#e0b4b4",
+    },
+
+    dangerZoneTitle: {
+        fontSize: 16,
+        fontWeight: "bold",
+        color: "#a12622",
+        marginBottom: 8,
+    },
+
+    dangerZoneDescription: {
+        fontSize: 13,
+        lineHeight: 20,
+        color: "#666",
+        marginBottom: 14,
+    },
+
+    deleteAccountButton: {
+        minHeight: 48,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderRadius: 8,
+        backgroundColor: "#c62828",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    deleteAccountProgressRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+    },
+
+    deleteAccountButtonText: {
+        color: "#ffffff",
+        fontSize: 14,
+        fontWeight: "bold",
+        textAlign: "center",
     },
 });

@@ -1719,6 +1719,13 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     />
                 </View>
 
+                <View style={styles.buttonSpace}>
+                    <AppButton
+                        title="アプリ情報"
+                        onPress={() => navigation.navigate("AppInfo")}
+                    />
+                </View>
+
                 {isAdmin && (
                     <View style={styles.buttonSpace}>
                         <AppButton

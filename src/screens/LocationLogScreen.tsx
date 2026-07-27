@@ -42,6 +42,7 @@ type LocationLogItem = {
     recordedAt: string;
     memo?: string | null;
     recordingSessionId?: string | null;
+    source?: string | null;
     recordingSessionName?: string | null;
     sharedOwners?: string[] | null;
 
@@ -60,6 +61,8 @@ type RecordingSessionDisplayItem = {
     endAt: string;
     distanceMeters: number;
     pointCount: number;
+    foregroundPointCount: number;
+    backgroundPointCount: number;
     recordingIntervalMs?: number | null;
     recordingDistanceMeters?: number | null;
     startBatteryLevel?: number | null;
@@ -73,6 +76,12 @@ type RecordingSessionDisplayItem = {
     averageSpeedKmh?: number | null;
     maxSpeedKmh?: number | null;
     movingDurationSeconds?: number | null;
+};
+
+type SessionPointCounts = {
+    pointCount: number;
+    foregroundPointCount: number;
+    backgroundPointCount: number;
 };
 
 type UserProfileItem = {
@@ -187,82 +196,125 @@ export default function LocationLogScreen({ navigation }: Props) {
                     return;
                 }
 
-                const nextItems: RecordingSessionDisplayItem[] = (
-                    result.data ?? []
-                )
-                    .map((item: any) => ({
-                        kind: "session" as const,
-                        id: item.id,
-                        userId: item.userId ?? "",
-                        recordingSessionId: item.recordingSessionId,
-                        recordingSessionName:
-                            item.recordingSessionName ??
-                            "自動記録アクティビティ",
-                        startAt: item.startedAt,
-                        endAt: item.endedAt,
-                        distanceMeters: Number(item.distanceMeters ?? 0),
-                        pointCount: Number(item.pointCount ?? 0),
-                        recordingIntervalMs:
-                            item.recordingIntervalMs !== null &&
-                            item.recordingIntervalMs !== undefined &&
-                            Number.isFinite(Number(item.recordingIntervalMs))
-                                ? Number(item.recordingIntervalMs)
-                                : null,
+                const loadedItems = await Promise.all(
+                    (result.data ?? []).map(
+                        async (
+                            item: any,
+                        ): Promise<RecordingSessionDisplayItem> => {
+                            const pointCounts = await loadSessionPointCounts(
+                                item.recordingSessionId,
+                            );
 
-                        recordingDistanceMeters:
-                            item.recordingDistanceMeters !== null &&
-                            item.recordingDistanceMeters !== undefined &&
-                            Number.isFinite(
-                                Number(item.recordingDistanceMeters),
-                            )
-                                ? Number(item.recordingDistanceMeters)
-                                : null,
-                        startBatteryLevel:
-                            item.startBatteryLevel !== null &&
-                            item.startBatteryLevel !== undefined &&
-                            Number.isFinite(Number(item.startBatteryLevel))
-                                ? Number(item.startBatteryLevel)
-                                : null,
+                            return {
+                                kind: "session",
+                                id: item.id,
+                                userId: item.userId ?? "",
+                                recordingSessionId: item.recordingSessionId,
 
-                        endBatteryLevel:
-                            item.endBatteryLevel !== null &&
-                            item.endBatteryLevel !== undefined &&
-                            Number.isFinite(Number(item.endBatteryLevel))
-                                ? Number(item.endBatteryLevel)
-                                : null,
+                                recordingSessionName:
+                                    item.recordingSessionName ??
+                                    "自動記録アクティビティ",
 
-                        sharedOwners: Array.isArray(item.sharedOwners)
-                            ? item.sharedOwners.filter(
-                                  (owner: unknown): owner is string =>
-                                      typeof owner === "string" &&
-                                      owner.length > 0,
-                              )
-                            : [],
+                                startAt: item.startedAt,
+                                endAt: item.endedAt,
 
-                        activityType: normalizeActivityType(item.activityType),
-                        isAggregationTarget: item.isAggregationTarget === true,
-                        classificationSource: item.classificationSource ?? null,
-                        classificationReason: item.classificationReason ?? null,
-                        averageSpeedKmh:
-                            item.averageSpeedKmh == null
-                                ? null
-                                : Number(item.averageSpeedKmh),
-                        maxSpeedKmh:
-                            item.maxSpeedKmh == null
-                                ? null
-                                : Number(item.maxSpeedKmh),
-                        movingDurationSeconds:
-                            item.movingDurationSeconds == null
-                                ? null
-                                : Number(item.movingDurationSeconds),
-                        sortAt: item.endedAt,
-                    }))
-                    .filter(
-                        (item) =>
-                            !!item.recordingSessionId &&
-                            !!item.startAt &&
-                            !!item.endAt,
-                    );
+                                distanceMeters: Number(
+                                    item.distanceMeters ?? 0,
+                                ),
+
+                                pointCount: pointCounts.pointCount,
+
+                                foregroundPointCount:
+                                    pointCounts.foregroundPointCount,
+
+                                backgroundPointCount:
+                                    pointCounts.backgroundPointCount,
+
+                                recordingIntervalMs:
+                                    item.recordingIntervalMs !== null &&
+                                    item.recordingIntervalMs !== undefined &&
+                                    Number.isFinite(
+                                        Number(item.recordingIntervalMs),
+                                    )
+                                        ? Number(item.recordingIntervalMs)
+                                        : null,
+
+                                recordingDistanceMeters:
+                                    item.recordingDistanceMeters !== null &&
+                                    item.recordingDistanceMeters !==
+                                        undefined &&
+                                    Number.isFinite(
+                                        Number(item.recordingDistanceMeters),
+                                    )
+                                        ? Number(item.recordingDistanceMeters)
+                                        : null,
+
+                                startBatteryLevel:
+                                    item.startBatteryLevel !== null &&
+                                    item.startBatteryLevel !== undefined &&
+                                    Number.isFinite(
+                                        Number(item.startBatteryLevel),
+                                    )
+                                        ? Number(item.startBatteryLevel)
+                                        : null,
+
+                                endBatteryLevel:
+                                    item.endBatteryLevel !== null &&
+                                    item.endBatteryLevel !== undefined &&
+                                    Number.isFinite(
+                                        Number(item.endBatteryLevel),
+                                    )
+                                        ? Number(item.endBatteryLevel)
+                                        : null,
+
+                                sharedOwners: Array.isArray(item.sharedOwners)
+                                    ? item.sharedOwners.filter(
+                                          (owner: unknown): owner is string =>
+                                              typeof owner === "string" &&
+                                              owner.length > 0,
+                                      )
+                                    : [],
+
+                                activityType: normalizeActivityType(
+                                    item.activityType,
+                                ),
+
+                                isAggregationTarget:
+                                    item.isAggregationTarget === true,
+
+                                classificationSource:
+                                    item.classificationSource ?? null,
+
+                                classificationReason:
+                                    item.classificationReason ?? null,
+
+                                averageSpeedKmh:
+                                    item.averageSpeedKmh == null
+                                        ? null
+                                        : Number(item.averageSpeedKmh),
+
+                                maxSpeedKmh:
+                                    item.maxSpeedKmh == null
+                                        ? null
+                                        : Number(item.maxSpeedKmh),
+
+                                movingDurationSeconds:
+                                    item.movingDurationSeconds == null
+                                        ? null
+                                        : Number(item.movingDurationSeconds),
+
+                                sortAt: item.endedAt,
+                            };
+                        },
+                    ),
+                );
+
+                const nextItems = loadedItems.filter(
+                    (item) =>
+                        Boolean(item.recordingSessionId) &&
+                        Boolean(item.startAt) &&
+                        Boolean(item.endAt),
+                );
 
                 setRecordingSessions((currentItems) => {
                     if (reset) {
@@ -579,6 +631,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                         recordedAt: log.recordedAt,
                         memo: log.memo ?? null,
                         recordingSessionId: log.recordingSessionId ?? null,
+                        source: log.source ?? null,
                         recordingSessionName: log.recordingSessionName ?? null,
                         sharedOwners: Array.isArray(log.sharedOwners)
                             ? log.sharedOwners.filter(
@@ -1163,7 +1216,18 @@ export default function LocationLogScreen({ navigation }: Props) {
                                                 styles.sessionStatsText,
                                             ]}
                                         >
-                                            記録ポイント: {item.pointCount}件
+                                            <Text
+                                                style={[
+                                                    styles.memoText,
+                                                    styles.sessionStatsText,
+                                                ]}
+                                            >
+                                                記録ポイント: {item.pointCount}
+                                                件（F:{" "}
+                                                {item.foregroundPointCount}
+                                                件、B:{" "}
+                                                {item.backgroundPointCount}件）
+                                            </Text>
                                         </Text>
                                     </View>
 
@@ -1667,6 +1731,81 @@ function formatBatteryPercent(value: number | null | undefined) {
     const percent = value <= 1 ? value * 100 : value;
 
     return `${Math.max(0, Math.min(100, Math.round(percent)))}%`;
+}
+
+async function loadSessionPointCounts(
+    recordingSessionId: string,
+): Promise<SessionPointCounts> {
+    const locationLogModel = client.models.LocationLog as any;
+
+    const logs: {
+        source?: string | null;
+    }[] = [];
+    let nextToken: string | null = null;
+
+    do {
+        const listParams: {
+            filter: {
+                recordingSessionId: {
+                    eq: string;
+                };
+            };
+            limit: number;
+            nextToken?: string;
+        } = {
+            filter: {
+                recordingSessionId: {
+                    eq: recordingSessionId,
+                },
+            },
+            limit: 1000,
+        };
+
+        if (nextToken) {
+            listParams.nextToken = nextToken;
+        }
+
+        const result = (await locationLogModel.list(
+            listParams,
+        )) as LocationLogListResult;
+
+        if (result.errors) {
+            console.error("LocationLog point count errors:", result.errors, {
+                recordingSessionId,
+            });
+
+            /*
+             * 内訳の取得に失敗しても、
+             * アクティビティ一覧全体は表示する。
+             */
+            return {
+                pointCount: 0,
+                foregroundPointCount: 0,
+                backgroundPointCount: 0,
+            };
+        }
+
+        logs.push(...(result.data ?? []));
+        nextToken = result.nextToken ?? null;
+    } while (nextToken);
+
+    /*
+     * source未設定の過去データは、
+     * 地図画面と同様にforegroundとして扱う。
+     */
+    const foregroundPointCount = logs.filter(
+        (log) => log.source !== "background",
+    ).length;
+
+    const backgroundPointCount = logs.filter(
+        (log) => log.source === "background",
+    ).length;
+
+    return {
+        pointCount: foregroundPointCount + backgroundPointCount,
+        foregroundPointCount,
+        backgroundPointCount,
+    };
 }
 
 const styles = StyleSheet.create({

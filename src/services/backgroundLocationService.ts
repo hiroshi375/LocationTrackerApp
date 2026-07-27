@@ -17,6 +17,9 @@ export const BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED =
 export const BACKGROUND_LOCATION_DISCLOSURE_DECLINED =
     "BACKGROUND_LOCATION_DISCLOSURE_DECLINED";
 
+export const FOREGROUND_LAST_SAVED_LOCATION_KEY =
+    "location-tracker-foreground-last-saved-location";
+
 export class BackgroundLocationPermissionError extends Error {
     code = BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED;
 
@@ -641,28 +644,32 @@ export async function updateBackgroundRecordingExpiresAt(
     }
 }
 
-export async function updateBackgroundRecordingLastSavedLocation(lastSavedLocation: {
+export async function updateForegroundLastSavedLocation(lastSavedLocation: {
     latitude: number;
     longitude: number;
     recordedAt: number;
-}) {
-    const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);
-
-    if (!raw) {
-        return;
-    }
-
+}): Promise<void> {
     try {
-        const state = JSON.parse(raw);
+        const raw = await AsyncStorage.getItem(
+            FOREGROUND_LAST_SAVED_LOCATION_KEY,
+        );
+
+        if (raw) {
+            const current = JSON.parse(raw);
+
+            if (
+                typeof current?.recordedAt === "number" &&
+                current.recordedAt >= lastSavedLocation.recordedAt
+            ) {
+                return;
+            }
+        }
 
         await AsyncStorage.setItem(
-            BACKGROUND_RECORDING_STATE_KEY,
-            JSON.stringify({
-                ...state,
-                lastSavedLocation,
-            }),
+            FOREGROUND_LAST_SAVED_LOCATION_KEY,
+            JSON.stringify(lastSavedLocation),
         );
     } catch (error) {
-        console.error("Update background lastSavedLocation error:", error);
+        console.error("Update foreground lastSavedLocation error:", error);
     }
 }

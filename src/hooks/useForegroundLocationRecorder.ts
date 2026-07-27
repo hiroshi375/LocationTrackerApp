@@ -13,8 +13,8 @@ import {
     isForegroundLocationPermissionError,
     startBackgroundLocationRecording,
     stopBackgroundLocationRecording,
-    updateBackgroundRecordingLastSavedLocation,
     updateBackgroundRecordingLiveLocationId,
+    updateForegroundLastSavedLocation,
 } from "../services/backgroundLocationService";
 import {
     createLocationLogId,
@@ -433,9 +433,7 @@ export function useForegroundLocationRecorder({
 
                 lastSavedLocationRef.current = nextSavedLocation;
 
-                await updateBackgroundRecordingLastSavedLocation(
-                    nextSavedLocation,
-                );
+                await updateForegroundLastSavedLocation(nextSavedLocation);
 
                 console.log("Auto location saved:", {
                     latitude,

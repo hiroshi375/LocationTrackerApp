@@ -2292,7 +2292,7 @@ const styles = StyleSheet.create({
     },
 
     backgroundLogPointMarker: {
-        backgroundColor: "rgba(79, 85, 91, 0.95)",
+        backgroundColor: "rgba(209, 213, 219, 0.95)",
     },
 
     selectedPointMarker: {

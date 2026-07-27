@@ -17,6 +17,7 @@ import {
     isDuplicateLocationCreateError,
     isLocationLogAlreadySaved,
     releaseLocationSaveLock,
+    type LocationSaveLock,
 } from "../services/locationLogDeduplicationService";
 import { incrementRecordingContinuationPointCount } from "../services/recordingContinuationService";
 import {
@@ -80,6 +81,48 @@ type SaveBackgroundLocationResult = {
     errorMessage?: string;
 };
 
+type BackgroundLocationProcessingTimings = {
+    lockAcquireDurationMs: number;
+    preCreateLookupDurationMs: number;
+    locationLogCreateDurationMs: number;
+    stateUpdateDurationMs: number;
+    continuationUpdateDurationMs: number;
+
+    lockAcquireCount: number;
+    preCreateLookupCount: number;
+    locationLogCreateCount: number;
+    stateUpdateCount: number;
+    continuationUpdateCount: number;
+
+    lockAcquireMaxDurationMs: number;
+    preCreateLookupMaxDurationMs: number;
+    locationLogCreateMaxDurationMs: number;
+    stateUpdateMaxDurationMs: number;
+    continuationUpdateMaxDurationMs: number;
+};
+
+function createBackgroundLocationProcessingTimings(): BackgroundLocationProcessingTimings {
+    return {
+        lockAcquireDurationMs: 0,
+        preCreateLookupDurationMs: 0,
+        locationLogCreateDurationMs: 0,
+        stateUpdateDurationMs: 0,
+        continuationUpdateDurationMs: 0,
+
+        lockAcquireCount: 0,
+        preCreateLookupCount: 0,
+        locationLogCreateCount: 0,
+        stateUpdateCount: 0,
+        continuationUpdateCount: 0,
+
+        lockAcquireMaxDurationMs: 0,
+        preCreateLookupMaxDurationMs: 0,
+        locationLogCreateMaxDurationMs: 0,
+        stateUpdateMaxDurationMs: 0,
+        continuationUpdateMaxDurationMs: 0,
+    };
+}
+
 type BackgroundDebugLogInput = Parameters<
     typeof saveBackgroundLocationDebugLog
 >[0];
@@ -121,6 +164,8 @@ TaskManager.defineTask(
 
         let firstRecordedAt: string | null = null;
         let latestRecordedAt: string | null = null;
+
+        const processingTimings = createBackgroundLocationProcessingTimings();
 
         try {
             const state = await getBackgroundRecordingState();
@@ -247,6 +292,7 @@ TaskManager.defineTask(
                     location,
                     currentState,
                     taskFiredAt,
+                    processingTimings,
                 );
 
                 if (result.saved) {
@@ -311,6 +357,7 @@ TaskManager.defineTask(
                 nearDuplicateSkippedCount +
                 saveConditionSkippedCount;
 
+            const batchDebugLogStartedAt = new Date().toISOString();
             /*
              * LocationLog処理がすべて終わった後に、
              * バッチ全体のサマリを1件だけ保存する。
@@ -339,16 +386,78 @@ TaskManager.defineTask(
                         saveFailureCount > 0
                             ? "completedWithErrors"
                             : "completed",
+
+                    /*
+                     * バッチ結果ログの保存開始直前までの処理時間。
+                     * このBackgroundLocationDebugLog自体の保存時間は含まれない。
+                     */
                     processingDurationMs: Date.now() - taskStartedAtMs,
+
+                    batchDebugLogStartedAt,
+
                     firstRecordedAt,
                     latestRecordedAt,
                     intervalMs: state.intervalMs,
                     distanceMeters: state.distanceMeters,
                     isRecording: state.isRecording,
+
                     hasLiveShareOwners:
                         (state.liveShareOwnerValues?.length ?? 0) > 0,
+
                     liveShareOwnerCount:
                         state.liveShareOwnerValues?.length ?? 0,
+
+                    /*
+                     * 各処理のバッチ内合計時間
+                     */
+                    lockAcquireDurationMs:
+                        processingTimings.lockAcquireDurationMs,
+
+                    preCreateLookupDurationMs:
+                        processingTimings.preCreateLookupDurationMs,
+
+                    locationLogCreateDurationMs:
+                        processingTimings.locationLogCreateDurationMs,
+
+                    stateUpdateDurationMs:
+                        processingTimings.stateUpdateDurationMs,
+
+                    continuationUpdateDurationMs:
+                        processingTimings.continuationUpdateDurationMs,
+
+                    /*
+                     * 各処理の実行回数
+                     */
+                    lockAcquireCount: processingTimings.lockAcquireCount,
+
+                    preCreateLookupCount:
+                        processingTimings.preCreateLookupCount,
+
+                    locationLogCreateCount:
+                        processingTimings.locationLogCreateCount,
+
+                    stateUpdateCount: processingTimings.stateUpdateCount,
+
+                    continuationUpdateCount:
+                        processingTimings.continuationUpdateCount,
+
+                    /*
+                     * 各処理の1回あたり最大時間
+                     */
+                    lockAcquireMaxDurationMs:
+                        processingTimings.lockAcquireMaxDurationMs,
+
+                    preCreateLookupMaxDurationMs:
+                        processingTimings.preCreateLookupMaxDurationMs,
+
+                    locationLogCreateMaxDurationMs:
+                        processingTimings.locationLogCreateMaxDurationMs,
+
+                    stateUpdateMaxDurationMs:
+                        processingTimings.stateUpdateMaxDurationMs,
+
+                    continuationUpdateMaxDurationMs:
+                        processingTimings.continuationUpdateMaxDurationMs,
                 },
             });
         } catch (taskError) {
@@ -379,9 +488,56 @@ TaskManager.defineTask(
                 errorMessage: getErrorMessage(taskError),
                 details: {
                     batchStatus: "unexpectedError",
+
                     processingDurationMs: Date.now() - taskStartedAtMs,
+
+                    batchDebugLogStartedAt: new Date().toISOString(),
+
                     firstRecordedAt,
                     latestRecordedAt,
+
+                    lockAcquireDurationMs:
+                        processingTimings.lockAcquireDurationMs,
+
+                    preCreateLookupDurationMs:
+                        processingTimings.preCreateLookupDurationMs,
+
+                    locationLogCreateDurationMs:
+                        processingTimings.locationLogCreateDurationMs,
+
+                    stateUpdateDurationMs:
+                        processingTimings.stateUpdateDurationMs,
+
+                    continuationUpdateDurationMs:
+                        processingTimings.continuationUpdateDurationMs,
+
+                    lockAcquireCount: processingTimings.lockAcquireCount,
+
+                    preCreateLookupCount:
+                        processingTimings.preCreateLookupCount,
+
+                    locationLogCreateCount:
+                        processingTimings.locationLogCreateCount,
+
+                    stateUpdateCount: processingTimings.stateUpdateCount,
+
+                    continuationUpdateCount:
+                        processingTimings.continuationUpdateCount,
+
+                    lockAcquireMaxDurationMs:
+                        processingTimings.lockAcquireMaxDurationMs,
+
+                    preCreateLookupMaxDurationMs:
+                        processingTimings.preCreateLookupMaxDurationMs,
+
+                    locationLogCreateMaxDurationMs:
+                        processingTimings.locationLogCreateMaxDurationMs,
+
+                    stateUpdateMaxDurationMs:
+                        processingTimings.stateUpdateMaxDurationMs,
+
+                    continuationUpdateMaxDurationMs:
+                        processingTimings.continuationUpdateMaxDurationMs,
                 },
             });
 
@@ -483,6 +639,7 @@ async function saveBackgroundLocation(
     location: Location.LocationObject,
     state: BackgroundRecordingState,
     taskFiredAt: string,
+    processingTimings: BackgroundLocationProcessingTimings,
 ): Promise<SaveBackgroundLocationResult> {
     const latitude = location.coords.latitude;
     const longitude = location.coords.longitude;
@@ -524,7 +681,24 @@ async function saveBackgroundLocation(
         state.userId,
         recordingSessionId,
     );
-    const lock = await acquireLocationSaveLock(lockScopeKey);
+    const lockAcquireStartedAtMs = Date.now();
+
+    let lock: LocationSaveLock | null;
+
+    try {
+        lock = await acquireLocationSaveLock(lockScopeKey);
+    } finally {
+        const durationMs = Date.now() - lockAcquireStartedAtMs;
+
+        processingTimings.lockAcquireDurationMs += durationMs;
+
+        processingTimings.lockAcquireCount += 1;
+
+        processingTimings.lockAcquireMaxDurationMs = Math.max(
+            processingTimings.lockAcquireMaxDurationMs,
+            durationMs,
+        );
+    }
 
     if (!lock) {
         return {
@@ -649,7 +823,27 @@ async function saveBackgroundLocation(
          * 通常はここで既存レコードを検出する。
          * 同時実行でこの確認をすり抜けても、決定的idによりcreate時に防止される。
          */
-        if (await isLocationLogAlreadySaved(locationLogId)) {
+        const preCreateLookupStartedAtMs = Date.now();
+
+        let locationLogAlreadySaved: boolean;
+
+        try {
+            locationLogAlreadySaved =
+                await isLocationLogAlreadySaved(locationLogId);
+        } finally {
+            const durationMs = Date.now() - preCreateLookupStartedAtMs;
+
+            processingTimings.preCreateLookupDurationMs += durationMs;
+
+            processingTimings.preCreateLookupCount += 1;
+
+            processingTimings.preCreateLookupMaxDurationMs = Math.max(
+                processingTimings.preCreateLookupMaxDurationMs,
+                durationMs,
+            );
+        }
+
+        if (locationLogAlreadySaved) {
             return {
                 saved: false,
                 nextState: latestState,
@@ -664,19 +858,36 @@ async function saveBackgroundLocation(
                   )
                 : undefined;
 
-        const result = await client.models.LocationLog.create({
-            id: locationLogId,
-            userId: latestState.userId,
-            latitude,
-            longitude,
-            accuracy,
-            recordedAt,
-            memo: "自動記録",
-            recordingSessionId,
-            source: "background",
-            sharedOwners,
-            locationUniqueKey,
-        });
+        const locationLogCreateStartedAtMs = Date.now();
+
+        let result: any;
+
+        try {
+            result = await client.models.LocationLog.create({
+                id: locationLogId,
+                userId: latestState.userId,
+                latitude,
+                longitude,
+                accuracy,
+                recordedAt,
+                memo: "自動記録",
+                recordingSessionId,
+                source: "background",
+                sharedOwners,
+                locationUniqueKey,
+            });
+        } finally {
+            const durationMs = Date.now() - locationLogCreateStartedAtMs;
+
+            processingTimings.locationLogCreateDurationMs += durationMs;
+
+            processingTimings.locationLogCreateCount += 1;
+
+            processingTimings.locationLogCreateMaxDurationMs = Math.max(
+                processingTimings.locationLogCreateMaxDurationMs,
+                durationMs,
+            );
+        }
 
         if (result.errors) {
             if (
@@ -730,9 +941,39 @@ async function saveBackgroundLocation(
         /*
          * create成功からロック解放までの間に最終保存位置を更新する。
          */
-        await setBackgroundRecordingState(nextState);
+        const stateUpdateStartedAtMs = Date.now();
 
-        await incrementRecordingContinuationPointCount(recordingSessionId);
+        try {
+            await setBackgroundRecordingState(nextState);
+        } finally {
+            const durationMs = Date.now() - stateUpdateStartedAtMs;
+
+            processingTimings.stateUpdateDurationMs += durationMs;
+
+            processingTimings.stateUpdateCount += 1;
+
+            processingTimings.stateUpdateMaxDurationMs = Math.max(
+                processingTimings.stateUpdateMaxDurationMs,
+                durationMs,
+            );
+        }
+
+        const continuationUpdateStartedAtMs = Date.now();
+
+        try {
+            await incrementRecordingContinuationPointCount(recordingSessionId);
+        } finally {
+            const durationMs = Date.now() - continuationUpdateStartedAtMs;
+
+            processingTimings.continuationUpdateDurationMs += durationMs;
+
+            processingTimings.continuationUpdateCount += 1;
+
+            processingTimings.continuationUpdateMaxDurationMs = Math.max(
+                processingTimings.continuationUpdateMaxDurationMs,
+                durationMs,
+            );
+        }
 
         return {
             saved: true,

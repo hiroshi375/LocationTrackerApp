@@ -15,7 +15,6 @@ import {
     createLocationSaveLockScopeKey,
     createLocationUniqueKey,
     isDuplicateLocationCreateError,
-    isLocationLogAlreadySaved,
     releaseLocationSaveLock,
     type LocationSaveLock,
 } from "../services/locationLogDeduplicationService";
@@ -819,38 +818,6 @@ async function saveBackgroundLocation(
         });
         const locationLogId = createLocationLogId(locationUniqueKey);
 
-        /*
-         * 通常はここで既存レコードを検出する。
-         * 同時実行でこの確認をすり抜けても、決定的idによりcreate時に防止される。
-         */
-        const preCreateLookupStartedAtMs = Date.now();
-
-        let locationLogAlreadySaved: boolean;
-
-        try {
-            locationLogAlreadySaved =
-                await isLocationLogAlreadySaved(locationLogId);
-        } finally {
-            const durationMs = Date.now() - preCreateLookupStartedAtMs;
-
-            processingTimings.preCreateLookupDurationMs += durationMs;
-
-            processingTimings.preCreateLookupCount += 1;
-
-            processingTimings.preCreateLookupMaxDurationMs = Math.max(
-                processingTimings.preCreateLookupMaxDurationMs,
-                durationMs,
-            );
-        }
-
-        if (locationLogAlreadySaved) {
-            return {
-                saved: false,
-                nextState: latestState,
-                skippedReason: "exactDuplicate",
-            };
-        }
-
         const sharedOwners =
             latestState.liveShareOwnerValues.length > 0
                 ? Array.from(
@@ -890,10 +857,14 @@ async function saveBackgroundLocation(
         }
 
         if (result.errors) {
-            if (
-                isDuplicateLocationCreateError(result.errors) ||
-                (await isLocationLogAlreadySaved(locationLogId))
-            ) {
+            /*
+             * 決定的なlocationLogIdによる重複作成だけを、
+             * 正常な重複スキップとして扱う。
+             *
+             * 認証エラー、通信エラー、その他の作成エラーは
+             * 重複扱いにせず、従来どおり保存失敗として記録する。
+             */
+            if (isDuplicateLocationCreateError(result.errors)) {
                 return {
                     saved: false,
                     nextState: latestState,

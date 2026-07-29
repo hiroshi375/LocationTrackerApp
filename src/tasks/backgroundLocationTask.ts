@@ -1,6 +1,7 @@
 // src/tasks/backgroundLocationTask.ts
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { fetchAuthSession } from "aws-amplify/auth";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 
@@ -100,6 +101,14 @@ type BackgroundLocationProcessingTimings = {
     continuationUpdateMaxDurationMs: number;
 };
 
+type BackgroundAuthSessionResult = {
+    available: boolean;
+    refreshed: boolean;
+    hasIdToken: boolean;
+    hasAccessToken: boolean;
+    errorMessage?: string;
+};
+
 function createBackgroundLocationProcessingTimings(): BackgroundLocationProcessingTimings {
     return {
         lockAcquireDurationMs: 0,
@@ -143,6 +152,177 @@ async function safeSaveBackgroundLocationDebugLog(
     }
 }
 
+function isUnauthorizedError(error: unknown): boolean {
+    let text: string;
+
+    if (typeof error === "string") {
+        text = error;
+    } else {
+        try {
+            text = JSON.stringify(error);
+        } catch {
+            text = String(error);
+        }
+    }
+
+    const normalizedText = text.toLowerCase();
+
+    return (
+        normalizedText.includes("unauthorized") ||
+        normalizedText.includes("not authorized") ||
+        normalizedText.includes("unauthenticated") ||
+        normalizedText.includes("401")
+    );
+}
+
+async function prepareBackgroundAuthSession(): Promise<BackgroundAuthSessionResult> {
+    try {
+        /*
+         * まず通常取得を行う。
+         *
+         * 有効期限切れの場合、Amplifyがrefresh tokenを利用できれば
+         * セッション更新が行われる。
+         */
+        let session = await fetchAuthSession();
+
+        let hasIdToken = Boolean(session.tokens?.idToken);
+
+        let hasAccessToken = Boolean(session.tokens?.accessToken);
+
+        if (hasIdToken && hasAccessToken) {
+            return {
+                available: true,
+                refreshed: false,
+                hasIdToken,
+                hasAccessToken,
+            };
+        }
+
+        /*
+         * トークンが取得できなかった場合だけ、
+         * 1回限定で強制更新する。
+         */
+        session = await fetchAuthSession({
+            forceRefresh: true,
+        });
+
+        hasIdToken = Boolean(session.tokens?.idToken);
+
+        hasAccessToken = Boolean(session.tokens?.accessToken);
+
+        return {
+            available: hasIdToken && hasAccessToken,
+            refreshed: true,
+            hasIdToken,
+            hasAccessToken,
+        };
+    } catch (error) {
+        const errorMessage = getErrorMessage(error);
+
+        console.error("Prepare background auth session error:", error);
+
+        return {
+            available: false,
+            refreshed: false,
+            hasIdToken: false,
+            hasAccessToken: false,
+            errorMessage,
+        };
+    }
+}
+
+type LocationLogCreateInput = {
+    id: string;
+    userId: string;
+    latitude: number;
+    longitude: number;
+    accuracy: number | null;
+    recordedAt: string;
+    memo: string;
+    recordingSessionId: string;
+    source: string;
+    sharedOwners?: string[];
+    locationUniqueKey: string;
+};
+
+type LocationLogCreateWithAuthRetryResult = {
+    result: any;
+    authRefreshAttempted: boolean;
+    authRefreshSucceeded: boolean;
+};
+
+async function createLocationLogWithAuthRetry(
+    input: LocationLogCreateInput,
+): Promise<LocationLogCreateWithAuthRetryResult> {
+    let firstResult: any;
+
+    try {
+        firstResult = await client.models.LocationLog.create(input);
+    } catch (error) {
+        if (!isUnauthorizedError(error)) {
+            throw error;
+        }
+
+        try {
+            await fetchAuthSession({
+                forceRefresh: true,
+            });
+        } catch (refreshError) {
+            console.error(
+                "Background auth force refresh failed:",
+                refreshError,
+            );
+
+            throw refreshError;
+        }
+
+        const retryResult = await client.models.LocationLog.create(input);
+
+        return {
+            result: retryResult,
+            authRefreshAttempted: true,
+            authRefreshSucceeded: true,
+        };
+    }
+
+    if (!firstResult.errors || !isUnauthorizedError(firstResult.errors)) {
+        return {
+            result: firstResult,
+            authRefreshAttempted: false,
+            authRefreshSucceeded: false,
+        };
+    }
+
+    try {
+        await fetchAuthSession({
+            forceRefresh: true,
+        });
+    } catch (refreshError) {
+        console.error("Background auth force refresh failed:", refreshError);
+
+        /*
+         * 認証更新に失敗しても、
+         * 最初のUnauthorized結果を呼び出し元へ返す。
+         *
+         * 呼び出し元では従来どおり
+         * saveFailureとして記録される。
+         */
+        return {
+            result: firstResult,
+            authRefreshAttempted: true,
+            authRefreshSucceeded: false,
+        };
+    }
+
+    const retryResult = await client.models.LocationLog.create(input);
+
+    return {
+        result: retryResult,
+        authRefreshAttempted: true,
+        authRefreshSucceeded: true,
+    };
+}
+
 TaskManager.defineTask(
     BACKGROUND_LOCATION_TASK_NAME,
     async ({ data, error }) => {
@@ -165,6 +345,10 @@ TaskManager.defineTask(
         let latestRecordedAt: string | null = null;
 
         const processingTimings = createBackgroundLocationProcessingTimings();
+
+        let backgroundAuthSession: BackgroundAuthSessionResult | null = null;
+
+        let backgroundAuthSessionDurationMs = 0;
 
         try {
             const state = await getBackgroundRecordingState();
@@ -266,6 +450,27 @@ TaskManager.defineTask(
                 return;
             }
 
+            const backgroundAuthSessionStartedAtMs = Date.now();
+
+            backgroundAuthSession = await prepareBackgroundAuthSession();
+
+            backgroundAuthSessionDurationMs =
+                Date.now() - backgroundAuthSessionStartedAtMs;
+
+            if (!backgroundAuthSession.available) {
+                console.warn(
+                    "Background auth session is not available before LocationLog processing:",
+                    {
+                        recordingSessionId: state.recordingSessionId,
+                        durationMs: backgroundAuthSessionDurationMs,
+                        refreshed: backgroundAuthSession.refreshed,
+                        hasIdToken: backgroundAuthSession.hasIdToken,
+                        hasAccessToken: backgroundAuthSession.hasAccessToken,
+                        errorMessage:
+                            backgroundAuthSession.errorMessage ?? null,
+                    },
+                );
+            }
             /*
              * OSから渡された地点を時刻順に処理する。
              * 現在の保存方式を維持するため、並列処理にはしない。
@@ -391,6 +596,23 @@ TaskManager.defineTask(
                      * このBackgroundLocationDebugLog自体の保存時間は含まれない。
                      */
                     processingDurationMs: Date.now() - taskStartedAtMs,
+
+                    backgroundAuthSessionDurationMs,
+
+                    backgroundAuthSessionAvailable:
+                        backgroundAuthSession?.available ?? null,
+
+                    backgroundAuthSessionRefreshed:
+                        backgroundAuthSession?.refreshed ?? null,
+
+                    backgroundAuthSessionHasIdToken:
+                        backgroundAuthSession?.hasIdToken ?? null,
+
+                    backgroundAuthSessionHasAccessToken:
+                        backgroundAuthSession?.hasAccessToken ?? null,
+
+                    backgroundAuthSessionErrorMessage:
+                        backgroundAuthSession?.errorMessage ?? null,
 
                     batchDebugLogStartedAt,
 
@@ -818,6 +1040,12 @@ async function saveBackgroundLocation(
         });
         const locationLogId = createLocationLogId(locationUniqueKey);
 
+        /*
+         * create前のLocationLog.getは実行しない。
+         *
+         * foreground/backgroundで共通の決定的idを使い、
+         * 重複作成はLocationLog.createのエラーで判定する。
+         */
         const sharedOwners =
             latestState.liveShareOwnerValues.length > 0
                 ? Array.from(
@@ -829,8 +1057,11 @@ async function saveBackgroundLocation(
 
         let result: any;
 
+        let authRefreshAttempted = false;
+        let authRefreshSucceeded = false;
+
         try {
-            result = await client.models.LocationLog.create({
+            const createResult = await createLocationLogWithAuthRetry({
                 id: locationLogId,
                 userId: latestState.userId,
                 latitude,
@@ -843,6 +1074,12 @@ async function saveBackgroundLocation(
                 sharedOwners,
                 locationUniqueKey,
             });
+
+            result = createResult.result;
+
+            authRefreshAttempted = createResult.authRefreshAttempted;
+
+            authRefreshSucceeded = createResult.authRefreshSucceeded;
         } finally {
             const durationMs = Date.now() - locationLogCreateStartedAtMs;
 
@@ -890,6 +1127,9 @@ async function saveBackgroundLocation(
                     latitude,
                     longitude,
                     locationUniqueKey,
+                    authRefreshAttempted,
+                    authRefreshSucceeded,
+                    unauthorized: isUnauthorizedError(result.errors),
                 },
             });
 

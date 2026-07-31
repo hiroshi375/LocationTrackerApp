@@ -19,44 +19,47 @@ _.jks
 _.p8
 _.p12
 _.key
-\*.mobileprovision
+*.mobileprovision
 
 # Metro
 
-.metro-health-check\*
+.metro-health-check*
 
-# debug
+# debug logs
 
 npm-debug._
 yarn-debug._
-yarn-error.\*
+yarn-error.*
+*.log
 
 # macOS
 
 .DS_Store
-\*.pem
+*.pem
 
 # local env files
 
-.env\*.local
+.env
+.env.*
+!.env.example
 
-# typescript
+# TypeScript
 
-\*.tsbuildinfo
+*.tsbuildinfo
 
-app-example
+# generated/sample directories
+
+/app-example/
 
 # generated native folders
 
-/ios
-/android
+/android/
+/ios/
 
-# amplify
+# Amplify generated/local files
 
-.amplify
-#amplify_outputs*
+.amplify/
+
+# amplify_outputs.json
+
 amplifyconfiguration*
-
-# env
-
-.env

@@ -4,6 +4,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { fetchAuthSession } from "aws-amplify/auth";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
+import { ENABLE_LOCATION_SQLITE_MIRROR } from "../config/locationQueueFeatureFlags";
 
 import { client } from "../lib/client";
 import {
@@ -175,6 +176,35 @@ function isUnauthorizedError(error: unknown): boolean {
     );
 }
 
+const SQLITE_MIRROR_TIMEOUT_MS = 5_000;
+
+async function withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    operationName: string,
+): Promise<T> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<T>((_, reject) => {
+                timeoutId = setTimeout(() => {
+                    reject(
+                        new Error(
+                            `${operationName} timed out after ${timeoutMs}ms.`,
+                        ),
+                    );
+                }, timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (timeoutId !== null) {
+            clearTimeout(timeoutId);
+        }
+    }
+}
+
 async function prepareBackgroundAuthSession(): Promise<BackgroundAuthSessionResult> {
     try {
         /*
@@ -333,6 +363,15 @@ TaskManager.defineTask(
         let saveSuccessCount = 0;
         let saveFailureCount = 0;
 
+        let sqliteMirrorAttempted = false;
+        let sqliteMirrorSucceeded = false;
+        let sqliteMirrorDurationMs = 0;
+        let sqliteMirrorInsertedCount = 0;
+        let sqliteMirrorDuplicateCount = 0;
+        let sqliteMirrorInvalidCount = 0;
+        let sqliteMirrorQueueCount: number | null = null;
+        let sqliteMirrorErrorMessage: string | null = null;
+
         let invalidCoordinateSkippedCount = 0;
         let lowAccuracySkippedCount = 0;
         let abnormalSpeedSkippedCount = 0;
@@ -448,6 +487,69 @@ TaskManager.defineTask(
 
                 console.log("Background recording state not found.");
                 return;
+            }
+
+            /*
+             * 第1段階：
+             * OSから受信した全地点を、既存保存判定より前にSQLiteへ複製する。
+             *
+             * SQLite保存結果にかかわらず、
+             * この後の既存LocationLog直接保存処理は必ず継続する。
+             */
+            if (ENABLE_LOCATION_SQLITE_MIRROR) {
+                sqliteMirrorAttempted = true;
+
+                const sqliteMirrorStartedAtMs = Date.now();
+
+                try {
+                    const { enqueueLocationBatchForAudit } =
+                        await import("../services/locationLocationQueueService");
+
+                    const sqliteResult = await withTimeout(
+                        enqueueLocationBatchForAudit({
+                            userId: state.userId,
+                            recordingSessionId: state.recordingSessionId,
+                            source: "background",
+                            locations,
+                            receivedAt: taskFiredAt,
+                        }),
+                        SQLITE_MIRROR_TIMEOUT_MS,
+                        "Background SQLite location mirror",
+                    );
+
+                    sqliteMirrorSucceeded = true;
+                    sqliteMirrorInsertedCount = sqliteResult.insertedCount;
+                    sqliteMirrorDuplicateCount = sqliteResult.duplicateCount;
+                    sqliteMirrorInvalidCount = sqliteResult.invalidCount;
+                    sqliteMirrorQueueCount = sqliteResult.queueCount;
+
+                    console.log(
+                        "Background SQLite location mirror completed:",
+                        {
+                            recordingSessionId: state.recordingSessionId,
+                            receivedCount: sqliteResult.receivedCount,
+                            insertedCount: sqliteResult.insertedCount,
+                            duplicateCount: sqliteResult.duplicateCount,
+                            invalidCount: sqliteResult.invalidCount,
+                            queueCount: sqliteResult.queueCount,
+                        },
+                    );
+                } catch (sqliteError) {
+                    sqliteMirrorErrorMessage = getErrorMessage(sqliteError);
+
+                    /*
+                     * 最重要：
+                     * SQLite失敗時もreturnしない。
+                     * 既存のLocationLog.create経路をそのまま継続する。
+                     */
+                    console.error(
+                        "Background SQLite location mirror failed. Continue direct LocationLog save:",
+                        sqliteError,
+                    );
+                } finally {
+                    sqliteMirrorDurationMs =
+                        Date.now() - sqliteMirrorStartedAtMs;
+                }
             }
 
             const backgroundAuthSessionStartedAtMs = Date.now();
@@ -597,6 +699,16 @@ TaskManager.defineTask(
                      */
                     processingDurationMs: Date.now() - taskStartedAtMs,
 
+                    sqliteMirrorEnabled: ENABLE_LOCATION_SQLITE_MIRROR,
+                    sqliteMirrorAttempted,
+                    sqliteMirrorSucceeded,
+                    sqliteMirrorDurationMs,
+                    sqliteMirrorInsertedCount,
+                    sqliteMirrorDuplicateCount,
+                    sqliteMirrorInvalidCount,
+                    sqliteMirrorQueueCount,
+                    sqliteMirrorErrorMessage,
+
                     backgroundAuthSessionDurationMs,
 
                     backgroundAuthSessionAvailable:
@@ -711,6 +823,22 @@ TaskManager.defineTask(
                     batchStatus: "unexpectedError",
 
                     processingDurationMs: Date.now() - taskStartedAtMs,
+
+                    /*
+                     * SQLite複製保存の状態。
+                     *
+                     * SQLite処理中または処理後に予期しない例外が発生した場合でも、
+                     * どこまでSQLite保存できていたかを確認できるようにする。
+                     */
+                    sqliteMirrorEnabled: ENABLE_LOCATION_SQLITE_MIRROR,
+                    sqliteMirrorAttempted,
+                    sqliteMirrorSucceeded,
+                    sqliteMirrorDurationMs,
+                    sqliteMirrorInsertedCount,
+                    sqliteMirrorDuplicateCount,
+                    sqliteMirrorInvalidCount,
+                    sqliteMirrorQueueCount,
+                    sqliteMirrorErrorMessage,
 
                     batchDebugLogStartedAt: new Date().toISOString(),
 

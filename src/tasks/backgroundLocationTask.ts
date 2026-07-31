@@ -4,7 +4,11 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { fetchAuthSession } from "aws-amplify/auth";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
-import { ENABLE_LOCATION_SQLITE_MIRROR } from "../config/locationQueueFeatureFlags";
+import {
+    ENABLE_LOCATION_SQLITE_MIRROR,
+    ENABLE_LOCATION_SQLITE_QUEUE_UPLOAD,
+    KEEP_DIRECT_LOCATION_LOG_SAVE,
+} from "../config/locationQueueFeatureFlags";
 
 import { client } from "../lib/client";
 import {
@@ -371,6 +375,18 @@ TaskManager.defineTask(
         let sqliteMirrorInvalidCount = 0;
         let sqliteMirrorQueueCount: number | null = null;
         let sqliteMirrorErrorMessage: string | null = null;
+        let sqliteQueueUploadAttempted = false;
+        let sqliteQueueUploadSucceeded = false;
+        let sqliteQueueUploadDurationMs = 0;
+        let sqliteQueueUploadPendingCount = 0;
+        let sqliteQueueUploadProcessedCount = 0;
+        let sqliteQueueUploadSentCount = 0;
+        let sqliteQueueUploadDuplicateCount = 0;
+        let sqliteQueueUploadSkippedCount = 0;
+        let sqliteQueueUploadFailedCount = 0;
+        let sqliteQueueUploadTimedOutCount = 0;
+        let sqliteQueueUploadStopReason: string | null = null;
+        let sqliteQueueUploadErrorMessage: string | null = null;
 
         let invalidCoordinateSkippedCount = 0;
         let lowAccuracySkippedCount = 0;
@@ -512,6 +528,7 @@ TaskManager.defineTask(
                             source: "background",
                             locations,
                             receivedAt: taskFiredAt,
+                            sharedOwners: state.liveShareOwnerValues,
                         }),
                         SQLITE_MIRROR_TIMEOUT_MS,
                         "Background SQLite location mirror",
@@ -549,6 +566,64 @@ TaskManager.defineTask(
                 } finally {
                     sqliteMirrorDurationMs =
                         Date.now() - sqliteMirrorStartedAtMs;
+                }
+            }
+
+            if (ENABLE_LOCATION_SQLITE_QUEUE_UPLOAD) {
+                sqliteQueueUploadAttempted = true;
+
+                const queueUploadStartedAtMs = Date.now();
+
+                try {
+                    const { drainLocationQueueSafely } =
+                        await import("../services/locationQueueUploadService");
+
+                    const uploadResult = await drainLocationQueueSafely({
+                        userId: state.userId,
+                        recordingSessionId: state.recordingSessionId,
+                        intervalMs: state.intervalMs,
+                        distanceMeters: state.distanceMeters,
+                        fallbackSharedOwners: state.liveShareOwnerValues,
+                    });
+
+                    sqliteQueueUploadSucceeded =
+                        uploadResult.failedCount === 0 &&
+                        uploadResult.timedOutCount === 0 &&
+                        uploadResult.stopReason !== "alreadyRunning";
+
+                    sqliteQueueUploadPendingCount = uploadResult.pendingCount;
+
+                    sqliteQueueUploadProcessedCount =
+                        uploadResult.processedCount;
+
+                    sqliteQueueUploadSentCount = uploadResult.sentCount;
+
+                    sqliteQueueUploadDuplicateCount =
+                        uploadResult.duplicateCount;
+
+                    sqliteQueueUploadSkippedCount = uploadResult.skippedCount;
+
+                    sqliteQueueUploadFailedCount = uploadResult.failedCount;
+
+                    sqliteQueueUploadTimedOutCount = uploadResult.timedOutCount;
+
+                    sqliteQueueUploadStopReason = uploadResult.stopReason;
+
+                    console.log("SQLite location queue upload completed:", {
+                        recordingSessionId: state.recordingSessionId,
+                        ...uploadResult,
+                    });
+                } catch (queueUploadError) {
+                    sqliteQueueUploadErrorMessage =
+                        getErrorMessage(queueUploadError);
+
+                    console.error(
+                        "SQLite location queue upload failed. Continue direct LocationLog save:",
+                        queueUploadError,
+                    );
+                } finally {
+                    sqliteQueueUploadDurationMs =
+                        Date.now() - queueUploadStartedAtMs;
                 }
             }
 
@@ -593,65 +668,67 @@ TaskManager.defineTask(
 
             let currentState = state;
 
-            for (const location of sortedLocations) {
-                const result = await saveBackgroundLocation(
-                    location,
-                    currentState,
-                    taskFiredAt,
-                    processingTimings,
-                );
+            if (KEEP_DIRECT_LOCATION_LOG_SAVE) {
+                for (const location of sortedLocations) {
+                    const result = await saveBackgroundLocation(
+                        location,
+                        currentState,
+                        taskFiredAt,
+                        processingTimings,
+                    );
 
-                if (result.saved) {
-                    saveSuccessCount += 1;
-                }
-
-                if (result.errorMessage) {
-                    saveFailureCount += 1;
-                }
-
-                switch (result.skippedReason) {
-                    case "invalidCoordinate":
-                        invalidCoordinateSkippedCount += 1;
-                        break;
-
-                    case "lowAccuracy":
-                        lowAccuracySkippedCount += 1;
-                        break;
-
-                    case "abnormalSpeed":
-                        abnormalSpeedSkippedCount += 1;
-                        break;
-
-                    case "inProgressDuplicate":
-                        inProgressDuplicateSkippedCount += 1;
-                        break;
-
-                    case "exactDuplicate":
-                        exactDuplicateSkippedCount += 1;
-                        break;
-
-                    case "nearDuplicate":
-                        nearDuplicateSkippedCount += 1;
-                        break;
-
-                    case "saveConditionNotMet":
-                        saveConditionSkippedCount += 1;
-                        break;
-
-                    case undefined:
-                        break;
-
-                    default: {
-                        const exhaustiveCheck: never = result.skippedReason;
-
-                        console.warn(
-                            "Unknown background location skip reason:",
-                            exhaustiveCheck,
-                        );
+                    if (result.saved) {
+                        saveSuccessCount += 1;
                     }
-                }
 
-                currentState = result.nextState;
+                    if (result.errorMessage) {
+                        saveFailureCount += 1;
+                    }
+
+                    switch (result.skippedReason) {
+                        case "invalidCoordinate":
+                            invalidCoordinateSkippedCount += 1;
+                            break;
+
+                        case "lowAccuracy":
+                            lowAccuracySkippedCount += 1;
+                            break;
+
+                        case "abnormalSpeed":
+                            abnormalSpeedSkippedCount += 1;
+                            break;
+
+                        case "inProgressDuplicate":
+                            inProgressDuplicateSkippedCount += 1;
+                            break;
+
+                        case "exactDuplicate":
+                            exactDuplicateSkippedCount += 1;
+                            break;
+
+                        case "nearDuplicate":
+                            nearDuplicateSkippedCount += 1;
+                            break;
+
+                        case "saveConditionNotMet":
+                            saveConditionSkippedCount += 1;
+                            break;
+
+                        case undefined:
+                            break;
+
+                        default: {
+                            const exhaustiveCheck: never = result.skippedReason;
+
+                            console.warn(
+                                "Unknown background location skip reason:",
+                                exhaustiveCheck,
+                            );
+                        }
+                    }
+
+                    currentState = result.nextState;
+                }
             }
 
             const skippedCount =
@@ -708,6 +785,23 @@ TaskManager.defineTask(
                     sqliteMirrorInvalidCount,
                     sqliteMirrorQueueCount,
                     sqliteMirrorErrorMessage,
+                    sqliteQueueUploadEnabled:
+                        ENABLE_LOCATION_SQLITE_QUEUE_UPLOAD,
+
+                    keepDirectLocationLogSave: KEEP_DIRECT_LOCATION_LOG_SAVE,
+
+                    sqliteQueueUploadAttempted,
+                    sqliteQueueUploadSucceeded,
+                    sqliteQueueUploadDurationMs,
+                    sqliteQueueUploadPendingCount,
+                    sqliteQueueUploadProcessedCount,
+                    sqliteQueueUploadSentCount,
+                    sqliteQueueUploadDuplicateCount,
+                    sqliteQueueUploadSkippedCount,
+                    sqliteQueueUploadFailedCount,
+                    sqliteQueueUploadTimedOutCount,
+                    sqliteQueueUploadStopReason,
+                    sqliteQueueUploadErrorMessage,
 
                     backgroundAuthSessionDurationMs,
 
@@ -839,6 +933,23 @@ TaskManager.defineTask(
                     sqliteMirrorInvalidCount,
                     sqliteMirrorQueueCount,
                     sqliteMirrorErrorMessage,
+                    sqliteQueueUploadEnabled:
+                        ENABLE_LOCATION_SQLITE_QUEUE_UPLOAD,
+
+                    keepDirectLocationLogSave: KEEP_DIRECT_LOCATION_LOG_SAVE,
+
+                    sqliteQueueUploadAttempted,
+                    sqliteQueueUploadSucceeded,
+                    sqliteQueueUploadDurationMs,
+                    sqliteQueueUploadPendingCount,
+                    sqliteQueueUploadProcessedCount,
+                    sqliteQueueUploadSentCount,
+                    sqliteQueueUploadDuplicateCount,
+                    sqliteQueueUploadSkippedCount,
+                    sqliteQueueUploadFailedCount,
+                    sqliteQueueUploadTimedOutCount,
+                    sqliteQueueUploadStopReason,
+                    sqliteQueueUploadErrorMessage,
 
                     batchDebugLogStartedAt: new Date().toISOString(),
 

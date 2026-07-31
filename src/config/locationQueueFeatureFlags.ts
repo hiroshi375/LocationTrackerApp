@@ -1,15 +1,42 @@
 /**
- * 第1段階：
- * OSから受信した位置情報をSQLiteへ複製保存する。
- *
- * falseにするとSQLiteを一切使用せず、
- * 従来のLocationLog直接保存だけで動作する。
+ * OS受信地点をSQLiteへ複製保存する。
  */
 export const ENABLE_LOCATION_SQLITE_MIRROR = true;
 
 /**
- * 第1段階ではSQLiteからLocationLogを送信しない。
+ * SQLiteの未処理キューからLocationLogを送信する。
  *
- * 第2段階でのみtrueに変更する想定。
+ * 問題が発生した場合はfalseに戻す。
  */
-export const ENABLE_LOCATION_SQLITE_QUEUE_UPLOAD = false;
+export const ENABLE_LOCATION_SQLITE_QUEUE_UPLOAD = true;
+
+/**
+ * 第2段階では、既存の直接保存経路を残す。
+ *
+ * SQLite再送の検証が完了するまでは必ずtrueにする。
+ */
+export const KEEP_DIRECT_LOCATION_LOG_SAVE = true;
+
+/**
+ * 直接保存処理と競合しないよう、
+ * SQLiteへ入ってから一定時間以上経過した地点だけ再送対象にする。
+ */
+export const SQLITE_QUEUE_UPLOAD_MIN_AGE_MS = 60_000;
+
+/**
+ * 1回のbackground callbackで処理する最大件数。
+ */
+export const SQLITE_QUEUE_UPLOAD_MAX_ITEMS = 10;
+
+/**
+ * SQLiteキュー送信処理全体の最大時間。
+ */
+export const SQLITE_QUEUE_UPLOAD_TIME_BUDGET_MS = 4_000;
+
+/**
+ * LocationLog.create() 1回あたりの待機上限。
+ *
+ * Promise自体は完全にはキャンセルされないが、
+ * background処理全体が数分止まることを避ける。
+ */
+export const SQLITE_QUEUE_CREATE_TIMEOUT_MS = 3_000;

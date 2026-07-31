@@ -8,7 +8,7 @@ import {
 
 const DATABASE_NAME = "location-tracker.db";
 const TABLE_NAME = "location_location_queue";
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 
 type LocationQueueSource = "background" | "foreground";
 
@@ -18,6 +18,7 @@ type EnqueueLocationBatchInput = {
     source: LocationQueueSource;
     locations: Location.LocationObject[];
     receivedAt: string;
+    sharedOwners?: string[];
 };
 
 export type EnqueueLocationBatchResult = {
@@ -30,6 +31,32 @@ export type EnqueueLocationBatchResult = {
 
 type QueueCountRow = {
     count: number;
+};
+
+export type LocationQueueStatus = "pending" | "sent" | "duplicate" | "skipped";
+
+export type PendingLocationQueueRow = {
+    location_log_id: string;
+    location_unique_key: string;
+    user_id: string;
+    recording_session_id: string;
+    source: "background" | "foreground";
+
+    recorded_at: string;
+    recorded_at_ms: number;
+    received_at: string;
+
+    latitude: number;
+    longitude: number;
+    accuracy: number | null;
+    altitude: number | null;
+    altitude_accuracy: number | null;
+    heading: number | null;
+    speed: number | null;
+
+    queue_status: LocationQueueStatus;
+    send_attempt_count: number;
+    shared_owners_json: string | null;
 };
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -83,6 +110,11 @@ async function openAndInitializeDatabase(): Promise<SQLite.SQLiteDatabase> {
             last_send_attempt_at TEXT,
             last_send_error TEXT,
 
+            queue_status TEXT NOT NULL DEFAULT 'pending',
+            processed_at TEXT,
+            skip_reason TEXT,
+            shared_owners_json TEXT,
+
             created_at TEXT NOT NULL
         );
 
@@ -91,17 +123,57 @@ async function openAndInitializeDatabase(): Promise<SQLite.SQLiteDatabase> {
         ON ${TABLE_NAME}(location_unique_key);
 
         CREATE INDEX IF NOT EXISTS
-            idx_location_location_queue_unsent
-        ON ${TABLE_NAME}(is_sent, recorded_at_ms);
-
-        CREATE INDEX IF NOT EXISTS
             idx_location_location_queue_session
         ON ${TABLE_NAME}(recording_session_id, recorded_at_ms);
+    `);
+
+    /*
+     * 既に第1段階のDBが存在する端末では、
+     * CREATE TABLE IF NOT EXISTSだけでは新しい列が追加されない。
+     */
+    await ensureQueueColumn(
+        db,
+        "queue_status",
+        "TEXT NOT NULL DEFAULT 'pending'",
+    );
+    await ensureQueueColumn(db, "processed_at", "TEXT");
+    await ensureQueueColumn(db, "skip_reason", "TEXT");
+    await ensureQueueColumn(db, "shared_owners_json", "TEXT");
+
+    await db.execAsync(`
+        CREATE INDEX IF NOT EXISTS
+            idx_location_location_queue_pending
+        ON ${TABLE_NAME}(queue_status, recorded_at_ms);
 
         PRAGMA user_version = ${DATABASE_VERSION};
     `);
 
     return db;
+}
+
+type TableInfoRow = {
+    name: string;
+};
+
+async function ensureQueueColumn(
+    db: SQLite.SQLiteDatabase,
+    columnName: string,
+    definition: string,
+): Promise<void> {
+    const columns = await db.getAllAsync<TableInfoRow>(
+        `PRAGMA table_info(${TABLE_NAME})`,
+    );
+
+    if (columns.some((column) => column.name === columnName)) {
+        return;
+    }
+
+    /*
+     * columnNameとdefinitionはアプリ内の固定値だけを渡す。
+     */
+    await db.execAsync(
+        `ALTER TABLE ${TABLE_NAME} ADD COLUMN ${columnName} ${definition}`,
+    );
 }
 
 /**
@@ -114,6 +186,13 @@ export async function enqueueLocationBatchForAudit(
     input: EnqueueLocationBatchInput,
 ): Promise<EnqueueLocationBatchResult> {
     const db = await getDatabase();
+
+    const sharedOwnersJson =
+        input.sharedOwners && input.sharedOwners.length > 0
+            ? JSON.stringify(
+                  Array.from(new Set(input.sharedOwners.filter(Boolean))),
+              )
+            : null;
 
     let insertedCount = 0;
     let duplicateCount = 0;
@@ -155,44 +234,48 @@ export async function enqueueLocationBatchForAudit(
         try {
             const result = await db.runAsync(
                 `
-                INSERT OR IGNORE INTO ${TABLE_NAME} (
-                    location_log_id,
-                    location_unique_key,
-                    user_id,
-                    recording_session_id,
-                    source,
-                    recorded_at,
-                    recorded_at_ms,
-                    received_at,
-                    latitude,
-                    longitude,
-                    accuracy,
-                    altitude,
-                    altitude_accuracy,
-                    heading,
-                    speed,
-                    is_sent,
-                    created_at
-                ) VALUES (
-                    $locationLogId,
-                    $locationUniqueKey,
-                    $userId,
-                    $recordingSessionId,
-                    $source,
-                    $recordedAt,
-                    $recordedAtMs,
-                    $receivedAt,
-                    $latitude,
-                    $longitude,
-                    $accuracy,
-                    $altitude,
-                    $altitudeAccuracy,
-                    $heading,
-                    $speed,
-                    0,
-                    $createdAt
-                )
-                `,
+    INSERT OR IGNORE INTO ${TABLE_NAME} (
+        location_log_id,
+        location_unique_key,
+        user_id,
+        recording_session_id,
+        source,
+        recorded_at,
+        recorded_at_ms,
+        received_at,
+        latitude,
+        longitude,
+        accuracy,
+        altitude,
+        altitude_accuracy,
+        heading,
+        speed,
+        is_sent,
+        queue_status,
+        shared_owners_json,
+        created_at
+    ) VALUES (
+        $locationLogId,
+        $locationUniqueKey,
+        $userId,
+        $recordingSessionId,
+        $source,
+        $recordedAt,
+        $recordedAtMs,
+        $receivedAt,
+        $latitude,
+        $longitude,
+        $accuracy,
+        $altitude,
+        $altitudeAccuracy,
+        $heading,
+        $speed,
+        0,
+        'pending',
+        $sharedOwnersJson,
+        $createdAt
+    )
+    `,
                 {
                     $locationLogId: locationLogId,
                     $locationUniqueKey: locationUniqueKey,
@@ -213,6 +296,9 @@ export async function enqueueLocationBatchForAudit(
                     ),
                     $heading: normalizeNullableNumber(location.coords.heading),
                     $speed: normalizeNullableNumber(location.coords.speed),
+
+                    $sharedOwnersJson: sharedOwnersJson,
+
                     $createdAt: new Date().toISOString(),
                 },
             );
@@ -260,6 +346,211 @@ export async function enqueueLocationBatchForAudit(
         invalidCount,
         queueCount,
     };
+}
+
+export async function getPendingLocationQueueRows(input: {
+    userId: string;
+    recordingSessionId: string;
+    olderThanMs: number;
+    limit: number;
+}): Promise<PendingLocationQueueRow[]> {
+    const db = await getDatabase();
+
+    const safeLimit = Math.max(1, Math.min(Math.trunc(input.limit), 100));
+    const olderThanMs = Math.trunc(input.olderThanMs);
+
+    return db.getAllAsync<PendingLocationQueueRow>(
+        `
+        SELECT
+            location_log_id,
+            location_unique_key,
+            user_id,
+            recording_session_id,
+            source,
+            recorded_at,
+            recorded_at_ms,
+            received_at,
+            latitude,
+            longitude,
+            accuracy,
+            altitude,
+            altitude_accuracy,
+            heading,
+            speed,
+            queue_status,
+            send_attempt_count,
+            shared_owners_json
+        FROM ${TABLE_NAME}
+        WHERE
+            queue_status = 'pending'
+            AND user_id = $userId
+            AND recording_session_id = $recordingSessionId
+            AND recorded_at_ms <= $olderThanMs
+        ORDER BY recorded_at_ms ASC
+        LIMIT $limit
+        `,
+        {
+            $userId: input.userId,
+            $recordingSessionId: input.recordingSessionId,
+            $olderThanMs: olderThanMs,
+            $limit: safeLimit,
+        },
+    );
+}
+
+export async function getLatestAcceptedLocationQueueRow(input: {
+    userId: string;
+    recordingSessionId: string;
+}): Promise<PendingLocationQueueRow | null> {
+    const db = await getDatabase();
+
+    const row = await db.getFirstAsync<PendingLocationQueueRow>(
+        `
+        SELECT
+            location_log_id,
+            location_unique_key,
+            user_id,
+            recording_session_id,
+            source,
+            recorded_at,
+            recorded_at_ms,
+            received_at,
+            latitude,
+            longitude,
+            accuracy,
+            altitude,
+            altitude_accuracy,
+            heading,
+            speed,
+            queue_status,
+            send_attempt_count,
+            shared_owners_json
+        FROM ${TABLE_NAME}
+        WHERE
+            user_id = $userId
+            AND recording_session_id = $recordingSessionId
+            AND queue_status IN ('sent', 'duplicate')
+        ORDER BY recorded_at_ms DESC
+        LIMIT 1
+        `,
+        {
+            $userId: input.userId,
+            $recordingSessionId: input.recordingSessionId,
+        },
+    );
+
+    return row ?? null;
+}
+
+export async function markLocationQueueRowSent(
+    locationLogId: string,
+): Promise<void> {
+    const db = await getDatabase();
+    const now = new Date().toISOString();
+
+    await db.runAsync(
+        `
+        UPDATE ${TABLE_NAME}
+        SET
+            queue_status = 'sent',
+            is_sent = 1,
+            sent_at = $now,
+            processed_at = $now,
+            last_send_attempt_at = $now,
+            last_send_error = NULL,
+            skip_reason = NULL,
+            send_attempt_count = send_attempt_count + 1
+        WHERE
+            location_log_id = $locationLogId
+            AND queue_status = 'pending'
+        `,
+        {
+            $now: now,
+            $locationLogId: locationLogId,
+        },
+    );
+}
+
+export async function markLocationQueueRowDuplicate(
+    locationLogId: string,
+): Promise<void> {
+    const db = await getDatabase();
+    const now = new Date().toISOString();
+
+    await db.runAsync(
+        `
+        UPDATE ${TABLE_NAME}
+        SET
+            queue_status = 'duplicate',
+            is_sent = 0,
+            processed_at = $now,
+            last_send_attempt_at = $now,
+            last_send_error = NULL,
+            skip_reason = 'cloudDuplicate',
+            send_attempt_count = send_attempt_count + 1
+        WHERE
+            location_log_id = $locationLogId
+            AND queue_status = 'pending'
+        `,
+        {
+            $now: now,
+            $locationLogId: locationLogId,
+        },
+    );
+}
+
+export async function markLocationQueueRowSkipped(
+    locationLogId: string,
+    reason: string,
+): Promise<void> {
+    const db = await getDatabase();
+    const now = new Date().toISOString();
+
+    await db.runAsync(
+        `
+        UPDATE ${TABLE_NAME}
+        SET
+            queue_status = 'skipped',
+            is_sent = 0,
+            processed_at = $now,
+            skip_reason = $reason,
+            last_send_error = NULL
+        WHERE
+            location_log_id = $locationLogId
+            AND queue_status = 'pending'
+        `,
+        {
+            $now: now,
+            $reason: reason,
+            $locationLogId: locationLogId,
+        },
+    );
+}
+
+export async function markLocationQueueRowFailed(
+    locationLogId: string,
+    errorMessage: string,
+): Promise<void> {
+    const db = await getDatabase();
+    const now = new Date().toISOString();
+
+    await db.runAsync(
+        `
+        UPDATE ${TABLE_NAME}
+        SET
+            send_attempt_count = send_attempt_count + 1,
+            last_send_attempt_at = $now,
+            last_send_error = $errorMessage
+        WHERE
+            location_log_id = $locationLogId
+            AND queue_status = 'pending'
+        `,
+        {
+            $now: now,
+            $errorMessage: errorMessage.slice(0, 2000),
+            $locationLogId: locationLogId,
+        },
+    );
 }
 
 function normalizeNullableNumber(

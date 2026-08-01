@@ -30,6 +30,17 @@ import {
 } from "./locationLogDeduplicationService";
 import { incrementRecordingContinuationPointCount } from "./recordingContinuationService";
 
+/**
+ * 認証セッション強制更新の最大待機時間。
+ */
+const SQLITE_QUEUE_AUTH_REFRESH_TIMEOUT_MS = 8_000;
+
+/**
+ * 全体時間予算の残りが少ない場合でも、
+ * create開始後に最低限確保する時間。
+ */
+const SQLITE_QUEUE_MIN_CREATE_TIMEOUT_MS = 1_000;
+
 type DrainLocationQueueInput = {
     userId: string;
     recordingSessionId: string;
@@ -90,7 +101,7 @@ let drainQueuePromise: Promise<DrainLocationQueueResult> | null = null;
 export async function drainLocationQueueSafely(
     input: DrainLocationQueueInput,
 ): Promise<DrainLocationQueueResult> {
-    if (drainQueuePromise) {
+    if (drainQueuePromise !== null) {
         return {
             pendingCount: 0,
             processedCount: 0,
@@ -104,11 +115,21 @@ export async function drainLocationQueueSafely(
         };
     }
 
-    drainQueuePromise = drainLocationQueue(input).finally(() => {
-        drainQueuePromise = null;
-    });
+    const currentDrainPromise = drainLocationQueue(input);
 
-    return drainQueuePromise;
+    drainQueuePromise = currentDrainPromise;
+
+    try {
+        return await currentDrainPromise;
+    } finally {
+        /*
+         * 後から別のPromiseへ差し替わった場合に、
+         * 古い処理が新しいロックを消さないよう比較して解除する。
+         */
+        if (drainQueuePromise === currentDrainPromise) {
+            drainQueuePromise = null;
+        }
+    }
 }
 
 export async function drainLocationQueueRepeatedly(
@@ -288,8 +309,22 @@ async function drainLocationQueue(
         );
 
         try {
-            const createResult = await withTimeout(
-                createLocationLogWithAuthRetry({
+            const elapsedMs = Date.now() - startedAtMs;
+            const remainingBudgetMs =
+                SQLITE_QUEUE_UPLOAD_TIME_BUDGET_MS - elapsedMs;
+
+            if (remainingBudgetMs <= SQLITE_QUEUE_MIN_CREATE_TIMEOUT_MS) {
+                stopReason = "timeBudgetExceeded";
+                break;
+            }
+
+            const createTimeoutMs = Math.min(
+                SQLITE_QUEUE_CREATE_TIMEOUT_MS,
+                remainingBudgetMs,
+            );
+
+            const createResult = await createLocationLogWithAuthRetry(
+                {
                     id:
                         row.location_log_id ||
                         createLocationLogId(row.location_unique_key),
@@ -303,9 +338,8 @@ async function drainLocationQueue(
                     source: row.source,
                     sharedOwners,
                     locationUniqueKey: row.location_unique_key,
-                }),
-                SQLITE_QUEUE_CREATE_TIMEOUT_MS,
-                "SQLite queue LocationLog.create",
+                },
+                createTimeoutMs,
             );
 
             if (createResult.errors) {
@@ -367,11 +401,30 @@ async function drainLocationQueue(
 
             failedCount += 1;
 
-            if (isTimeoutError(error)) {
+            if (isQueueOperationTimeoutError(error)) {
                 timedOutCount += 1;
                 stopReason = "createTimedOut";
+
+                console.warn("SQLite queue LocationLog create timed out:", {
+                    locationLogId: row.location_log_id,
+                    locationUniqueKey: row.location_unique_key,
+                    recordingSessionId: row.recording_session_id,
+                    recordedAt: row.recorded_at,
+                    operationName: error.operationName,
+                    timeoutMs: error.timeoutMs,
+                    sendAttemptCount: row.send_attempt_count + 1,
+                });
             } else {
                 stopReason = "createFailed";
+
+                console.error("SQLite queue LocationLog create failed:", {
+                    locationLogId: row.location_log_id,
+                    locationUniqueKey: row.location_unique_key,
+                    recordingSessionId: row.recording_session_id,
+                    recordedAt: row.recorded_at,
+                    errorMessage,
+                    sendAttemptCount: row.send_attempt_count + 1,
+                });
             }
 
             /*
@@ -465,7 +518,7 @@ function evaluateQueueLocationSkipReason(
     return "saveConditionNotMet";
 }
 
-async function createLocationLogWithAuthRetry(input: {
+type QueueLocationLogCreateInput = {
     id: string;
     userId: string;
     latitude: number;
@@ -477,32 +530,68 @@ async function createLocationLogWithAuthRetry(input: {
     source: string;
     sharedOwners?: string[];
     locationUniqueKey: string;
-}): Promise<any> {
+};
+
+async function createLocationLogWithAuthRetry(
+    input: QueueLocationLogCreateInput,
+    createTimeoutMs: number,
+): Promise<any> {
     let firstResult: any;
 
     try {
-        firstResult = await client.models.LocationLog.create(input);
+        firstResult = await withTimeout(
+            client.models.LocationLog.create(input),
+            createTimeoutMs,
+            "SQLite queue LocationLog.create",
+        );
     } catch (error) {
+        /*
+         * タイムアウト時は認証更新を行わない。
+         *
+         * 通信要求が内部で遅れて成功する可能性はあるが、
+         * 決定的なLocationLog.idを使用しているため、
+         * 次回送信時は重複として安全に処理できる。
+         */
+        if (isQueueOperationTimeoutError(error)) {
+            throw error;
+        }
+
         if (!isUnauthorizedError(error)) {
             throw error;
         }
 
-        await fetchAuthSession({
-            forceRefresh: true,
-        });
+        await withTimeout(
+            fetchAuthSession({
+                forceRefresh: true,
+            }),
+            SQLITE_QUEUE_AUTH_REFRESH_TIMEOUT_MS,
+            "SQLite queue auth force refresh",
+        );
 
-        return client.models.LocationLog.create(input);
+        return withTimeout(
+            client.models.LocationLog.create(input),
+            createTimeoutMs,
+            "SQLite queue LocationLog.create retry",
+        );
     }
 
     if (!firstResult.errors || !isUnauthorizedError(firstResult.errors)) {
         return firstResult;
     }
 
-    await fetchAuthSession({
-        forceRefresh: true,
-    });
+    await withTimeout(
+        fetchAuthSession({
+            forceRefresh: true,
+        }),
+        SQLITE_QUEUE_AUTH_REFRESH_TIMEOUT_MS,
+        "SQLite queue auth force refresh",
+    );
 
-    return client.models.LocationLog.create(input);
+    return withTimeout(
+        client.models.LocationLog.create(input),
+        createTimeoutMs,
+        "SQLite queue LocationLog.create retry",
+    );
 }
 
 function resolveSharedOwners(
@@ -566,10 +655,23 @@ function stringifyError(error: unknown): string {
     }
 }
 
-function isTimeoutError(error: unknown): boolean {
-    return stringifyError(error).includes(
-        "SQLite queue LocationLog.create timed out",
-    );
+class QueueOperationTimeoutError extends Error {
+    readonly operationName: string;
+    readonly timeoutMs: number;
+
+    constructor(operationName: string, timeoutMs: number) {
+        super(`${operationName} timed out after ${timeoutMs}ms.`);
+
+        this.name = "QueueOperationTimeoutError";
+        this.operationName = operationName;
+        this.timeoutMs = timeoutMs;
+    }
+}
+
+function isQueueOperationTimeoutError(
+    error: unknown,
+): error is QueueOperationTimeoutError {
+    return error instanceof QueueOperationTimeoutError;
 }
 
 async function withTimeout<T>(
@@ -577,21 +679,20 @@ async function withTimeout<T>(
     timeoutMs: number,
     operationName: string,
 ): Promise<T> {
+    const safeTimeoutMs = Math.max(1, Math.trunc(timeoutMs));
+
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+            reject(
+                new QueueOperationTimeoutError(operationName, safeTimeoutMs),
+            );
+        }, safeTimeoutMs);
+    });
+
     try {
-        return await Promise.race([
-            promise,
-            new Promise<T>((_, reject) => {
-                timeoutId = setTimeout(() => {
-                    reject(
-                        new Error(
-                            `${operationName} timed out after ${timeoutMs}ms.`,
-                        ),
-                    );
-                }, timeoutMs);
-            }),
-        ]);
+        return await Promise.race([promise, timeoutPromise]);
     } finally {
         if (timeoutId !== null) {
             clearTimeout(timeoutId);

@@ -31,7 +31,7 @@ export const SQLITE_QUEUE_UPLOAD_MAX_ITEMS = 10;
 /**
  * SQLiteキュー送信処理全体の最大時間。
  */
-export const SQLITE_QUEUE_UPLOAD_TIME_BUDGET_MS = 4_000;
+export const SQLITE_QUEUE_UPLOAD_TIME_BUDGET_MS = 20_000;
 
 /**
  * LocationLog.create() 1回あたりの待機上限。
@@ -39,4 +39,4 @@ export const SQLITE_QUEUE_UPLOAD_TIME_BUDGET_MS = 4_000;
  * Promise自体は完全にはキャンセルされないが、
  * background処理全体が数分止まることを避ける。
  */
-export const SQLITE_QUEUE_CREATE_TIMEOUT_MS = 3_000;
+export const SQLITE_QUEUE_CREATE_TIMEOUT_MS = 10_000;

@@ -182,6 +182,38 @@ function isUnauthorizedError(error: unknown): boolean {
 
 const SQLITE_MIRROR_TIMEOUT_MS = 5_000;
 
+/**
+ * LocationLog.create() 1回あたりの最大待機時間。
+ *
+ * タイムアウトしても、開始済みの通信自体をキャンセルするわけではない。
+ * そのため、決定的IDによる重複防止を前提とする。
+ */
+const LOCATION_LOG_CREATE_TIMEOUT_MS = 10_000;
+
+/**
+ * 認証セッション強制更新の最大待機時間。
+ */
+const AUTH_SESSION_REFRESH_TIMEOUT_MS = 10_000;
+
+class OperationTimeoutError extends Error {
+    readonly operationName: string;
+    readonly timeoutMs: number;
+
+    constructor(operationName: string, timeoutMs: number) {
+        super(`${operationName} timed out after ${timeoutMs}ms.`);
+
+        this.name = "OperationTimeoutError";
+        this.operationName = operationName;
+        this.timeoutMs = timeoutMs;
+    }
+}
+
+function isOperationTimeoutError(
+    error: unknown,
+): error is OperationTimeoutError {
+    return error instanceof OperationTimeoutError;
+}
+
 async function withTimeout<T>(
     promise: Promise<T>,
     timeoutMs: number,
@@ -189,19 +221,14 @@ async function withTimeout<T>(
 ): Promise<T> {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+            reject(new OperationTimeoutError(operationName, timeoutMs));
+        }, timeoutMs);
+    });
+
     try {
-        return await Promise.race([
-            promise,
-            new Promise<T>((_, reject) => {
-                timeoutId = setTimeout(() => {
-                    reject(
-                        new Error(
-                            `${operationName} timed out after ${timeoutMs}ms.`,
-                        ),
-                    );
-                }, timeoutMs);
-            }),
-        ]);
+        return await Promise.race([promise, timeoutPromise]);
     } finally {
         if (timeoutId !== null) {
             clearTimeout(timeoutId);
@@ -291,16 +318,35 @@ async function createLocationLogWithAuthRetry(
     let firstResult: any;
 
     try {
-        firstResult = await client.models.LocationLog.create(input);
+        firstResult = await withTimeout(
+            client.models.LocationLog.create(input),
+            LOCATION_LOG_CREATE_TIMEOUT_MS,
+            "Background LocationLog.create",
+        );
     } catch (error) {
+        /*
+         * タイムアウトは認証エラーではないため、そのまま呼び出し元へ返す。
+         *
+         * タイムアウト後も内部通信が遅れて成功する可能性があるが、
+         * LocationLogでは決定的IDを使用しているため、
+         * 次回再送時は重複として安全に処理できる。
+         */
+        if (isOperationTimeoutError(error)) {
+            throw error;
+        }
+
         if (!isUnauthorizedError(error)) {
             throw error;
         }
 
         try {
-            await fetchAuthSession({
-                forceRefresh: true,
-            });
+            await withTimeout(
+                fetchAuthSession({
+                    forceRefresh: true,
+                }),
+                AUTH_SESSION_REFRESH_TIMEOUT_MS,
+                "Background auth force refresh",
+            );
         } catch (refreshError) {
             console.error(
                 "Background auth force refresh failed:",
@@ -310,7 +356,11 @@ async function createLocationLogWithAuthRetry(
             throw refreshError;
         }
 
-        const retryResult = await client.models.LocationLog.create(input);
+        const retryResult = await withTimeout(
+            client.models.LocationLog.create(input),
+            LOCATION_LOG_CREATE_TIMEOUT_MS,
+            "Background LocationLog.create retry",
+        );
 
         return {
             result: retryResult,
@@ -328,18 +378,19 @@ async function createLocationLogWithAuthRetry(
     }
 
     try {
-        await fetchAuthSession({
-            forceRefresh: true,
-        });
+        await withTimeout(
+            fetchAuthSession({
+                forceRefresh: true,
+            }),
+            AUTH_SESSION_REFRESH_TIMEOUT_MS,
+            "Background auth force refresh",
+        );
     } catch (refreshError) {
         console.error("Background auth force refresh failed:", refreshError);
 
         /*
-         * 認証更新に失敗しても、
-         * 最初のUnauthorized結果を呼び出し元へ返す。
-         *
-         * 呼び出し元では従来どおり
-         * saveFailureとして記録される。
+         * 最初のUnauthorized結果は取得できているため、
+         * 従来どおり呼び出し元へ返す。
          */
         return {
             result: firstResult,
@@ -348,7 +399,11 @@ async function createLocationLogWithAuthRetry(
         };
     }
 
-    const retryResult = await client.models.LocationLog.create(input);
+    const retryResult = await withTimeout(
+        client.models.LocationLog.create(input),
+        LOCATION_LOG_CREATE_TIMEOUT_MS,
+        "Background LocationLog.create retry",
+    );
 
     return {
         result: retryResult,
@@ -1518,6 +1573,50 @@ async function saveBackgroundLocation(
          * errorMessageを返さないため、バッチのsaveFailureCountには
          * 加算されず、exactDuplicateSkippedCountへ加算される。
          */
+        if (isOperationTimeoutError(error)) {
+            const errorMessage = getErrorMessage(error);
+
+            console.warn("Background LocationLog create timed out:", {
+                recordingSessionId,
+                recordedAt,
+                latitude,
+                longitude,
+                operationName: error.operationName,
+                timeoutMs: error.timeoutMs,
+            });
+
+            await safeSaveBackgroundLocationDebugLog({
+                userId: state.userId,
+                recordingSessionId,
+                eventName: "backgroundLocationLogCreateTimedOut",
+                taskFiredAt,
+                errorMessage,
+                details: {
+                    recordedAt,
+                    latitude,
+                    longitude,
+                    operationName: error.operationName,
+                    timeoutMs: error.timeoutMs,
+                    isRecording: state.isRecording,
+                    isLiveSharing: state.liveShareOwnerValues.length > 0,
+                    sharedOwnersCount: state.liveShareOwnerValues.length,
+                },
+            });
+
+            /*
+             * lastSavedLocationは更新しない。
+             *
+             * createが実際には遅れて成功する可能性があるため、
+             * 次回は同じ決定的IDで再送され、
+             * 成功済みなら重複として処理される。
+             */
+            return {
+                saved: false,
+                nextState: state,
+                errorMessage,
+            };
+        }
+
         if (isDuplicateLocationCreateError(error)) {
             console.log(
                 "Skip duplicate background LocationLog exception by deterministic id:",
@@ -1563,7 +1662,18 @@ async function saveBackgroundLocation(
             errorMessage,
         };
     } finally {
-        await releaseLocationSaveLock(lock);
+        try {
+            await withTimeout(
+                releaseLocationSaveLock(lock),
+                3_000,
+                "Background location save lock release",
+            );
+        } catch (releaseError) {
+            console.error(
+                "Release background location save lock failed:",
+                releaseError,
+            );
+        }
     }
 }
 

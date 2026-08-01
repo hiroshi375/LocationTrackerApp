@@ -554,6 +554,12 @@ export async function markLocationQueueRowSkipped(
     );
 }
 
+/**
+ * 送信失敗情報を記録する。
+ *
+ * queue_statusは変更しないため、
+ * 対象行はpendingのまま次回送信対象として残る。
+ */
 export async function markLocationQueueRowFailed(
     locationLogId: string,
     errorMessage: string,

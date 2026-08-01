@@ -27,7 +27,16 @@
       "permissions": [
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
       ],
       "predictiveBackGestureEnabled": false,
       "package": "com.hiroshisato.locationtrackerapp",
@@ -95,6 +104,12 @@
         "projectId": "f2148044-38b4-4da0-bc10-82d3b87398b3"
       },
       "googleGeocodingApiKey": "AIzaSyCMeVlKpNhO-NAEpy5wPnbWLp68Ueo9OO8"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/f2148044-38b4-4da0-bc10-82d3b87398b3"
     }
   }
 }

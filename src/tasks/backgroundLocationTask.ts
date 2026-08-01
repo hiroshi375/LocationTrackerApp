@@ -191,6 +191,11 @@ const SQLITE_MIRROR_TIMEOUT_MS = 5_000;
 const LOCATION_LOG_CREATE_TIMEOUT_MS = 10_000;
 
 /**
+ * バックグラウンド処理開始前の通常認証取得の最大待機時間。
+ */
+const AUTH_SESSION_FETCH_TIMEOUT_MS = 8_000;
+
+/**
  * 認証セッション強制更新の最大待機時間。
  */
 const AUTH_SESSION_REFRESH_TIMEOUT_MS = 10_000;
@@ -239,15 +244,18 @@ async function withTimeout<T>(
 async function prepareBackgroundAuthSession(): Promise<BackgroundAuthSessionResult> {
     try {
         /*
-         * まず通常取得を行う。
+         * 通常の認証セッション取得にもタイムアウトを設定する。
          *
-         * 有効期限切れの場合、Amplifyがrefresh tokenを利用できれば
-         * セッション更新が行われる。
+         * 有効期限切れの場合は、Amplifyがrefresh tokenを利用できれば
+         * 通常取得の中でセッション更新が行われる。
          */
-        let session = await fetchAuthSession();
+        let session = await withTimeout(
+            fetchAuthSession(),
+            AUTH_SESSION_FETCH_TIMEOUT_MS,
+            "Background auth session fetch",
+        );
 
         let hasIdToken = Boolean(session.tokens?.idToken);
-
         let hasAccessToken = Boolean(session.tokens?.accessToken);
 
         if (hasIdToken && hasAccessToken) {
@@ -263,12 +271,15 @@ async function prepareBackgroundAuthSession(): Promise<BackgroundAuthSessionResu
          * トークンが取得できなかった場合だけ、
          * 1回限定で強制更新する。
          */
-        session = await fetchAuthSession({
-            forceRefresh: true,
-        });
+        session = await withTimeout(
+            fetchAuthSession({
+                forceRefresh: true,
+            }),
+            AUTH_SESSION_REFRESH_TIMEOUT_MS,
+            "Background auth session force refresh",
+        );
 
         hasIdToken = Boolean(session.tokens?.idToken);
-
         hasAccessToken = Boolean(session.tokens?.accessToken);
 
         return {

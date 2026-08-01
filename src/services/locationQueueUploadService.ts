@@ -30,17 +30,6 @@ import {
 } from "./locationLogDeduplicationService";
 import { incrementRecordingContinuationPointCount } from "./recordingContinuationService";
 
-/**
- * 認証セッション強制更新の最大待機時間。
- */
-const SQLITE_QUEUE_AUTH_REFRESH_TIMEOUT_MS = 8_000;
-
-/**
- * 全体時間予算の残りが少ない場合でも、
- * create開始後に最低限確保する時間。
- */
-const SQLITE_QUEUE_MIN_CREATE_TIMEOUT_MS = 1_000;
-
 type DrainLocationQueueInput = {
     userId: string;
     recordingSessionId: string;
@@ -93,41 +82,118 @@ type AcceptedLocation = {
     recordedAt: number;
 };
 
-let drainQueuePromise: Promise<DrainLocationQueueResult> | null = null;
+/**
+ * この時間を超えて継続しているキュー処理は、
+ * Androidバックグラウンド停止などによる古い処理とみなす。
+ *
+ * 古いPromise自体はキャンセルできないため、
+ * 新しいキュー処理を許可するためのロック失効時間として使用する。
+ */
+const SQLITE_QUEUE_DRAIN_STALE_LOCK_MS = 30_000;
+
+/**
+ * 認証セッション強制更新の最大待機時間。
+ */
+const SQLITE_QUEUE_AUTH_REFRESH_TIMEOUT_MS = 8_000;
+
+/**
+ * 全体時間予算の残りがこの値以下なら、
+ * 新しいLocationLog.createを開始しない。
+ */
+const SQLITE_QUEUE_MIN_CREATE_TIMEOUT_MS = 1_000;
+
+class QueueOperationTimeoutError extends Error {
+    readonly operationName: string;
+    readonly timeoutMs: number;
+
+    constructor(operationName: string, timeoutMs: number) {
+        super(`${operationName} timed out after ${timeoutMs}ms.`);
+
+        this.name = "QueueOperationTimeoutError";
+        this.operationName = operationName;
+        this.timeoutMs = timeoutMs;
+    }
+}
+
+function isQueueOperationTimeoutError(
+    error: unknown,
+): error is QueueOperationTimeoutError {
+    return error instanceof QueueOperationTimeoutError;
+}
+
+type DrainQueueState = {
+    promise: Promise<DrainLocationQueueResult>;
+    startedAtMs: number;
+    executionId: number;
+};
+
+let drainQueueState: DrainQueueState | null = null;
+let nextDrainExecutionId = 1;
 
 /**
  * 同一JSプロセス内でSQLiteキュー送信を直列化する。
+ *
+ * ただし、一定時間を超えて残っているロックは、
+ * Androidバックグラウンド停止などによる古い処理とみなし失効させる。
  */
 export async function drainLocationQueueSafely(
     input: DrainLocationQueueInput,
 ): Promise<DrainLocationQueueResult> {
-    if (drainQueuePromise !== null) {
-        return {
-            pendingCount: 0,
-            processedCount: 0,
-            sentCount: 0,
-            duplicateCount: 0,
-            skippedCount: 0,
-            failedCount: 0,
-            timedOutCount: 0,
-            durationMs: 0,
-            stopReason: "alreadyRunning",
-        };
+    const nowMs = Date.now();
+
+    if (drainQueueState) {
+        const runningDurationMs = nowMs - drainQueueState.startedAtMs;
+
+        if (runningDurationMs < SQLITE_QUEUE_DRAIN_STALE_LOCK_MS) {
+            return {
+                pendingCount: 0,
+                processedCount: 0,
+                sentCount: 0,
+                duplicateCount: 0,
+                skippedCount: 0,
+                failedCount: 0,
+                timedOutCount: 0,
+                durationMs: 0,
+                stopReason: "alreadyRunning",
+            };
+        }
+
+        console.warn("Expire stale SQLite queue drain lock:", {
+            runningDurationMs,
+            staleLockMs: SQLITE_QUEUE_DRAIN_STALE_LOCK_MS,
+            executionId: drainQueueState.executionId,
+            recordingSessionId: input.recordingSessionId,
+        });
+
+        /*
+         * 古いPromise自体はキャンセルできない。
+         *
+         * ロックだけを失効させて、後続のキュー処理を許可する。
+         * 決定的LocationLog.idにより重複作成は防止する。
+         */
+        drainQueueState = null;
     }
 
-    const currentDrainPromise = drainLocationQueue(input);
+    const executionId = nextDrainExecutionId;
+    nextDrainExecutionId += 1;
 
-    drainQueuePromise = currentDrainPromise;
+    const currentPromise = drainLocationQueue(input);
+
+    drainQueueState = {
+        promise: currentPromise,
+        startedAtMs: nowMs,
+        executionId,
+    };
 
     try {
-        return await currentDrainPromise;
+        return await currentPromise;
     } finally {
         /*
-         * 後から別のPromiseへ差し替わった場合に、
-         * 古い処理が新しいロックを消さないよう比較して解除する。
+         * 古い処理が後から完了しても、
+         * 新しい処理のロックを解除しないようexecutionIdを比較する。
          */
-        if (drainQueuePromise === currentDrainPromise) {
-            drainQueuePromise = null;
+        if (drainQueueState?.executionId === executionId) {
+            drainQueueState = null;
         }
     }
 }
@@ -546,11 +612,8 @@ async function createLocationLogWithAuthRetry(
         );
     } catch (error) {
         /*
-         * タイムアウト時は認証更新を行わない。
-         *
-         * 通信要求が内部で遅れて成功する可能性はあるが、
-         * 決定的なLocationLog.idを使用しているため、
-         * 次回送信時は重複として安全に処理できる。
+         * createのタイムアウトは認証エラーではないため、
+         * 認証更新を実行せず、そのまま呼び出し元へ返す。
          */
         if (isQueueOperationTimeoutError(error)) {
             throw error;
@@ -653,25 +716,6 @@ function stringifyError(error: unknown): string {
     } catch {
         return String(error);
     }
-}
-
-class QueueOperationTimeoutError extends Error {
-    readonly operationName: string;
-    readonly timeoutMs: number;
-
-    constructor(operationName: string, timeoutMs: number) {
-        super(`${operationName} timed out after ${timeoutMs}ms.`);
-
-        this.name = "QueueOperationTimeoutError";
-        this.operationName = operationName;
-        this.timeoutMs = timeoutMs;
-    }
-}
-
-function isQueueOperationTimeoutError(
-    error: unknown,
-): error is QueueOperationTimeoutError {
-    return error instanceof QueueOperationTimeoutError;
 }
 
 async function withTimeout<T>(

@@ -387,6 +387,15 @@ TaskManager.defineTask(
         let sqliteQueueUploadTimedOutCount = 0;
         let sqliteQueueUploadStopReason: string | null = null;
         let sqliteQueueUploadErrorMessage: string | null = null;
+        let sqliteQueueTotalCount: number | null = null;
+        let sqliteQueuePendingCount: number | null = null;
+        let sqliteQueueSentStatusCount: number | null = null;
+        let sqliteQueueDuplicateStatusCount: number | null = null;
+        let sqliteQueueSkippedStatusCount: number | null = null;
+        let sqliteQueueFailedPendingCount: number | null = null;
+        let sqliteQueueOldestPendingRecordedAt: string | null = null;
+        let sqliteQueueLatestPendingRecordedAt: string | null = null;
+        let sqliteQueueSummaryErrorMessage: string | null = null;
 
         let invalidCoordinateSkippedCount = 0;
         let lowAccuracySkippedCount = 0;
@@ -627,6 +636,59 @@ TaskManager.defineTask(
                 }
             }
 
+            try {
+                const {
+                    getLocationQueueStatusSummary,
+                    cleanupProcessedLocationQueue,
+                } = await import("../services/locationLocationQueueService");
+
+                const queueSummary = await getLocationQueueStatusSummary({
+                    userId: state.userId,
+                    recordingSessionId: state.recordingSessionId,
+                });
+
+                sqliteQueueTotalCount = queueSummary.totalCount;
+
+                sqliteQueuePendingCount = queueSummary.pendingCount;
+
+                sqliteQueueSentStatusCount = queueSummary.sentCount;
+
+                sqliteQueueDuplicateStatusCount = queueSummary.duplicateCount;
+
+                sqliteQueueSkippedStatusCount = queueSummary.skippedCount;
+
+                sqliteQueueFailedPendingCount = queueSummary.failedPendingCount;
+
+                sqliteQueueOldestPendingRecordedAt =
+                    queueSummary.oldestPendingRecordedAt;
+
+                sqliteQueueLatestPendingRecordedAt =
+                    queueSummary.latestPendingRecordedAt;
+
+                /*
+                 * 毎callbackで実行しても、
+                 * 7日より古い処理済み行だけが対象。
+                 */
+                const cleanupResult = await cleanupProcessedLocationQueue({
+                    retentionDays: 7,
+                });
+
+                if (cleanupResult.deletedCount > 0) {
+                    console.log(
+                        "Background SQLite queue cleanup completed:",
+                        cleanupResult,
+                    );
+                }
+            } catch (queueSummaryError) {
+                sqliteQueueSummaryErrorMessage =
+                    getErrorMessage(queueSummaryError);
+
+                console.error(
+                    "Read background SQLite queue summary error:",
+                    queueSummaryError,
+                );
+            }
+
             const backgroundAuthSessionStartedAtMs = Date.now();
 
             backgroundAuthSession = await prepareBackgroundAuthSession();
@@ -802,6 +864,15 @@ TaskManager.defineTask(
                     sqliteQueueUploadTimedOutCount,
                     sqliteQueueUploadStopReason,
                     sqliteQueueUploadErrorMessage,
+                    sqliteQueueTotalCount,
+                    sqliteQueuePendingCount,
+                    sqliteQueueSentStatusCount,
+                    sqliteQueueDuplicateStatusCount,
+                    sqliteQueueSkippedStatusCount,
+                    sqliteQueueFailedPendingCount,
+                    sqliteQueueOldestPendingRecordedAt,
+                    sqliteQueueLatestPendingRecordedAt,
+                    sqliteQueueSummaryErrorMessage,
 
                     backgroundAuthSessionDurationMs,
 
@@ -950,6 +1021,16 @@ TaskManager.defineTask(
                     sqliteQueueUploadTimedOutCount,
                     sqliteQueueUploadStopReason,
                     sqliteQueueUploadErrorMessage,
+
+                    sqliteQueueTotalCount,
+                    sqliteQueuePendingCount,
+                    sqliteQueueSentStatusCount,
+                    sqliteQueueDuplicateStatusCount,
+                    sqliteQueueSkippedStatusCount,
+                    sqliteQueueFailedPendingCount,
+                    sqliteQueueOldestPendingRecordedAt,
+                    sqliteQueueLatestPendingRecordedAt,
+                    sqliteQueueSummaryErrorMessage,
 
                     batchDebugLogStartedAt: new Date().toISOString(),
 

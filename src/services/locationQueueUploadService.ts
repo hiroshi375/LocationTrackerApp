@@ -16,6 +16,7 @@ import {
 } from "../utils/locationDuplicate";
 import {
     getLatestAcceptedLocationQueueRow,
+    getLocationQueueStatusSummary,
     getPendingLocationQueueRows,
     markLocationQueueRowDuplicate,
     markLocationQueueRowFailed,
@@ -35,6 +36,7 @@ type DrainLocationQueueInput = {
     intervalMs: number;
     distanceMeters: number;
     fallbackSharedOwners?: string[];
+    forceIncludeRecent?: boolean;
 };
 
 export type DrainLocationQueueResult = {
@@ -53,6 +55,25 @@ export type DrainLocationQueueResult = {
         | "timeBudgetExceeded"
         | "createTimedOut"
         | "createFailed";
+};
+
+export type DrainLocationQueueRepeatedResult = {
+    iterationCount: number;
+    processedCount: number;
+    sentCount: number;
+    duplicateCount: number;
+    skippedCount: number;
+    failedCount: number;
+    timedOutCount: number;
+    remainingPendingCount: number | null;
+    stopReason:
+        | "empty"
+        | "completed"
+        | "alreadyRunning"
+        | "timeBudgetExceeded"
+        | "createTimedOut"
+        | "createFailed"
+        | "maxIterationsReached";
 };
 
 type AcceptedLocation = {
@@ -90,6 +111,105 @@ export async function drainLocationQueueSafely(
     return drainQueuePromise;
 }
 
+export async function drainLocationQueueRepeatedly(
+    input: DrainLocationQueueInput & {
+        maxIterations?: number;
+    },
+): Promise<DrainLocationQueueRepeatedResult> {
+    const maxIterations =
+        typeof input.maxIterations === "number" &&
+        Number.isFinite(input.maxIterations)
+            ? Math.max(1, Math.min(Math.trunc(input.maxIterations), 50))
+            : 20;
+
+    let iterationCount = 0;
+    let processedCount = 0;
+    let sentCount = 0;
+    let duplicateCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+    let timedOutCount = 0;
+
+    let stopReason: DrainLocationQueueRepeatedResult["stopReason"] =
+        "completed";
+
+    for (let index = 0; index < maxIterations; index += 1) {
+        const result = await drainLocationQueueSafely(input);
+
+        iterationCount += 1;
+        processedCount += result.processedCount;
+        sentCount += result.sentCount;
+        duplicateCount += result.duplicateCount;
+        skippedCount += result.skippedCount;
+        failedCount += result.failedCount;
+        timedOutCount += result.timedOutCount;
+
+        if (result.stopReason === "empty") {
+            stopReason = "empty";
+            break;
+        }
+
+        if (
+            result.stopReason === "alreadyRunning" ||
+            result.stopReason === "createFailed" ||
+            result.stopReason === "createTimedOut"
+        ) {
+            stopReason = result.stopReason;
+            break;
+        }
+
+        /*
+         * 取得件数が上限未満なら、
+         * その時点で対象キューをほぼ処理し終えたと判断する。
+         */
+        if (result.pendingCount < SQLITE_QUEUE_UPLOAD_MAX_ITEMS) {
+            stopReason = "completed";
+            break;
+        }
+
+        if (index === maxIterations - 1) {
+            stopReason = "maxIterationsReached";
+        }
+
+        /*
+         * UIスレッドを長時間連続占有しないよう、
+         * 次のキュー処理まで少し待つ。
+         */
+        await delay(100);
+    }
+
+    let remainingPendingCount: number | null = null;
+
+    try {
+        const summary = await getLocationQueueStatusSummary({
+            userId: input.userId,
+            recordingSessionId: input.recordingSessionId,
+        });
+
+        remainingPendingCount = summary.pendingCount;
+    } catch (error) {
+        console.error("Read remaining SQLite queue count error:", error);
+    }
+
+    return {
+        iterationCount,
+        processedCount,
+        sentCount,
+        duplicateCount,
+        skippedCount,
+        failedCount,
+        timedOutCount,
+        remainingPendingCount,
+        stopReason,
+    };
+}
+
+function delay(milliseconds: number): Promise<void> {
+    return new Promise((resolve) => {
+        setTimeout(resolve, milliseconds);
+    });
+}
+
 async function drainLocationQueue(
     input: DrainLocationQueueInput,
 ): Promise<DrainLocationQueueResult> {
@@ -107,7 +227,9 @@ async function drainLocationQueue(
     const pendingRows = await getPendingLocationQueueRows({
         userId: input.userId,
         recordingSessionId: input.recordingSessionId,
-        olderThanMs: Date.now() - SQLITE_QUEUE_UPLOAD_MIN_AGE_MS,
+        olderThanMs: input.forceIncludeRecent
+            ? Date.now()
+            : Date.now() - SQLITE_QUEUE_UPLOAD_MIN_AGE_MS,
         limit: SQLITE_QUEUE_UPLOAD_MAX_ITEMS,
     });
 

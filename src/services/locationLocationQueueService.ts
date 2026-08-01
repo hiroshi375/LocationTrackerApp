@@ -59,6 +59,33 @@ export type PendingLocationQueueRow = {
     shared_owners_json: string | null;
 };
 
+export type LocationQueueStatusSummary = {
+    totalCount: number;
+    pendingCount: number;
+    sentCount: number;
+    duplicateCount: number;
+    skippedCount: number;
+    failedPendingCount: number;
+    oldestPendingRecordedAt: string | null;
+    latestPendingRecordedAt: string | null;
+};
+
+type LocationQueueStatusSummaryRow = {
+    total_count: number;
+    pending_count: number;
+    sent_count: number;
+    duplicate_count: number;
+    skipped_count: number;
+    failed_pending_count: number;
+    oldest_pending_recorded_at: string | null;
+    latest_pending_recorded_at: string | null;
+};
+
+export type CleanupProcessedLocationQueueResult = {
+    deletedCount: number;
+    thresholdIso: string;
+};
+
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 /**
@@ -551,6 +578,150 @@ export async function markLocationQueueRowFailed(
             $locationLogId: locationLogId,
         },
     );
+}
+
+export async function getLocationQueueStatusSummary(input?: {
+    userId?: string;
+    recordingSessionId?: string;
+}): Promise<LocationQueueStatusSummary> {
+    const db = await getDatabase();
+
+    const conditions: string[] = [];
+    const params: Record<string, string> = {};
+
+    if (input?.userId) {
+        conditions.push("user_id = $userId");
+        params.$userId = input.userId;
+    }
+
+    if (input?.recordingSessionId) {
+        conditions.push("recording_session_id = $recordingSessionId");
+        params.$recordingSessionId = input.recordingSessionId;
+    }
+
+    const whereClause =
+        conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const row = await db.getFirstAsync<LocationQueueStatusSummaryRow>(
+        `
+            SELECT
+                COUNT(*) AS total_count,
+
+                SUM(
+                    CASE
+                        WHEN queue_status = 'pending'
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS pending_count,
+
+                SUM(
+                    CASE
+                        WHEN queue_status = 'sent'
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS sent_count,
+
+                SUM(
+                    CASE
+                        WHEN queue_status = 'duplicate'
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS duplicate_count,
+
+                SUM(
+                    CASE
+                        WHEN queue_status = 'skipped'
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS skipped_count,
+
+                SUM(
+                    CASE
+                        WHEN queue_status = 'pending'
+                             AND send_attempt_count > 0
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS failed_pending_count,
+
+                MIN(
+                    CASE
+                        WHEN queue_status = 'pending'
+                        THEN recorded_at
+                        ELSE NULL
+                    END
+                ) AS oldest_pending_recorded_at,
+
+                MAX(
+                    CASE
+                        WHEN queue_status = 'pending'
+                        THEN recorded_at
+                        ELSE NULL
+                    END
+                ) AS latest_pending_recorded_at
+
+            FROM ${TABLE_NAME}
+            ${whereClause}
+            `,
+        params,
+    );
+
+    return {
+        totalCount: normalizeCount(row?.total_count),
+        pendingCount: normalizeCount(row?.pending_count),
+        sentCount: normalizeCount(row?.sent_count),
+        duplicateCount: normalizeCount(row?.duplicate_count),
+        skippedCount: normalizeCount(row?.skipped_count),
+        failedPendingCount: normalizeCount(row?.failed_pending_count),
+        oldestPendingRecordedAt: row?.oldest_pending_recorded_at ?? null,
+        latestPendingRecordedAt: row?.latest_pending_recorded_at ?? null,
+    };
+}
+
+export async function cleanupProcessedLocationQueue(input?: {
+    retentionDays?: number;
+}): Promise<CleanupProcessedLocationQueueResult> {
+    const db = await getDatabase();
+
+    const retentionDays =
+        typeof input?.retentionDays === "number" &&
+        Number.isFinite(input.retentionDays)
+            ? Math.max(1, Math.min(Math.trunc(input.retentionDays), 90))
+            : 7;
+
+    const thresholdMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+
+    const thresholdIso = new Date(thresholdMs).toISOString();
+
+    const result = await db.runAsync(
+        `
+        DELETE FROM ${TABLE_NAME}
+        WHERE
+            queue_status IN (
+                'sent',
+                'duplicate',
+                'skipped'
+            )
+            AND processed_at IS NOT NULL
+            AND processed_at < $thresholdIso
+        `,
+        {
+            $thresholdIso: thresholdIso,
+        },
+    );
+
+    return {
+        deletedCount: result.changes,
+        thresholdIso,
+    };
+}
+
+function normalizeCount(value: number | null | undefined): number {
+    return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function normalizeNullableNumber(

@@ -71,7 +71,9 @@ export function useForegroundLocationRecorder({
     const lastSavedLocationRef = useRef<SavedLocation | null>(null);
     const savingLocationKeyRef = useRef<string | null>(null);
     const recordingSessionIdRef = useRef<string | null>(null);
+    const recordingUserIdRef = useRef<string | null>(null);
     const liveLocationIdRef = useRef<string | null>(null);
+    const foregroundQueueDrainRunningRef = useRef(false);
 
     const [continuationPrompt, setContinuationPrompt] =
         useState<RecordingContinuationState | null>(null);
@@ -475,6 +477,7 @@ export function useForegroundLocationRecorder({
 
         liveLocationIdRef.current = null;
         recordingSessionIdRef.current = null;
+        recordingUserIdRef.current = null;
         startLocationRef.current = null;
         lastSavedLocationRef.current = null;
 
@@ -532,6 +535,7 @@ export function useForegroundLocationRecorder({
             }
 
             recordingSessionIdRef.current = state.recordingSessionId;
+            recordingUserIdRef.current = state.userId;
             liveLocationIdRef.current = state.liveLocationId ?? null;
             lastSavedLocationRef.current = state.lastSavedLocation ?? null;
 
@@ -632,6 +636,7 @@ export function useForegroundLocationRecorder({
 
             try {
                 const currentUser = await getCurrentUser();
+                recordingUserIdRef.current = currentUser.userId;
 
                 await startBackgroundLocationRecording({
                     userId: currentUser.userId,
@@ -730,14 +735,207 @@ export function useForegroundLocationRecorder({
         resetRecordingState,
     ]);
 
+    const drainSQLiteQueueOnForeground =
+        useCallback(async (): Promise<void> => {
+            if (foregroundQueueDrainRunningRef.current) {
+                return;
+            }
+
+            const recordingSessionId = recordingSessionIdRef.current;
+
+            const userId = recordingUserIdRef.current;
+
+            if (!recordingSessionId || !userId) {
+                return;
+            }
+
+            foregroundQueueDrainRunningRef.current = true;
+
+            try {
+                const { drainLocationQueueRepeatedly } =
+                    await import("../services/locationQueueUploadService");
+
+                const result = await drainLocationQueueRepeatedly({
+                    userId,
+                    recordingSessionId,
+                    intervalMs,
+                    distanceMeters,
+                    fallbackSharedOwners: normalizedLiveShareOwnerValues,
+                    maxIterations: 20,
+                });
+
+                console.log("Foreground SQLite queue drain completed:", {
+                    recordingSessionId,
+                    ...result,
+                });
+
+                const {
+                    cleanupProcessedLocationQueue,
+                    getLocationQueueStatusSummary,
+                } = await import("../services/locationLocationQueueService");
+
+                const summary = await getLocationQueueStatusSummary({
+                    userId,
+                    recordingSessionId,
+                });
+
+                console.log("Foreground SQLite queue summary:", {
+                    recordingSessionId,
+                    ...summary,
+                });
+
+                const cleanupResult = await cleanupProcessedLocationQueue({
+                    retentionDays: 7,
+                });
+
+                if (cleanupResult.deletedCount > 0) {
+                    console.log(
+                        "Foreground SQLite queue cleanup completed:",
+                        cleanupResult,
+                    );
+                }
+            } catch (error) {
+                /*
+                 * foreground復帰時のキュー送信に失敗しても、
+                 * 自動記録自体は止めない。
+                 */
+                console.error("Foreground SQLite queue drain error:", error);
+            } finally {
+                foregroundQueueDrainRunningRef.current = false;
+            }
+        }, [intervalMs, distanceMeters, normalizedLiveShareOwnerValues]);
+
+    const drainSQLiteQueueBeforeStop = useCallback(
+        async (input: {
+            userId: string;
+            recordingSessionId: string;
+        }): Promise<void> => {
+            try {
+                const { drainLocationQueueRepeatedly } =
+                    await import("../services/locationQueueUploadService");
+
+                /*
+                 * 最終地点のSQLite投入直後でも処理できるよう、
+                 * 停止処理では通常より多く繰り返す。
+                 *
+                 * ただし現在のキュー取得には60秒条件があるため、
+                 * 後述のforceIncludeRecentが必要。
+                 */
+                const result = await drainLocationQueueRepeatedly({
+                    userId: input.userId,
+                    recordingSessionId: input.recordingSessionId,
+                    intervalMs,
+                    distanceMeters,
+                    fallbackSharedOwners: normalizedLiveShareOwnerValues,
+                    maxIterations: 30,
+                    forceIncludeRecent: true,
+                });
+
+                console.log("Stop SQLite queue drain completed:", {
+                    recordingSessionId: input.recordingSessionId,
+                    ...result,
+                });
+
+                const {
+                    cleanupProcessedLocationQueue,
+                    getLocationQueueStatusSummary,
+                } = await import("../services/locationLocationQueueService");
+
+                const summary = await getLocationQueueStatusSummary({
+                    userId: input.userId,
+                    recordingSessionId: input.recordingSessionId,
+                });
+
+                console.log("Stop SQLite queue summary:", {
+                    recordingSessionId: input.recordingSessionId,
+                    ...summary,
+                });
+
+                await cleanupProcessedLocationQueue({
+                    retentionDays: 7,
+                });
+            } catch (error) {
+                /*
+                 * キュー送信に失敗しても、
+                 * ユーザーの停止操作自体は完了させる。
+                 * pendingはSQLiteに残り、次回再送可能。
+                 */
+                console.error("Stop SQLite queue drain error:", error);
+            }
+        },
+        [intervalMs, distanceMeters, normalizedLiveShareOwnerValues],
+    );
+
     // 記録停止関数
     const stopRecording = useCallback(
         async (options: StopRecordingOptions = {}): Promise<string | null> => {
+            /*
+             * 後続処理でrefをnullにしても使用できるよう、
+             * 停止対象のセッション情報を最初に退避する。
+             */
             const finishedSessionId = recordingSessionIdRef.current;
 
+            const finishedUserId = recordingUserIdRef.current;
+
+            /*
+             * foregroundの位置監視を先に止める。
+             * これ以降、新しいforeground callbackを発生させない。
+             */
             subscriptionRef.current?.remove();
             subscriptionRef.current = null;
 
+            /*
+             * background側の記録状態を解除する前に、
+             * 最終地点を保存する。
+             */
+            if (!options.skipFinalLocationSave && finishedSessionId) {
+                try {
+                    const currentLocation =
+                        await Location.getCurrentPositionAsync({
+                            accuracy: Location.Accuracy.Balanced,
+                        });
+
+                    await updateLiveLocation(currentLocation);
+
+                    await saveLocationLog(currentLocation, true);
+                } catch (error) {
+                    /*
+                     * 最終地点の取得・保存に失敗しても、
+                     * 停止処理とSQLiteキュー送信は継続する。
+                     */
+                    console.error("Save stop location error:", error);
+                }
+            }
+
+            /*
+             * セッション情報を解除する前に、
+             * SQLiteのpendingキューを送信する。
+             *
+             * 停止時はforceIncludeRecent=trueで、
+             * 60秒未満の最新地点も送信対象にする。
+             */
+            if (finishedSessionId && finishedUserId) {
+                try {
+                    await drainSQLiteQueueBeforeStop({
+                        userId: finishedUserId,
+                        recordingSessionId: finishedSessionId,
+                    });
+                } catch (error) {
+                    /*
+                     * SQLite送信に失敗しても停止操作は完了させる。
+                     * 未送信行はpendingのままSQLiteへ残る。
+                     */
+                    console.error(
+                        "Drain SQLite queue before stop error:",
+                        error,
+                    );
+                }
+            }
+
+            /*
+             * 最終地点保存とSQLiteキュー送信が終わった後に、
+             * background側の記録状態を解除する。
+             */
             try {
                 await stopBackgroundLocationRecording();
             } catch (error) {
@@ -747,38 +945,37 @@ export function useForegroundLocationRecorder({
                 );
             }
 
-            if (
-                !options.skipFinalLocationSave &&
-                recordingSessionIdRef.current
-            ) {
-                try {
-                    const currentLocation =
-                        await Location.getCurrentPositionAsync({
-                            accuracy: Location.Accuracy.Balanced,
-                        });
-
-                    await updateLiveLocation(currentLocation);
-                    await saveLocationLog(currentLocation, true);
-                } catch (error) {
-                    console.error("Save stop location error:", error);
-                }
-            }
-
+            /*
+             * LiveLocationを記録停止状態へ更新する。
+             */
             if (liveLocationIdRef.current) {
                 try {
-                    await client.models.LiveLocation.update({
+                    const result = await client.models.LiveLocation.update({
                         id: liveLocationIdRef.current,
                         isActive: false,
                         isRecording: false,
+                        recordingSessionId: null,
                         updatedAt: new Date().toISOString(),
                     });
+
+                    if (result.errors) {
+                        console.error(
+                            "LiveLocation stop update errors:",
+                            result.errors,
+                        );
+                    }
                 } catch (error) {
                     console.error("LiveLocation stop update error:", error);
                 }
             }
 
+            /*
+             * すべての停止処理が終わった後にrefを解除する。
+             */
             liveLocationIdRef.current = null;
             recordingSessionIdRef.current = null;
+            recordingUserIdRef.current = null;
+
             setActiveRecordingSessionId(null);
             setRecordingStartedAt(null);
             setIsRecording(false);
@@ -789,7 +986,7 @@ export function useForegroundLocationRecorder({
 
             return finishedSessionId;
         },
-        [saveLocationLog, updateLiveLocation],
+        [saveLocationLog, updateLiveLocation, drainSQLiteQueueBeforeStop],
     );
 
     // ここに追加
@@ -881,21 +1078,28 @@ export function useForegroundLocationRecorder({
             "change",
             (nextState) => {
                 const previousState = appStateRef.current;
+
                 appStateRef.current = nextState;
 
                 const returnedToForeground =
                     previousState !== "active" && nextState === "active";
 
-                if (returnedToForeground) {
-                    void checkRecordingContinuation();
+                if (!returnedToForeground) {
+                    return;
                 }
+
+                if (!recordingSessionIdRef.current) {
+                    return;
+                }
+
+                void drainSQLiteQueueOnForeground();
             },
         );
 
         return () => {
             subscription.remove();
         };
-    }, [checkRecordingContinuation]);
+    }, [drainSQLiteQueueOnForeground]);
 
     // ここに追加
     useEffect(() => {

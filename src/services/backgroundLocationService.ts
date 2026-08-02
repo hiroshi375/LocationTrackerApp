@@ -67,10 +67,12 @@ type StartBackgroundLocationRecordingParams = {
         longitude: number;
         recordedAt: number;
     } | null;
+    liveLocationId?: string | null;
 };
 export type BackgroundRecordingState = {
     userId: string;
-    recordingSessionId: string;
+    isRecording: boolean;
+    recordingSessionId?: string | null;
     startedAt?: string | null;
     recordingExpiresAt?: string | null;
     liveShareOwnerValues?: string[];
@@ -84,6 +86,10 @@ export type BackgroundRecordingState = {
     distanceMeters: number;
 };
 
+type StopBackgroundLocationRecordingOptions = {
+    continueLiveSharing?: boolean;
+};
+
 export async function startBackgroundLocationRecording({
     userId,
     recordingSessionId,
@@ -92,6 +98,7 @@ export async function startBackgroundLocationRecording({
     intervalMs,
     distanceMeters,
     liveShareOwnerValues = [],
+    liveLocationId = null,
     lastSavedLocation = null,
 }: StartBackgroundLocationRecordingParams) {
     await saveBackgroundLocationDebugLog({
@@ -114,12 +121,14 @@ export async function startBackgroundLocationRecording({
         BACKGROUND_RECORDING_STATE_KEY,
         JSON.stringify({
             userId,
+            isRecording: true,
             recordingSessionId,
             startedAt,
             recordingExpiresAt,
             intervalMs,
             distanceMeters,
             liveShareOwnerValues: Array.from(new Set(liveShareOwnerValues)),
+            liveLocationId,
             lastSavedLocation,
         }),
     );
@@ -160,7 +169,7 @@ export async function startBackgroundLocationRecording({
                 foregroundService: {
                     notificationTitle: "位置情報を記録中",
                     notificationBody:
-                        "自動記録をバックグラウンドで継続しています",
+                        "自動記録または現在地共有をバックグラウンドで継続しています",
                     notificationColor: "#4b6f8f",
                 },
             },
@@ -189,17 +198,21 @@ export async function startBackgroundLocationRecording({
     });
 }
 
-export async function stopBackgroundLocationRecording() {
+export async function stopBackgroundLocationRecording(
+    options: StopBackgroundLocationRecordingOptions = {},
+) {
+    const continueLiveSharing = options.continueLiveSharing === true;
     const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);
 
     let recordingSessionId: string | null = null;
     let userId: string | null = null;
     let liveLocationId: string | null = null;
+    let currentState: BackgroundRecordingState | null = null;
 
     if (raw) {
         try {
             const state = JSON.parse(raw) as BackgroundRecordingState;
-
+            currentState = state;
             recordingSessionId = state.recordingSessionId ?? null;
             userId = state.userId ?? null;
             liveLocationId = state.liveLocationId ?? null;
@@ -215,35 +228,84 @@ export async function stopBackgroundLocationRecording() {
         userId,
         recordingSessionId,
         eventName: "stopBackgroundLocationRecordingCalled",
+        details: {
+            continueLiveSharing,
+        },
     });
 
     const hasStarted = await Location.hasStartedLocationUpdatesAsync(
         BACKGROUND_LOCATION_TASK_NAME,
     );
 
-    await saveBackgroundLocationDebugLog({
-        userId,
-        recordingSessionId,
-        eventName: "hasStartedLocationUpdatesCheckedBeforeStop",
-        hasStartedLocationUpdates: hasStarted,
-    });
+    if (continueLiveSharing && currentState) {
+        const nextState: BackgroundRecordingState = {
+            ...currentState,
+            isRecording: false,
+            recordingSessionId: null,
+            startedAt: null,
+            recordingExpiresAt: null,
+            lastSavedLocation: null,
+        };
 
-    if (hasStarted) {
-        try {
-            await Location.stopLocationUpdatesAsync(
-                BACKGROUND_LOCATION_TASK_NAME,
-            );
-        } catch (error) {
-            await saveBackgroundLocationDebugLog({
-                userId,
-                recordingSessionId,
-                eventName: "stopLocationUpdatesFailed",
-                errorMessage:
-                    error instanceof Error ? error.message : String(error),
-            });
+        await AsyncStorage.setItem(
+            BACKGROUND_RECORDING_STATE_KEY,
+            JSON.stringify(nextState),
+        );
 
-            throw error;
+        if (liveLocationId) {
+            try {
+                const result = await client.models.LiveLocation.update({
+                    id: liveLocationId,
+                    isActive: true,
+                    isRecording: false,
+                    recordingSessionId: null,
+                    updatedAt: new Date().toISOString(),
+                    sharedOwners: nextState.liveShareOwnerValues ?? [],
+                });
+
+                if (result.errors) {
+                    console.error(
+                        "Background LiveLocation continue sharing update errors:",
+                        result.errors,
+                    );
+                }
+            } catch (error) {
+                console.error(
+                    "Background LiveLocation continue sharing update error:",
+                    error,
+                );
+
+                await saveBackgroundLocationDebugLog({
+                    userId,
+                    recordingSessionId,
+                    eventName:
+                        "backgroundLiveLocationContinueSharingUpdateFailed",
+                    errorMessage:
+                        error instanceof Error ? error.message : String(error),
+                });
+            }
         }
+
+        await saveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "backgroundLiveSharingContinuedAfterRecordingStop",
+            hasStartedLocationUpdates: hasStarted,
+            details: {
+                liveLocationId,
+                sharedOwnerCount: nextState.liveShareOwnerValues?.length ?? 0,
+            },
+        });
+
+        return;
+    }
+
+    /*
+     * 共有を継続しない場合だけ、
+     * バックグラウンド位置更新を完全停止する。
+     */
+    if (hasStarted) {
+        await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME);
     }
 
     const hasStartedAfterStop = await Location.hasStartedLocationUpdatesAsync(
@@ -257,6 +319,7 @@ export async function stopBackgroundLocationRecording() {
         hasStartedLocationUpdates: hasStartedAfterStop,
         details: {
             hasStartedBeforeStop: hasStarted,
+            continueLiveSharing: false,
         },
     });
 
@@ -265,6 +328,8 @@ export async function stopBackgroundLocationRecording() {
             await client.models.LiveLocation.update({
                 id: liveLocationId,
                 isActive: false,
+                isRecording: false,
+                recordingSessionId: null,
                 updatedAt: new Date().toISOString(),
             });
         } catch (error) {

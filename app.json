@@ -1,109 +1,115 @@
 {
-    "expo": {
-        "name": "LocationTrackerApp",
-        "slug": "LocationTrackerApp",
-        "version": "1.0.0",
-        "orientation": "portrait",
-        "icon": "./assets/images/icon.png",
-        "scheme": "locationtrackerapp",
-        "userInterfaceStyle": "automatic",
-        "ios": {
-            "supportsTablet": true,
-            "infoPlist": {
-                "NSLocationWhenInUseUsageDescription": "現在地を記録するために位置情報を使用します。"
-            },
-            "config": {
-                "googleMapsApiKey": "AIzaSyDLpFSg18FfTJ5NUDgHFHI2jxRS0X8xQQk"
-            },
-            "bundleIdentifier": "com.hiroshisato.locationtrackerapp"
-        },
-        "android": {
-            "adaptiveIcon": {
-                "backgroundColor": "#E6F4FE",
-                "foregroundImage": "./assets/images/adaptive-icon.png",
-                "backgroundImage": "./assets/images/android-icon-background.png",
-                "monochromeImage": "./assets/images/android-icon-monochrome.png"
-            },
-            "permissions": [
-                "android.permission.ACCESS_FINE_LOCATION",
-                "android.permission.ACCESS_COARSE_LOCATION",
-                "android.permission.ACCESS_BACKGROUND_LOCATION",
-                "android.permission.FOREGROUND_SERVICE",
-                "android.permission.FOREGROUND_SERVICE_LOCATION",
-                "android.permission.RECORD_AUDIO"
-            ],
-            "predictiveBackGestureEnabled": false,
-            "package": "com.hiroshisato.locationtrackerapp",
-            "config": {
-                "googleMaps": {
-                    "apiKey": "AIzaSyAc-wHT7TQubDTcGxOnmlJ527xLIR9a3nw"
-                }
-            },
-            "softwareKeyboardLayoutMode": "resize"
-        },
-        "web": {
-            "output": "static",
-            "favicon": "./assets/images/favicon.png"
-        },
-        "plugins": [
-            [
-                "expo-image-picker",
-                {
-                    "photosPermission": "プロフィールアイコンを選択するために写真へのアクセスを使用します。",
-                    "colors": {
-                        "cropToolbarColor": "#ffffff",
-                        "cropToolbarIconColor": "#2f4f66",
-                        "cropToolbarActionTextColor": "#2f4f66",
-                        "cropBackButtonIconColor": "#2f4f66",
-                        "cropBackgroundColor": "#ffffff"
-                    },
-                    "dark": {
-                        "colors": {
-                            "cropToolbarColor": "#ffffff",
-                            "cropToolbarIconColor": "#2f4f66",
-                            "cropToolbarActionTextColor": "#2f4f66",
-                            "cropBackButtonIconColor": "#2f4f66",
-                            "cropBackgroundColor": "#ffffff"
-                        }
-                    }
-                }
-            ],
-            [
-                "expo-splash-screen",
-                {
-                    "image": "./assets/images/splash-icon.png",
-                    "imageWidth": 200,
-                    "resizeMode": "contain",
-                    "backgroundColor": "#ffffff",
-                    "dark": {
-                        "backgroundColor": "#000000"
-                    }
-                }
-            ],
-            [
-                "expo-location",
-                {
-                    "isIosBackgroundLocationEnabled": true,
-                    "isAndroidBackgroundLocationEnabled": true,
-                    "isAndroidForegroundServiceEnabled": true,
-                    "locationWhenInUsePermission": "現在地を記録するために位置情報を使用します。",
-                    "locationAlwaysAndWhenInUsePermission": "アプリを閉じている間も自動記録を継続するために位置情報を使用します。"
-                }
-            ],
-            "expo-asset",
-            "expo-sqlite"
-        ],
-        "extra": {
-            "eas": {
-                "projectId": "f2148044-38b4-4da0-bc10-82d3b87398b3"
-            },
-            "googleGeocodingApiKey": "AIzaSyCMeVlKpNhO-NAEpy5wPnbWLp68Ueo9OO8"
-        },
-        "runtimeVersion": {
-            "policy": "appVersion"
-        },
-        "updates": {
-            "url": "https://u.expo.dev/f2148044-38b4-4da0-bc10-82d3b87398b3"
+  "expo": {
+    "name": "LocationTrackerApp",
+    "slug": "LocationTrackerApp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "locationtrackerapp",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "現在地を記録するために位置情報を使用します。"
+      },
+      "config": {
+        "googleMapsApiKey": "AIzaSyDLpFSg18FfTJ5NUDgHFHI2jxRS0X8xQQk"
+      },
+      "bundleIdentifier": "com.hiroshisato.locationtrackerapp"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
+      ],
+      "predictiveBackGestureEnabled": false,
+      "package": "com.hiroshisato.locationtrackerapp",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyAc-wHT7TQubDTcGxOnmlJ527xLIR9a3nw"
         }
+      },
+      "softwareKeyboardLayoutMode": "resize"
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "プロフィールアイコンを選択するために写真へのアクセスを使用します。",
+          "colors": {
+            "cropToolbarColor": "#ffffff",
+            "cropToolbarIconColor": "#2f4f66",
+            "cropToolbarActionTextColor": "#2f4f66",
+            "cropBackButtonIconColor": "#2f4f66",
+            "cropBackgroundColor": "#ffffff"
+          },
+          "dark": {
+            "colors": {
+              "cropToolbarColor": "#ffffff",
+              "cropToolbarIconColor": "#2f4f66",
+              "cropToolbarActionTextColor": "#2f4f66",
+              "cropBackButtonIconColor": "#2f4f66",
+              "cropBackgroundColor": "#ffffff"
+            }
+          }
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff",
+          "dark": {
+            "backgroundColor": "#000000"
+          }
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true,
+          "locationWhenInUsePermission": "現在地を記録するために位置情報を使用します。",
+          "locationAlwaysAndWhenInUsePermission": "アプリを閉じている間も自動記録を継続するために位置情報を使用します。"
+        }
+      ],
+      "expo-asset",
+      "expo-sqlite"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "f2148044-38b4-4da0-bc10-82d3b87398b3"
+      },
+      "googleGeocodingApiKey": "AIzaSyCMeVlKpNhO-NAEpy5wPnbWLp68Ueo9OO8"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/f2148044-38b4-4da0-bc10-82d3b87398b3"
     }
+  }
 }

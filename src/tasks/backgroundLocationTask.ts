@@ -40,18 +40,6 @@ export const BACKGROUND_LOCATION_TASK_NAME =
 export const BACKGROUND_RECORDING_STATE_KEY =
     "location-tracker-background-recording-state";
 
-export const BACKGROUND_LOCATION_TASK_HEARTBEAT_KEY =
-    "location-tracker-background-location-task-heartbeat";
-
-export type BackgroundLocationTaskHeartbeat = {
-    firedAt: number;
-    taskFiredAt: string;
-    locationsLength: number;
-    recordingSessionId: string | null;
-    isRecording: boolean;
-    userId: string | null;
-};
-
 /*
  * BackgroundLocationDebugLog の保存を一括で制御する。
  *
@@ -491,66 +479,6 @@ TaskManager.defineTask(
     async ({ data, error }) => {
         const taskStartedAtMs = Date.now();
         const taskFiredAt = new Date(taskStartedAtMs).toISOString();
-
-        /*
-         * タスクコールバックが実際に呼ばれたことを記録する。
-         * 登録済みかどうかではなく、実動状態を判断するために使用する。
-         */
-        try {
-            const rawState = await AsyncStorage.getItem(
-                BACKGROUND_RECORDING_STATE_KEY,
-            );
-
-            let heartbeatUserId: string | null = null;
-            let heartbeatRecordingSessionId: string | null = null;
-            let heartbeatIsRecording = false;
-
-            if (rawState) {
-                try {
-                    const heartbeatState = JSON.parse(
-                        rawState,
-                    ) as BackgroundRecordingState;
-
-                    heartbeatUserId = heartbeatState.userId ?? null;
-                    heartbeatRecordingSessionId =
-                        heartbeatState.recordingSessionId ?? null;
-                    heartbeatIsRecording = heartbeatState.isRecording === true;
-                } catch (parseError) {
-                    console.error(
-                        "Parse background state for heartbeat error:",
-                        parseError,
-                    );
-                }
-            }
-
-            const heartbeatLocations = (
-                data as {
-                    locations?: Location.LocationObject[];
-                }
-            )?.locations;
-
-            const heartbeat: BackgroundLocationTaskHeartbeat = {
-                firedAt: taskStartedAtMs,
-                taskFiredAt,
-                locationsLength: heartbeatLocations?.length ?? 0,
-                recordingSessionId: heartbeatRecordingSessionId,
-                isRecording: heartbeatIsRecording,
-                userId: heartbeatUserId,
-            };
-
-            await AsyncStorage.setItem(
-                BACKGROUND_LOCATION_TASK_HEARTBEAT_KEY,
-                JSON.stringify(heartbeat),
-            );
-        } catch (heartbeatError) {
-            /*
-             * heartbeat保存失敗でLocationLog処理を止めない。
-             */
-            console.error(
-                "Save background task heartbeat error:",
-                heartbeatError,
-            );
-        }
 
         let locationsLength = 0;
         let saveSuccessCount = 0;

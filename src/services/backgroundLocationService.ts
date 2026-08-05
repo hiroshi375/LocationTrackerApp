@@ -2,15 +2,12 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
-import * as TaskManager from "expo-task-manager";
 import { Alert, Linking, Platform } from "react-native";
 import { client } from "../lib/client";
 
 import {
-    BACKGROUND_LOCATION_TASK_HEARTBEAT_KEY,
     BACKGROUND_LOCATION_TASK_NAME,
     BACKGROUND_RECORDING_STATE_KEY,
-    type BackgroundLocationTaskHeartbeat,
 } from "../tasks/backgroundLocationTask";
 import { saveBackgroundLocationDebugLog } from "./backgroundLocationDebugLogService";
 
@@ -93,19 +90,6 @@ type StopBackgroundLocationRecordingOptions = {
     continueLiveSharing?: boolean;
 };
 
-export type BackgroundLocationTaskHealth = {
-    isDefined: boolean;
-    isRegistered: boolean;
-    hasStartedLocationUpdates: boolean;
-
-    heartbeat: BackgroundLocationTaskHeartbeat | null;
-    heartbeatAgeMs: number | null;
-    heartbeatStaleMs: number;
-    hasRecentHeartbeat: boolean;
-
-    isRegistrationHealthy: boolean;
-};
-
 async function safeHasStartedLocationUpdates(): Promise<boolean> {
     try {
         return await Location.hasStartedLocationUpdatesAsync(
@@ -115,68 +99,6 @@ async function safeHasStartedLocationUpdates(): Promise<boolean> {
         console.error("Check background location updates status error:", error);
 
         return false;
-    }
-}
-
-const BACKGROUND_TASK_RESTART_WAIT_MS = 1_500;
-
-/*
- * heartbeatの許容時間は、設定間隔の3倍または2分の長い方とする。
- *
- * 5分設定などでも短すぎる時間で異常判定しない。
- */
-function getBackgroundTaskHeartbeatStaleMs(intervalMs: number): number {
-    return Math.max(intervalMs * 3, 120_000);
-}
-
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-        setTimeout(resolve, ms);
-    });
-}
-
-async function readBackgroundLocationTaskHeartbeat(): Promise<BackgroundLocationTaskHeartbeat | null> {
-    try {
-        const raw = await AsyncStorage.getItem(
-            BACKGROUND_LOCATION_TASK_HEARTBEAT_KEY,
-        );
-
-        if (!raw) {
-            return null;
-        }
-
-        const parsed = JSON.parse(
-            raw,
-        ) as Partial<BackgroundLocationTaskHeartbeat>;
-
-        if (
-            typeof parsed.firedAt !== "number" ||
-            !Number.isFinite(parsed.firedAt)
-        ) {
-            return null;
-        }
-
-        return {
-            firedAt: parsed.firedAt,
-            taskFiredAt:
-                typeof parsed.taskFiredAt === "string"
-                    ? parsed.taskFiredAt
-                    : new Date(parsed.firedAt).toISOString(),
-            locationsLength:
-                typeof parsed.locationsLength === "number"
-                    ? parsed.locationsLength
-                    : 0,
-            recordingSessionId:
-                typeof parsed.recordingSessionId === "string"
-                    ? parsed.recordingSessionId
-                    : null,
-            isRecording: parsed.isRecording === true,
-            userId: typeof parsed.userId === "string" ? parsed.userId : null,
-        };
-    } catch (error) {
-        console.error("Read background location task heartbeat error:", error);
-
-        return null;
     }
 }
 
@@ -243,6 +165,96 @@ export async function startBackgroundLocationRecording({
         }
     }
 
+    /*
+     * 自動記録開始時には、開始済みタスクをそのまま信用しない。
+     *
+     * 現在地共有用として登録済みでも、
+     * Android側で位置イベントが停止している可能性があるため、
+     * 必ず停止してから再登録する。
+     */
+    const hasStartedBeforeRestart =
+        await Location.hasStartedLocationUpdatesAsync(
+            BACKGROUND_LOCATION_TASK_NAME,
+        );
+
+    await saveBackgroundLocationDebugLog({
+        userId,
+        recordingSessionId,
+        eventName: "hasStartedLocationUpdatesCheckedBeforeStart",
+        hasStartedLocationUpdates: hasStartedBeforeRestart,
+        details: {
+            previousStateExists: Boolean(previousState),
+            previousIsRecording: previousState?.isRecording ?? null,
+            previousRecordingSessionId:
+                previousState?.recordingSessionId ?? null,
+            previousLiveLocationId: previousState?.liveLocationId ?? null,
+        },
+    });
+
+    if (hasStartedBeforeRestart) {
+        await saveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "restartBackgroundLocationUpdatesForRecordingStarted",
+            hasStartedLocationUpdates: true,
+            details: {
+                reason:
+                    previousState?.isRecording === true
+                        ? "refreshExistingRecordingTask"
+                        : "switchFromLiveSharingToRecording",
+            },
+        });
+
+        try {
+            await Location.stopLocationUpdatesAsync(
+                BACKGROUND_LOCATION_TASK_NAME,
+            );
+        } catch (error) {
+            await saveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName: "stopExistingLocationUpdatesBeforeRecordingFailed",
+                hasStartedLocationUpdates: true,
+                errorMessage:
+                    error instanceof Error ? error.message : String(error),
+            });
+
+            /*
+             * 既存タスクを停止できていない状態で、
+             * 正常に再登録できたとは判断できないため開始を中断する。
+             */
+            throw error;
+        }
+
+        const hasStartedAfterStop =
+            await Location.hasStartedLocationUpdatesAsync(
+                BACKGROUND_LOCATION_TASK_NAME,
+            );
+
+        await saveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "existingLocationUpdatesStoppedBeforeRecordingStart",
+            hasStartedLocationUpdates: hasStartedAfterStop,
+        });
+
+        if (hasStartedAfterStop) {
+            const error = new Error(
+                "Background location updates remained started after stop.",
+            );
+
+            await saveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName: "existingLocationUpdatesStillStartedAfterStop",
+                hasStartedLocationUpdates: true,
+                errorMessage: error.message,
+            });
+
+            throw error;
+        }
+    }
+
     const nextState: BackgroundRecordingState = {
         userId,
         isRecording: true,
@@ -257,80 +269,63 @@ export async function startBackgroundLocationRecording({
     };
 
     /*
-     * 既に正常な共有用タスクが動作している場合、
-     * 次回タスク発火時から自動記録へ切り替えられるよう、
-     * 先にstateをisRecording=trueへ更新する。
+     * startLocationUpdatesAsync直後に位置イベントが到着しても、
+     * backgroundLocationTaskが自動記録状態を取得できるよう、
+     * タスク開始前に新しいstateを保存する。
      */
     await AsyncStorage.setItem(
         BACKGROUND_RECORDING_STATE_KEY,
         JSON.stringify(nextState),
     );
 
-    const healthBeforeStart = await getBackgroundLocationTaskHealth(intervalMs);
-
-    await saveBackgroundLocationDebugLog({
-        userId,
-        recordingSessionId,
-        eventName: "backgroundLocationTaskHealthCheckedBeforeRecording",
-        hasStartedLocationUpdates: healthBeforeStart.hasStartedLocationUpdates,
-        details: {
-            isDefined: healthBeforeStart.isDefined,
-            isRegistered: healthBeforeStart.isRegistered,
-            hasRecentHeartbeat: healthBeforeStart.hasRecentHeartbeat,
-            heartbeatAgeMs: healthBeforeStart.heartbeatAgeMs,
-            heartbeatStaleMs: healthBeforeStart.heartbeatStaleMs,
-            previousStateExists: Boolean(previousState),
-            previousIsRecording: previousState?.isRecording ?? null,
-            previousRecordingSessionId:
-                previousState?.recordingSessionId ?? null,
+    const locationTaskOptions = {
+        accuracy: Location.Accuracy.Balanced,
+        timeInterval: intervalMs,
+        distanceInterval: distanceMeters,
+        deferredUpdatesInterval: intervalMs,
+        deferredUpdatesDistance: distanceMeters,
+        pausesUpdatesAutomatically: false,
+        showsBackgroundLocationIndicator: true,
+        foregroundService: {
+            notificationTitle: "位置情報を記録中",
+            notificationBody:
+                "自動記録または現在地共有をバックグラウンドで継続しています",
+            notificationColor: "#4b6f8f",
         },
-    });
+    };
 
     try {
-        /*
-         * タスク定義、TaskManager登録、Location登録が正常なら、
-         * 既存タスクを停止せずに再利用する。
-         */
-        if (healthBeforeStart.isRegistrationHealthy) {
-            await saveBackgroundLocationDebugLog({
-                userId,
-                recordingSessionId,
-                eventName: "backgroundLocationTaskReusedForRecording",
-                hasStartedLocationUpdates: true,
-                details: {
-                    hasRecentHeartbeat: healthBeforeStart.hasRecentHeartbeat,
-                    heartbeatAgeMs: healthBeforeStart.heartbeatAgeMs,
-                    previousIsRecording: previousState?.isRecording ?? null,
-                },
-            });
+        await Location.startLocationUpdatesAsync(
+            BACKGROUND_LOCATION_TASK_NAME,
+            locationTaskOptions,
+        );
 
-            return;
-        }
-
-        /*
-         * 未登録または登録状態に不整合がある場合だけ、
-         * 安全な停止・再登録を行う。
-         */
-        await restartBackgroundLocationUpdates({
-            userId,
-            recordingSessionId,
-            intervalMs,
-            distanceMeters,
-            isRecording: true,
-            reason: "registrationNotHealthyAtRecordingStart",
-        });
+        const hasStartedAfterStart =
+            await Location.hasStartedLocationUpdatesAsync(
+                BACKGROUND_LOCATION_TASK_NAME,
+            );
 
         await saveBackgroundLocationDebugLog({
             userId,
             recordingSessionId,
             eventName: "startBackgroundLocationRecordingCompleted",
-            hasStartedLocationUpdates: true,
+            hasStartedLocationUpdates: hasStartedAfterStart,
             details: {
-                reusedExistingTask: false,
+                restartedExistingTask: hasStartedBeforeRestart,
                 intervalMs,
                 distanceMeters,
+                liveLocationId,
+                liveShareOwnerCount: normalizedLiveShareOwnerValues.length,
             },
         });
+
+        /*
+         * startLocationUpdatesAsyncが例外を出さなくても、
+         * 実際に登録されていなければ自動記録開始を成功扱いしない。
+         */
+        if (!hasStartedAfterStart) {
+            throw new Error("Background location updates did not start.");
+        }
     } catch (error) {
         await saveBackgroundLocationDebugLog({
             userId,
@@ -340,12 +335,16 @@ export async function startBackgroundLocationRecording({
             errorMessage:
                 error instanceof Error ? error.message : String(error),
             details: {
+                restartedExistingTask: hasStartedBeforeRestart,
                 restoringPreviousState: Boolean(previousState),
             },
         });
 
         /*
-         * 開始失敗時は、記録開始前のstateへ戻す。
+         * 新規自動記録のstateだけが残ると、
+         * 画面上は記録中なのにタスクが動いていない状態になる。
+         *
+         * そのため、起動失敗時は以前のstateへ戻す。
          */
         if (previousState) {
             await AsyncStorage.setItem(
@@ -354,6 +353,72 @@ export async function startBackgroundLocationRecording({
             );
         } else {
             await AsyncStorage.removeItem(BACKGROUND_RECORDING_STATE_KEY);
+        }
+
+        /*
+         * 以前が現在地共有状態だった場合は、
+         * 共有用バックグラウンドタスクの復旧を試みる。
+         *
+         * この復旧に失敗しても、元の自動記録開始エラーを優先して返す。
+         */
+        if (
+            previousState &&
+            (previousState.liveShareOwnerValues?.length ?? 0) > 0
+        ) {
+            try {
+                const sharingTaskAlreadyStarted =
+                    await Location.hasStartedLocationUpdatesAsync(
+                        BACKGROUND_LOCATION_TASK_NAME,
+                    );
+
+                if (!sharingTaskAlreadyStarted) {
+                    await Location.startLocationUpdatesAsync(
+                        BACKGROUND_LOCATION_TASK_NAME,
+                        {
+                            accuracy: Location.Accuracy.Balanced,
+                            timeInterval: previousState.intervalMs,
+                            distanceInterval: previousState.distanceMeters,
+                            deferredUpdatesInterval: previousState.intervalMs,
+                            deferredUpdatesDistance:
+                                previousState.distanceMeters,
+                            pausesUpdatesAutomatically: false,
+                            showsBackgroundLocationIndicator: true,
+                            foregroundService: {
+                                notificationTitle: "現在地を共有中",
+                                notificationBody:
+                                    "現在地共有をバックグラウンドで継続しています",
+                                notificationColor: "#4b6f8f",
+                            },
+                        },
+                    );
+                }
+
+                await saveBackgroundLocationDebugLog({
+                    userId: previousState.userId,
+                    recordingSessionId:
+                        previousState.recordingSessionId ?? null,
+                    eventName:
+                        "previousBackgroundLiveSharingRestoredAfterStartFailure",
+                    hasStartedLocationUpdates:
+                        await safeHasStartedLocationUpdates(),
+                });
+            } catch (restoreError) {
+                console.error(
+                    "Restore previous background live sharing error:",
+                    restoreError,
+                );
+
+                await saveBackgroundLocationDebugLog({
+                    userId: previousState.userId,
+                    recordingSessionId:
+                        previousState.recordingSessionId ?? null,
+                    eventName: "previousBackgroundLiveSharingRestoreFailed",
+                    errorMessage:
+                        restoreError instanceof Error
+                            ? restoreError.message
+                            : String(restoreError),
+                });
+            }
         }
 
         throw error;
@@ -899,238 +964,4 @@ export async function updateForegroundLastSavedLocation(lastSavedLocation: {
     } catch (error) {
         console.error("Update foreground lastSavedLocation error:", error);
     }
-}
-
-export async function getBackgroundLocationTaskHealth(
-    intervalMs: number,
-): Promise<BackgroundLocationTaskHealth> {
-    const [isRegistered, hasStartedLocationUpdates, heartbeat] =
-        await Promise.all([
-            TaskManager.isTaskRegisteredAsync(
-                BACKGROUND_LOCATION_TASK_NAME,
-            ).catch((error) => {
-                console.error("Check TaskManager registration error:", error);
-
-                return false;
-            }),
-
-            safeHasStartedLocationUpdates(),
-
-            readBackgroundLocationTaskHeartbeat(),
-        ]);
-
-    const isDefined = TaskManager.isTaskDefined(BACKGROUND_LOCATION_TASK_NAME);
-
-    const heartbeatStaleMs = getBackgroundTaskHeartbeatStaleMs(intervalMs);
-
-    const heartbeatAgeMs = heartbeat
-        ? Math.max(0, Date.now() - heartbeat.firedAt)
-        : null;
-
-    const hasRecentHeartbeat =
-        heartbeatAgeMs !== null && heartbeatAgeMs <= heartbeatStaleMs;
-
-    return {
-        isDefined,
-        isRegistered,
-        hasStartedLocationUpdates,
-
-        heartbeat,
-        heartbeatAgeMs,
-        heartbeatStaleMs,
-        hasRecentHeartbeat,
-
-        isRegistrationHealthy:
-            isDefined && isRegistered && hasStartedLocationUpdates,
-    };
-}
-
-function createBackgroundLocationTaskOptions(
-    intervalMs: number,
-    distanceMeters: number,
-    isRecording: boolean,
-): Location.LocationTaskOptions {
-    return {
-        accuracy: Location.Accuracy.Balanced,
-        timeInterval: intervalMs,
-        distanceInterval: distanceMeters,
-        deferredUpdatesInterval: intervalMs,
-        deferredUpdatesDistance: distanceMeters,
-        pausesUpdatesAutomatically: false,
-        showsBackgroundLocationIndicator: true,
-        foregroundService: {
-            notificationTitle: isRecording
-                ? "位置情報を記録中"
-                : "現在地を共有中",
-            notificationBody: isRecording
-                ? "自動記録をバックグラウンドで継続しています"
-                : "現在地共有をバックグラウンドで継続しています",
-            notificationColor: "#4b6f8f",
-        },
-    };
-}
-
-async function restartBackgroundLocationUpdates(input: {
-    userId: string;
-    recordingSessionId: string | null;
-    intervalMs: number;
-    distanceMeters: number;
-    isRecording: boolean;
-    reason: string;
-}): Promise<void> {
-    const {
-        userId,
-        recordingSessionId,
-        intervalMs,
-        distanceMeters,
-        isRecording,
-        reason,
-    } = input;
-
-    const hasStartedBeforeRestart = await safeHasStartedLocationUpdates();
-
-    const isRegisteredBeforeRestart = await TaskManager.isTaskRegisteredAsync(
-        BACKGROUND_LOCATION_TASK_NAME,
-    ).catch(() => false);
-
-    await saveBackgroundLocationDebugLog({
-        userId,
-        recordingSessionId,
-        eventName: "backgroundLocationTaskRestartStarted",
-        hasStartedLocationUpdates: hasStartedBeforeRestart,
-        details: {
-            reason,
-            isRegisteredBeforeRestart,
-            isDefined: TaskManager.isTaskDefined(BACKGROUND_LOCATION_TASK_NAME),
-            intervalMs,
-            distanceMeters,
-            isRecording,
-        },
-    });
-
-    /*
-     * 登録されている場合だけ停止する。
-     */
-    if (hasStartedBeforeRestart || isRegisteredBeforeRestart) {
-        try {
-            await Location.stopLocationUpdatesAsync(
-                BACKGROUND_LOCATION_TASK_NAME,
-            );
-        } catch (error) {
-            /*
-             * Location側では未開始だがTaskManager登録だけ残っている
-             * ケースを考慮する。
-             */
-            console.error(
-                "Stop background location updates before restart error:",
-                error,
-            );
-
-            const stillRegistered = await TaskManager.isTaskRegisteredAsync(
-                BACKGROUND_LOCATION_TASK_NAME,
-            ).catch(() => false);
-
-            if (stillRegistered) {
-                throw error;
-            }
-        }
-
-        /*
-         * Androidネイティブ側のサービス停止処理が完了する時間を確保する。
-         */
-        await sleep(BACKGROUND_TASK_RESTART_WAIT_MS);
-    }
-
-    const hasStartedAfterStop = await safeHasStartedLocationUpdates();
-
-    const isRegisteredAfterStop = await TaskManager.isTaskRegisteredAsync(
-        BACKGROUND_LOCATION_TASK_NAME,
-    ).catch(() => false);
-
-    if (hasStartedAfterStop || isRegisteredAfterStop) {
-        const error = new Error(
-            "Background location task remained registered after stop.",
-        );
-
-        await saveBackgroundLocationDebugLog({
-            userId,
-            recordingSessionId,
-            eventName: "backgroundLocationTaskRestartStopFailed",
-            hasStartedLocationUpdates: hasStartedAfterStop,
-            errorMessage: error.message,
-            details: {
-                isRegisteredAfterStop,
-            },
-        });
-
-        throw error;
-    }
-
-    await Location.startLocationUpdatesAsync(
-        BACKGROUND_LOCATION_TASK_NAME,
-        createBackgroundLocationTaskOptions(
-            intervalMs,
-            distanceMeters,
-            isRecording,
-        ),
-    );
-
-    const healthAfterStart = await getBackgroundLocationTaskHealth(intervalMs);
-
-    await saveBackgroundLocationDebugLog({
-        userId,
-        recordingSessionId,
-        eventName: "backgroundLocationTaskRestartCompleted",
-        hasStartedLocationUpdates: healthAfterStart.hasStartedLocationUpdates,
-        details: {
-            reason,
-            isDefined: healthAfterStart.isDefined,
-            isRegistered: healthAfterStart.isRegistered,
-            hasRecentHeartbeat: healthAfterStart.hasRecentHeartbeat,
-            heartbeatAgeMs: healthAfterStart.heartbeatAgeMs,
-        },
-    });
-
-    if (!healthAfterStart.isRegistrationHealthy) {
-        throw new Error(
-            "Background location task registration verification failed.",
-        );
-    }
-}
-
-export async function repairBackgroundLocationTaskForCurrentRecording(): Promise<BackgroundLocationTaskHealth> {
-    const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);
-
-    if (!raw) {
-        throw new Error("Background recording state was not found.");
-    }
-
-    const state = JSON.parse(raw) as BackgroundRecordingState;
-
-    if (
-        state.isRecording !== true ||
-        !state.recordingSessionId ||
-        !state.userId
-    ) {
-        throw new Error("Active background recording state was not found.");
-    }
-
-    await restartBackgroundLocationUpdates({
-        userId: state.userId,
-        recordingSessionId: state.recordingSessionId,
-        intervalMs: state.intervalMs,
-        distanceMeters: state.distanceMeters,
-        isRecording: true,
-        reason: "heartbeatNotUpdatedDuringRecording",
-    });
-
-    return await getBackgroundLocationTaskHealth(state.intervalMs);
-}
-
-export async function hasBackgroundTaskHeartbeatAfter(
-    timestampMs: number,
-): Promise<boolean> {
-    const heartbeat = await readBackgroundLocationTaskHeartbeat();
-
-    return Boolean(heartbeat && heartbeat.firedAt > timestampMs);
 }

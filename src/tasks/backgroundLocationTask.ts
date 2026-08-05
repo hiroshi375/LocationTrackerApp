@@ -40,6 +40,51 @@ export const BACKGROUND_LOCATION_TASK_NAME =
 export const BACKGROUND_RECORDING_STATE_KEY =
     "location-tracker-background-recording-state";
 
+/**
+ * バックグラウンド位置タスクが実際に呼び出された時刻を保存するキー。
+ *
+ * タスク登録状態ではなく、OSからタスクコールバックが配送されたことを
+ * 確認するために使用する。
+ */
+export const BACKGROUND_LOCATION_TASK_HEARTBEAT_KEY =
+    "location-tracker-background-location-task-heartbeat";
+
+export type BackgroundLocationTaskHeartbeat = {
+    /**
+     * タスクコールバックが開始された端末時刻。
+     */
+    firedAt: number;
+    /**
+     * firedAtのISO形式。
+     * ログ確認をしやすくするため保持する。
+     */
+    taskFiredAt: string;
+    /**
+     * OSから渡された位置情報件数。
+     */
+    locationsLength: number;
+    /**
+     * タスク実行時点の記録セッションID。
+     *
+     * 状態取得前や非記録中の場合はnull。
+     */
+    recordingSessionId: string | null;
+    /**
+     * タスク実行時点で自動記録中だったか。
+     */
+    isRecording: boolean;
+    /**
+     * タスク実行時点のユーザーID。
+     *
+     * 状態取得前や状態不明の場合はnull。
+     */
+    userId: string | null;
+    /**
+     * TaskManagerからエラーが渡されたか。
+     */
+    hasTaskError: boolean;
+};
+
 /*
  * BackgroundLocationDebugLog の保存を一括で制御する。
  *
@@ -189,6 +234,28 @@ async function safeSaveBackgroundLocationDebugLog(
         console.error(
             "Failed to save background location debug log:",
             debugLogError,
+        );
+    }
+}
+
+/**
+ * バックグラウンド位置タスクの実行記録をAsyncStorageへ保存する。
+ *
+ * heartbeat保存失敗によって既存のLocationLog処理を停止させないため、
+ * 例外はこの関数内で処理する。
+ */
+async function safeSaveBackgroundLocationTaskHeartbeat(
+    heartbeat: BackgroundLocationTaskHeartbeat,
+): Promise<void> {
+    try {
+        await AsyncStorage.setItem(
+            BACKGROUND_LOCATION_TASK_HEARTBEAT_KEY,
+            JSON.stringify(heartbeat),
+        );
+    } catch (heartbeatError) {
+        console.error(
+            "Save background location task heartbeat error:",
+            heartbeatError,
         );
     }
 }
@@ -480,7 +547,19 @@ TaskManager.defineTask(
         const taskStartedAtMs = Date.now();
         const taskFiredAt = new Date(taskStartedAtMs).toISOString();
 
-        let locationsLength = 0;
+        /*
+         * 後続処理より前に、OSから渡された地点数を取得する。
+         *
+         * LocationLog保存や認証処理でエラーが発生した場合でも、
+         * タスク自体が呼び出されたことをheartbeatで確認できるようにする。
+         */
+        const receivedLocations = (
+            data as {
+                locations?: Location.LocationObject[];
+            }
+        )?.locations;
+
+        let locationsLength = receivedLocations?.length ?? 0;
         let saveSuccessCount = 0;
         let saveFailureCount = 0;
 
@@ -544,6 +623,22 @@ TaskManager.defineTask(
             const state = await getBackgroundRecordingState();
 
             /*
+             * LocationLog保存、SQLite処理、認証処理などより前にheartbeatを保存する。
+             *
+             * これにより、後続処理が失敗しても、
+             * バックグラウンドタスク自体が起動したことを判定できる。
+             */
+            await safeSaveBackgroundLocationTaskHeartbeat({
+                firedAt: taskStartedAtMs,
+                taskFiredAt,
+                locationsLength,
+                recordingSessionId: state?.recordingSessionId ?? null,
+                isRecording: state?.isRecording === true,
+                userId: state?.userId ?? null,
+                hasTaskError: Boolean(error),
+            });
+
+            /*
              * TaskManagerからerrorが渡された場合は、
              * LocationLog処理へ進まず異常ログを1件だけ保存する。
              */
@@ -566,13 +661,7 @@ TaskManager.defineTask(
                 return;
             }
 
-            const locations = (
-                data as {
-                    locations?: Location.LocationObject[];
-                }
-            )?.locations;
-
-            locationsLength = locations?.length ?? 0;
+            const locations = receivedLocations;
 
             /*
              * 位置情報が0件の場合も、バッチ結果として1件だけ保存する。

@@ -6,8 +6,10 @@ import { Alert, Linking, Platform } from "react-native";
 import { client } from "../lib/client";
 
 import {
+    BACKGROUND_LOCATION_TASK_HEARTBEAT_KEY,
     BACKGROUND_LOCATION_TASK_NAME,
     BACKGROUND_RECORDING_STATE_KEY,
+    type BackgroundLocationTaskHeartbeat,
 } from "../tasks/backgroundLocationTask";
 import { saveBackgroundLocationDebugLog } from "./backgroundLocationDebugLogService";
 
@@ -88,6 +90,18 @@ export type BackgroundRecordingState = {
 
 type StopBackgroundLocationRecordingOptions = {
     continueLiveSharing?: boolean;
+};
+
+export type BackgroundLocationHeartbeatStatus = {
+    heartbeat: BackgroundLocationTaskHeartbeat | null;
+    /**
+     * heartbeatが現在時刻から何ミリ秒前のものか。
+     */
+    ageMs: number | null;
+    /**
+     * heartbeatのJSONが存在したが、不正な形式だったか。
+     */
+    invalidStoredValue: boolean;
 };
 
 async function safeHasStartedLocationUpdates(): Promise<boolean> {
@@ -963,5 +977,84 @@ export async function updateForegroundLastSavedLocation(lastSavedLocation: {
         );
     } catch (error) {
         console.error("Update foreground lastSavedLocation error:", error);
+    }
+}
+
+/**
+ * バックグラウンド位置タスクの最新heartbeatを読み取る。
+ *
+ * 診断専用の読み取り処理であり、
+ * タスクの開始、停止、再登録、記録状態の更新は行わない。
+ */
+export async function getBackgroundLocationTaskHeartbeatStatus(): Promise<BackgroundLocationHeartbeatStatus> {
+    let raw: string | null = null;
+
+    try {
+        raw = await AsyncStorage.getItem(
+            BACKGROUND_LOCATION_TASK_HEARTBEAT_KEY,
+        );
+
+        if (!raw) {
+            return {
+                heartbeat: null,
+                ageMs: null,
+                invalidStoredValue: false,
+            };
+        }
+
+        const parsed = JSON.parse(
+            raw,
+        ) as Partial<BackgroundLocationTaskHeartbeat>;
+
+        /*
+         * heartbeatとして最低限必要な項目を検証する。
+         */
+        if (
+            typeof parsed.firedAt !== "number" ||
+            !Number.isFinite(parsed.firedAt) ||
+            typeof parsed.taskFiredAt !== "string" ||
+            typeof parsed.locationsLength !== "number" ||
+            !Number.isFinite(parsed.locationsLength) ||
+            typeof parsed.isRecording !== "boolean" ||
+            typeof parsed.hasTaskError !== "boolean"
+        ) {
+            console.warn(
+                "Stored background location task heartbeat is invalid:",
+                raw,
+            );
+
+            return {
+                heartbeat: null,
+                ageMs: null,
+                invalidStoredValue: true,
+            };
+        }
+
+        const heartbeat: BackgroundLocationTaskHeartbeat = {
+            firedAt: parsed.firedAt,
+            taskFiredAt: parsed.taskFiredAt,
+            locationsLength: parsed.locationsLength,
+            recordingSessionId:
+                typeof parsed.recordingSessionId === "string"
+                    ? parsed.recordingSessionId
+                    : null,
+            isRecording: parsed.isRecording,
+            userId: typeof parsed.userId === "string" ? parsed.userId : null,
+            hasTaskError: parsed.hasTaskError,
+        };
+
+        return {
+            heartbeat,
+            ageMs: Math.max(0, Date.now() - heartbeat.firedAt),
+            invalidStoredValue: false,
+        };
+    } catch (error) {
+        console.error("Read background location task heartbeat error:", error);
+
+        return {
+            heartbeat: null,
+            ageMs: null,
+            invalidStoredValue: raw !== null,
+        };
     }
 }

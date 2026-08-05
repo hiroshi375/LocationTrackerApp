@@ -24,18 +24,20 @@ import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRec
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import {
+    getBackgroundLocationTaskHeartbeatStatus,
     isBackgroundLocationDisclosureDeclined,
     isBackgroundLocationPermissionError,
     isForegroundLocationPermissionError,
+    type BackgroundLocationHeartbeatStatus,
 } from "../services/backgroundLocationService";
 import {
     clearRecordingContinuationState,
     getRecordingContinuationState,
 } from "../services/recordingContinuationService";
 import {
-    type RecordingSessionBackfillProgress,
     backfillRecordingSessionsFromLocationLogs,
     upsertRecordingSessionSummary,
+    type RecordingSessionBackfillProgress,
 } from "../services/recordingSessionService";
 import {
     ensureUserProfile,
@@ -388,6 +390,14 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const [startingRecording, setStartingRecording] = useState(false);
     const [stoppingRecording, setStoppingRecording] = useState(false);
+    const [checkingBackgroundHeartbeat, setCheckingBackgroundHeartbeat] =
+        useState(false);
+
+    const [backgroundHeartbeatStatus, setBackgroundHeartbeatStatus] =
+        useState<BackgroundLocationHeartbeatStatus | null>(null);
+
+    const [backgroundHeartbeatCheckedAt, setBackgroundHeartbeatCheckedAt] =
+        useState<number | null>(null);
     const continuationAlertKeyRef = useRef<string | null>(null);
     const handledAutoStoppedSessionIdRef = useRef<string | null>(null);
 
@@ -605,6 +615,36 @@ export default function LocationHomeScreen({ navigation }: Props) {
             setStartingRecording(false);
         }
     };
+
+    const handleCheckBackgroundHeartbeat =
+        useCallback(async (): Promise<void> => {
+            if (checkingBackgroundHeartbeat) {
+                return;
+            }
+
+            try {
+                setCheckingBackgroundHeartbeat(true);
+
+                const status = await getBackgroundLocationTaskHeartbeatStatus();
+
+                setBackgroundHeartbeatStatus(status);
+                setBackgroundHeartbeatCheckedAt(Date.now());
+
+                console.log("Background location heartbeat status:", status);
+            } catch (error) {
+                console.error(
+                    "Check background location heartbeat error:",
+                    error,
+                );
+
+                Alert.alert(
+                    "確認エラー",
+                    "バックグラウンドタスクの実行状況を確認できませんでした。",
+                );
+            } finally {
+                setCheckingBackgroundHeartbeat(false);
+            }
+        }, [checkingBackgroundHeartbeat]);
 
     useFocusEffect(
         useCallback(() => {
@@ -1125,6 +1165,69 @@ export default function LocationHomeScreen({ navigation }: Props) {
         recordIntervalMs,
         selectedLiveShareUsers,
     ]);
+
+    const backgroundHeartbeatDisplay = useMemo(() => {
+        if (!backgroundHeartbeatStatus) {
+            return null;
+        }
+
+        if (backgroundHeartbeatStatus.invalidStoredValue) {
+            return {
+                statusText: "保存されたheartbeatが不正です",
+                detailLines: [],
+            };
+        }
+
+        const heartbeat = backgroundHeartbeatStatus.heartbeat;
+
+        if (!heartbeat) {
+            return {
+                statusText: "heartbeatはまだ記録されていません",
+                detailLines: [
+                    "バックグラウンドタスクが一度も呼ばれていない可能性があります。",
+                ],
+            };
+        }
+
+        const ageSeconds =
+            backgroundHeartbeatStatus.ageMs === null
+                ? null
+                : Math.floor(backgroundHeartbeatStatus.ageMs / 1000);
+
+        const detailLines = [
+            `最終実行: ${formatDateTime(heartbeat.taskFiredAt)}`,
+            `経過時間: ${
+                ageSeconds === null
+                    ? "不明"
+                    : ageSeconds < 60
+                      ? `${ageSeconds}秒`
+                      : `${Math.floor(ageSeconds / 60)}分${ageSeconds % 60}秒`
+            }`,
+            `受信地点数: ${heartbeat.locationsLength}件`,
+            `記録中判定: ${heartbeat.isRecording ? "はい" : "いいえ"}`,
+            `タスクエラー: ${heartbeat.hasTaskError ? "あり" : "なし"}`,
+            `セッション一致: ${
+                activeRecordingSessionId &&
+                heartbeat.recordingSessionId === activeRecordingSessionId
+                    ? "一致"
+                    : heartbeat.recordingSessionId
+                      ? "不一致"
+                      : "セッションIDなし"
+            }`,
+        ];
+
+        return {
+            statusText: "heartbeatを取得しました",
+            detailLines,
+        };
+    }, [activeRecordingSessionId, backgroundHeartbeatStatus]);
+
+    const backgroundHeartbeatCheckedAtText =
+        backgroundHeartbeatCheckedAt === null
+            ? null
+            : formatDateTime(
+                  new Date(backgroundHeartbeatCheckedAt).toISOString(),
+              );
 
     const canOpenRecordingMap =
         isRecording && Boolean(activeRecordingSessionId);
@@ -1673,6 +1776,67 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 );
                             })}
                         </View>
+                    </View>
+
+                    <View style={styles.backgroundHeartbeatBox}>
+                        <Text style={styles.backgroundHeartbeatTitle}>
+                            バックグラウンドタスク診断
+                        </Text>
+
+                        <Pressable
+                            style={({ pressed }) => [
+                                styles.backgroundHeartbeatButton,
+                                pressed &&
+                                    !checkingBackgroundHeartbeat &&
+                                    styles.buttonPressed,
+                                checkingBackgroundHeartbeat &&
+                                    styles.appButtonDisabled,
+                            ]}
+                            onPress={() => {
+                                void handleCheckBackgroundHeartbeat();
+                            }}
+                            disabled={checkingBackgroundHeartbeat}
+                        >
+                            <Text style={styles.backgroundHeartbeatButtonText}>
+                                {checkingBackgroundHeartbeat
+                                    ? "heartbeat確認中..."
+                                    : "heartbeatを確認"}
+                            </Text>
+                        </Pressable>
+
+                        {backgroundHeartbeatDisplay && (
+                            <View style={styles.backgroundHeartbeatResult}>
+                                <Text
+                                    style={styles.backgroundHeartbeatStatusText}
+                                >
+                                    {backgroundHeartbeatDisplay.statusText}
+                                </Text>
+
+                                {backgroundHeartbeatDisplay.detailLines.map(
+                                    (line) => (
+                                        <Text
+                                            key={line}
+                                            style={
+                                                styles.backgroundHeartbeatDetailText
+                                            }
+                                        >
+                                            {line}
+                                        </Text>
+                                    ),
+                                )}
+
+                                {backgroundHeartbeatCheckedAtText && (
+                                    <Text
+                                        style={
+                                            styles.backgroundHeartbeatCheckedText
+                                        }
+                                    >
+                                        確認時刻:{" "}
+                                        {backgroundHeartbeatCheckedAtText}
+                                    </Text>
+                                )}
+                            </View>
+                        )}
                     </View>
 
                     <View style={styles.autoRecordMapButtonSpace}>
@@ -2503,6 +2667,63 @@ const styles = StyleSheet.create({
         color: "#2f4f66",
         fontSize: 16,
         fontWeight: "bold",
+    },
+    backgroundHeartbeatBox: {
+        marginTop: 12,
+        padding: 12,
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+        borderRadius: 8,
+        backgroundColor: "#f9fbfd",
+    },
+
+    backgroundHeartbeatTitle: {
+        color: "#333",
+        fontSize: 14,
+        fontWeight: "bold",
+    },
+
+    backgroundHeartbeatButton: {
+        marginTop: 8,
+        minHeight: 40,
+        borderRadius: 8,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#4b6f8f",
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+    },
+
+    backgroundHeartbeatButtonText: {
+        color: "#fff",
+        fontSize: 14,
+        fontWeight: "bold",
+    },
+
+    backgroundHeartbeatResult: {
+        marginTop: 10,
+        padding: 10,
+        borderRadius: 8,
+        backgroundColor: "#eef3f7",
+    },
+
+    backgroundHeartbeatStatusText: {
+        color: "#2f4f66",
+        fontSize: 13,
+        fontWeight: "bold",
+    },
+
+    backgroundHeartbeatDetailText: {
+        marginTop: 4,
+        color: "#444",
+        fontSize: 12,
+        lineHeight: 18,
+    },
+
+    backgroundHeartbeatCheckedText: {
+        marginTop: 8,
+        color: "#777",
+        fontSize: 11,
     },
     autoRecordMapButtonSpace: {
         marginTop: 10,

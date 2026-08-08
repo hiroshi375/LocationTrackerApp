@@ -811,67 +811,6 @@ TaskManager.defineTask(
                 }
             }
 
-            if (
-                ENABLE_LOCATION_SQLITE_QUEUE_UPLOAD &&
-                activeRecordingSessionId
-            ) {
-                sqliteQueueUploadAttempted = true;
-
-                const queueUploadStartedAtMs = Date.now();
-
-                try {
-                    const { drainLocationQueueSafely } =
-                        await import("../services/locationQueueUploadService");
-
-                    const uploadResult = await drainLocationQueueSafely({
-                        userId: state.userId,
-                        recordingSessionId: activeRecordingSessionId,
-                        intervalMs: state.intervalMs,
-                        distanceMeters: state.distanceMeters,
-                        fallbackSharedOwners: state.liveShareOwnerValues,
-                    });
-
-                    sqliteQueueUploadSucceeded =
-                        uploadResult.failedCount === 0 &&
-                        uploadResult.timedOutCount === 0 &&
-                        uploadResult.stopReason !== "alreadyRunning";
-
-                    sqliteQueueUploadPendingCount = uploadResult.pendingCount;
-
-                    sqliteQueueUploadProcessedCount =
-                        uploadResult.processedCount;
-
-                    sqliteQueueUploadSentCount = uploadResult.sentCount;
-
-                    sqliteQueueUploadDuplicateCount =
-                        uploadResult.duplicateCount;
-
-                    sqliteQueueUploadSkippedCount = uploadResult.skippedCount;
-
-                    sqliteQueueUploadFailedCount = uploadResult.failedCount;
-
-                    sqliteQueueUploadTimedOutCount = uploadResult.timedOutCount;
-
-                    sqliteQueueUploadStopReason = uploadResult.stopReason;
-
-                    console.log("SQLite location queue upload completed:", {
-                        recordingSessionId: state.recordingSessionId,
-                        ...uploadResult,
-                    });
-                } catch (queueUploadError) {
-                    sqliteQueueUploadErrorMessage =
-                        getErrorMessage(queueUploadError);
-
-                    console.error(
-                        "SQLite location queue upload failed. Continue direct LocationLog save:",
-                        queueUploadError,
-                    );
-                } finally {
-                    sqliteQueueUploadDurationMs =
-                        Date.now() - queueUploadStartedAtMs;
-                }
-            }
-
             if (activeRecordingSessionId) {
                 try {
                     const {
@@ -1061,6 +1000,67 @@ TaskManager.defineTask(
                     }
 
                     currentState = result.nextState;
+                }
+            }
+
+            if (
+                ENABLE_LOCATION_SQLITE_QUEUE_UPLOAD &&
+                activeRecordingSessionId
+            ) {
+                sqliteQueueUploadAttempted = true;
+
+                const queueUploadStartedAtMs = Date.now();
+
+                try {
+                    const { drainLocationQueueSafely } =
+                        await import("../services/locationQueueUploadService");
+
+                    const uploadResult = await drainLocationQueueSafely({
+                        userId: state.userId,
+                        recordingSessionId: activeRecordingSessionId,
+                        intervalMs: state.intervalMs,
+                        distanceMeters: state.distanceMeters,
+                        fallbackSharedOwners: state.liveShareOwnerValues,
+                    });
+
+                    sqliteQueueUploadSucceeded =
+                        uploadResult.failedCount === 0 &&
+                        uploadResult.timedOutCount === 0 &&
+                        uploadResult.stopReason !== "alreadyRunning";
+
+                    sqliteQueueUploadPendingCount = uploadResult.pendingCount;
+
+                    sqliteQueueUploadProcessedCount =
+                        uploadResult.processedCount;
+
+                    sqliteQueueUploadSentCount = uploadResult.sentCount;
+
+                    sqliteQueueUploadDuplicateCount =
+                        uploadResult.duplicateCount;
+
+                    sqliteQueueUploadSkippedCount = uploadResult.skippedCount;
+
+                    sqliteQueueUploadFailedCount = uploadResult.failedCount;
+
+                    sqliteQueueUploadTimedOutCount = uploadResult.timedOutCount;
+
+                    sqliteQueueUploadStopReason = uploadResult.stopReason;
+
+                    console.log("SQLite location queue upload completed:", {
+                        recordingSessionId: state.recordingSessionId,
+                        ...uploadResult,
+                    });
+                } catch (queueUploadError) {
+                    sqliteQueueUploadErrorMessage =
+                        getErrorMessage(queueUploadError);
+
+                    console.error(
+                        "SQLite location queue upload failed. Continue direct LocationLog save:",
+                        queueUploadError,
+                    );
+                } finally {
+                    sqliteQueueUploadDurationMs =
+                        Date.now() - queueUploadStartedAtMs;
                 }
             }
 

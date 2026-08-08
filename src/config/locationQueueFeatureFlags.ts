@@ -25,18 +25,24 @@ export const SQLITE_QUEUE_UPLOAD_MIN_AGE_MS = 60_000;
 
 /**
  * 1回のbackground callbackで処理する最大件数。
+ *
+ * 新しい位置情報の直接保存を優先するため、
+ * SQLite pendingの再送は少量ずつ行う。
  */
-export const SQLITE_QUEUE_UPLOAD_MAX_ITEMS = 10;
+export const SQLITE_QUEUE_UPLOAD_MAX_ITEMS = 2;
 
 /**
  * SQLiteキュー送信処理全体の最大時間。
  */
-export const SQLITE_QUEUE_UPLOAD_TIME_BUDGET_MS = 20_000;
+export const SQLITE_QUEUE_UPLOAD_TIME_BUDGET_MS = 5_000;
 
 /**
  * LocationLog.create() 1回あたりの待機上限。
  *
  * Promise自体は完全にはキャンセルされないが、
  * background処理全体が数分止まることを避ける。
+
+ * 全体5秒の予算を超えにくくするため、
+ * create単体は4秒までとする。
  */
-export const SQLITE_QUEUE_CREATE_TIMEOUT_MS = 10_000;
+export const SQLITE_QUEUE_CREATE_TIMEOUT_MS = 4_000;

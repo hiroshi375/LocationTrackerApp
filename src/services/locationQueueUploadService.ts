@@ -302,6 +302,8 @@ async function drainLocationQueue(
 ): Promise<DrainLocationQueueResult> {
     const startedAtMs = Date.now();
 
+    const deadlineAtMs = startedAtMs + SQLITE_QUEUE_UPLOAD_TIME_BUDGET_MS;
+
     let processedCount = 0;
     let sentCount = 0;
     let duplicateCount = 0;
@@ -348,7 +350,7 @@ async function drainLocationQueue(
         : null;
 
     for (const row of pendingRows) {
-        if (Date.now() - startedAtMs >= SQLITE_QUEUE_UPLOAD_TIME_BUDGET_MS) {
+        if (Date.now() >= deadlineAtMs) {
             stopReason = "timeBudgetExceeded";
             break;
         }
@@ -375,9 +377,7 @@ async function drainLocationQueue(
         );
 
         try {
-            const elapsedMs = Date.now() - startedAtMs;
-            const remainingBudgetMs =
-                SQLITE_QUEUE_UPLOAD_TIME_BUDGET_MS - elapsedMs;
+            const remainingBudgetMs = deadlineAtMs - Date.now();
 
             if (remainingBudgetMs <= SQLITE_QUEUE_MIN_CREATE_TIMEOUT_MS) {
                 stopReason = "timeBudgetExceeded";
@@ -406,6 +406,7 @@ async function drainLocationQueue(
                     locationUniqueKey: row.location_unique_key,
                 },
                 createTimeoutMs,
+                deadlineAtMs,
             );
 
             if (createResult.errors) {
@@ -601,13 +602,14 @@ type QueueLocationLogCreateInput = {
 async function createLocationLogWithAuthRetry(
     input: QueueLocationLogCreateInput,
     createTimeoutMs: number,
+    deadlineAtMs: number,
 ): Promise<any> {
     let firstResult: any;
 
     try {
         firstResult = await withTimeout(
             client.models.LocationLog.create(input),
-            createTimeoutMs,
+            getRemainingQueueOperationTimeoutMs(deadlineAtMs, createTimeoutMs),
             "SQLite queue LocationLog.create",
         );
     } catch (error) {
@@ -627,13 +629,16 @@ async function createLocationLogWithAuthRetry(
             fetchAuthSession({
                 forceRefresh: true,
             }),
-            SQLITE_QUEUE_AUTH_REFRESH_TIMEOUT_MS,
+            getRemainingQueueOperationTimeoutMs(
+                deadlineAtMs,
+                SQLITE_QUEUE_AUTH_REFRESH_TIMEOUT_MS,
+            ),
             "SQLite queue auth force refresh",
         );
 
         return withTimeout(
             client.models.LocationLog.create(input),
-            createTimeoutMs,
+            getRemainingQueueOperationTimeoutMs(deadlineAtMs, createTimeoutMs),
             "SQLite queue LocationLog.create retry",
         );
     }
@@ -646,15 +651,34 @@ async function createLocationLogWithAuthRetry(
         fetchAuthSession({
             forceRefresh: true,
         }),
-        SQLITE_QUEUE_AUTH_REFRESH_TIMEOUT_MS,
+        getRemainingQueueOperationTimeoutMs(
+            deadlineAtMs,
+            SQLITE_QUEUE_AUTH_REFRESH_TIMEOUT_MS,
+        ),
         "SQLite queue auth force refresh",
     );
 
     return withTimeout(
         client.models.LocationLog.create(input),
-        createTimeoutMs,
+        getRemainingQueueOperationTimeoutMs(deadlineAtMs, createTimeoutMs),
         "SQLite queue LocationLog.create retry",
     );
+}
+
+function getRemainingQueueOperationTimeoutMs(
+    deadlineAtMs: number,
+    preferredTimeoutMs: number,
+): number {
+    const remainingMs = deadlineAtMs - Date.now();
+
+    if (remainingMs <= 0) {
+        throw new QueueOperationTimeoutError(
+            "SQLite queue time budget",
+            SQLITE_QUEUE_UPLOAD_TIME_BUDGET_MS,
+        );
+    }
+
+    return Math.max(1, Math.min(preferredTimeoutMs, remainingMs));
 }
 
 function resolveSharedOwners(

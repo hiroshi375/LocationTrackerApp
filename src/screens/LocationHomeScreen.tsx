@@ -165,6 +165,58 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [backfillProgress, setBackfillProgress] =
         useState<RecordingSessionBackfillProgress | null>(null);
 
+    const handleForceEasUpdate = useCallback(async (): Promise<void> => {
+        try {
+            if (!Updates.isEnabled) {
+                Alert.alert(
+                    "EAS Update",
+                    "expo-updates が無効になっています。",
+                );
+                return;
+            }
+
+            console.log("EAS Update check started:", {
+                updateId: Updates.updateId,
+                channel: Updates.channel,
+                runtimeVersion: Updates.runtimeVersion,
+                createdAt: Updates.createdAt,
+            });
+
+            const checkResult = await Updates.checkForUpdateAsync();
+
+            console.log("EAS Update check result:", checkResult);
+
+            if (!checkResult.isAvailable) {
+                Alert.alert("EAS Update", "新しいUpdateはありません。");
+                return;
+            }
+
+            const fetchResult = await Updates.fetchUpdateAsync();
+
+            console.log("EAS Update fetch result:", fetchResult);
+
+            Alert.alert(
+                "EAS Update",
+                "最新Updateを取得しました。今すぐ適用します。",
+                [
+                    {
+                        text: "適用",
+                        onPress: () => {
+                            void Updates.reloadAsync();
+                        },
+                    },
+                ],
+            );
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+
+            console.error("Force EAS Update error:", error);
+
+            Alert.alert("EAS Updateエラー", message);
+        }
+    }, []);
+
     useEffect(() => {
         const loadSavedHomeSettings = async () => {
             try {
@@ -2083,6 +2135,20 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 {checkingEasUpdateInfo
                                     ? "EAS Update確認中..."
                                     : "EAS Update情報を確認"}
+                            </Text>
+                        </Pressable>
+
+                        <Pressable
+                            style={({ pressed }) => [
+                                styles.easUpdateButton,
+                                pressed && styles.buttonPressed,
+                            ]}
+                            onPress={() => {
+                                void handleForceEasUpdate();
+                            }}
+                        >
+                            <Text style={styles.easUpdateButtonText}>
+                                最新EAS Updateを適用
                             </Text>
                         </Pressable>
 

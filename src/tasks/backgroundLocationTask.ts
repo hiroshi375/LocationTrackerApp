@@ -901,40 +901,12 @@ TaskManager.defineTask(
 
             let currentState = state;
 
-            const latestLocation = sortedLocations[sortedLocations.length - 1];
-
-            if (
-                latestLocation &&
-                currentState.liveShareOwnerValues.length > 0
-            ) {
-                const liveLocationResult = await updateBackgroundLiveLocation(
-                    latestLocation,
-                    currentState,
-                    taskFiredAt,
-                );
-
-                currentState = liveLocationResult.nextState;
-
-                liveLocationUpdateAttempted = liveLocationResult.attempted;
-
-                liveLocationUpdateSucceeded = liveLocationResult.succeeded;
-
-                liveLocationUpdateTimedOut = liveLocationResult.timedOut;
-
-                liveLocationUpdateOperation = liveLocationResult.operation;
-
-                liveLocationUpdateErrorMessage =
-                    liveLocationResult.errorMessage ?? null;
-
-                liveLocationUpdatedId =
-                    liveLocationResult.liveLocationId ?? null;
-            }
-
             /*
-             * LocationLogは自動記録中だけ保存する。
+             * 最優先：
+             * 今回OSから受信したLocationLogを先に保存する。
              *
-             * 現在地共有だけの場合は、
-             * LiveLocationを更新してLocationLogは作成しない。
+             * LiveLocation更新がAndroidバックグラウンドで長時間停止しても、
+             * 新しいLocationLogの保存を巻き込まないようにする。
              */
             if (
                 KEEP_DIRECT_LOCATION_LOG_SAVE &&
@@ -1001,6 +973,41 @@ TaskManager.defineTask(
 
                     currentState = result.nextState;
                 }
+            }
+
+            /*
+             * LocationLog保存完了後にLiveLocationを更新する。
+             *
+             * 現在地共有の機能自体は変更せず、
+             * 実行順序だけLocationLogの後ろへ移動する。
+             */
+            const latestLocation = sortedLocations[sortedLocations.length - 1];
+
+            if (
+                latestLocation &&
+                currentState.liveShareOwnerValues.length > 0
+            ) {
+                const liveLocationResult = await updateBackgroundLiveLocation(
+                    latestLocation,
+                    currentState,
+                    taskFiredAt,
+                );
+
+                currentState = liveLocationResult.nextState;
+
+                liveLocationUpdateAttempted = liveLocationResult.attempted;
+
+                liveLocationUpdateSucceeded = liveLocationResult.succeeded;
+
+                liveLocationUpdateTimedOut = liveLocationResult.timedOut;
+
+                liveLocationUpdateOperation = liveLocationResult.operation;
+
+                liveLocationUpdateErrorMessage =
+                    liveLocationResult.errorMessage ?? null;
+
+                liveLocationUpdatedId =
+                    liveLocationResult.liveLocationId ?? null;
             }
 
             if (

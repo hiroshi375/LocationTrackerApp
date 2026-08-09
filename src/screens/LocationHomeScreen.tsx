@@ -5,6 +5,7 @@ import {
     ActivityIndicator,
     Alert,
     Animated,
+    AppState,
     Image,
     KeyboardAvoidingView,
     Modal,
@@ -25,6 +26,7 @@ import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import {
     getBackgroundLocationTaskHeartbeatStatus,
+    getBackgroundRecordingStatus,
     isBackgroundLocationDisclosureDeclined,
     isBackgroundLocationPermissionError,
     isForegroundLocationPermissionError,
@@ -400,7 +402,15 @@ export default function LocationHomeScreen({ navigation }: Props) {
         useState<number | null>(null);
     const continuationAlertKeyRef = useRef<string | null>(null);
     const handledAutoStoppedSessionIdRef = useRef<string | null>(null);
+    /*
+     * Foreground高速queue回収の多重実行を防止する。
+     */
+    const foregroundQueueDrainRunningRef = useRef(false);
 
+    /*
+     * background / inactive → active の遷移を判定する。
+     */
+    const appStateRef = useRef(AppState.currentState);
     const [sessionNameModalVisible, setSessionNameModalVisible] =
         useState(false);
     const [sessionNameInput, setSessionNameInput] = useState("");
@@ -645,6 +655,175 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 setCheckingBackgroundHeartbeat(false);
             }
         }, [checkingBackgroundHeartbeat]);
+
+    const drainCurrentLocationQueueInForeground =
+        useCallback(async (): Promise<void> => {
+            /*
+             * 同じForeground期間中に多重起動しない。
+             */
+            if (foregroundQueueDrainRunningRef.current) {
+                return;
+            }
+
+            foregroundQueueDrainRunningRef.current = true;
+
+            try {
+                /*
+                 * UI側のstateではなく、
+                 * background taskと共有している保存済みstateを参照する。
+                 *
+                 * userId / sessionId / interval / distanceの不一致を防ぐ。
+                 */
+                const backgroundStatus = await getBackgroundRecordingStatus();
+
+                const backgroundState = backgroundStatus.state;
+
+                if (
+                    !backgroundState?.isRecording ||
+                    !backgroundState.recordingSessionId ||
+                    !backgroundState.userId
+                ) {
+                    return;
+                }
+
+                const { drainLocationQueueRepeatedly } =
+                    await import("../services/locationQueueUploadService");
+
+                /*
+                 * Foregroundではbackground callbackとは異なり、
+                 * SQLite pendingを連続して回収する。
+                 *
+                 * drainLocationQueueSafely() 1回あたりの最大2件という
+                 * background側の安全制限はそのまま利用し、
+                 * それを短い間隔で繰り返す。
+                 *
+                 * 1 pass:
+                 *   最大50 iteration × 2件 = 最大100件程度
+                 *
+                 * 最大3 passまで実行するため、
+                 * 1回のForeground復帰で最大約300件を回収できる。
+                 */
+                const MAX_FOREGROUND_DRAIN_PASSES = 3;
+
+                for (
+                    let passIndex = 0;
+                    passIndex < MAX_FOREGROUND_DRAIN_PASSES;
+                    passIndex += 1
+                ) {
+                    /*
+                     * drain中に再びbackgroundへ移った場合は、
+                     * その時点で高速回収を終了する。
+                     */
+                    if (AppState.currentState !== "active") {
+                        break;
+                    }
+
+                    const result = await drainLocationQueueRepeatedly({
+                        userId: backgroundState.userId,
+                        recordingSessionId: backgroundState.recordingSessionId,
+                        intervalMs: backgroundState.intervalMs,
+                        distanceMeters: backgroundState.distanceMeters,
+
+                        fallbackSharedOwners:
+                            backgroundState.liveShareOwnerValues ?? [],
+
+                        /*
+                         * Foreground復帰時は直近60秒分も対象にする。
+                         *
+                         * direct保存済みの場合は決定的IDによって
+                         * duplicateとして安全に処理される。
+                         *
+                         * direct保存に失敗してSQLiteだけに残った
+                         * 最新地点も回収対象にできる。
+                         */
+                        forceIncludeRecent: true,
+
+                        maxIterations: 50,
+                    });
+
+                    console.log("Foreground SQLite queue drain completed:", {
+                        passIndex: passIndex + 1,
+                        recordingSessionId: backgroundState.recordingSessionId,
+                        ...result,
+                    });
+
+                    /*
+                     * empty/completedなら回収終了。
+                     */
+                    if (
+                        result.stopReason === "empty" ||
+                        result.stopReason === "completed"
+                    ) {
+                        break;
+                    }
+
+                    /*
+                     * 通信エラー・timeout・別drain実行中の場合は、
+                     * このForeground復帰では無理に続行しない。
+                     */
+                    if (
+                        result.stopReason === "alreadyRunning" ||
+                        result.stopReason === "createFailed" ||
+                        result.stopReason === "createTimedOut" ||
+                        result.stopReason === "timeBudgetExceeded"
+                    ) {
+                        break;
+                    }
+
+                    /*
+                     * maxIterationsReached かつpendingが残っている場合だけ
+                     * 次passへ進む。
+                     */
+                    if (
+                        result.stopReason !== "maxIterationsReached" ||
+                        !result.remainingPendingCount ||
+                        result.remainingPendingCount <= 0
+                    ) {
+                        break;
+                    }
+                }
+            } catch (error) {
+                /*
+                 * Foreground queue回収失敗で
+                 * Home画面や自動記録を失敗させない。
+                 */
+                console.error(
+                    "Foreground SQLite location queue drain error:",
+                    error,
+                );
+            } finally {
+                foregroundQueueDrainRunningRef.current = false;
+            }
+        }, []);
+
+    useEffect(() => {
+        const subscription = AppState.addEventListener(
+            "change",
+            (nextAppState) => {
+                const previousAppState = appStateRef.current;
+
+                appStateRef.current = nextAppState;
+
+                /*
+                 * background / inactive
+                 *          ↓
+                 *        active
+                 *
+                 * になった時だけSQLite pendingを高速回収する。
+                 */
+                if (
+                    previousAppState !== "active" &&
+                    nextAppState === "active"
+                ) {
+                    void drainCurrentLocationQueueInForeground();
+                }
+            },
+        );
+
+        return () => {
+            subscription.remove();
+        };
+    }, [drainCurrentLocationQueueInForeground]);
 
     useFocusEffect(
         useCallback(() => {

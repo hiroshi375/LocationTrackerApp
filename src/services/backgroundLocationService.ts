@@ -293,11 +293,12 @@ export async function startBackgroundLocationRecording({
     );
 
     const locationTaskOptions = {
-        accuracy: Location.Accuracy.Balanced,
+        accuracy: Location.Accuracy.BestForNavigation,
         timeInterval: intervalMs,
         distanceInterval: distanceMeters,
-        deferredUpdatesInterval: intervalMs,
-        deferredUpdatesDistance: distanceMeters,
+        deferredUpdatesInterval: 0,
+        deferredUpdatesDistance: 0,
+        activityType: Location.ActivityType.Fitness,
         pausesUpdatesAutomatically: false,
         showsBackgroundLocationIndicator: true,
         foregroundService: {

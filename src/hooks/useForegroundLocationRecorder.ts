@@ -102,8 +102,6 @@ export function useForegroundLocationRecorder({
         number | null
     >(null);
 
-    const forceDistanceMeters = Math.max(distanceMeters * 5, 100);
-
     const normalizedLiveShareOwnerValues = useMemo(() => {
         return Array.from(new Set(liveShareOwnerValues.filter(Boolean)));
     }, [liveShareOwnerValues]);
@@ -129,23 +127,17 @@ export function useForegroundLocationRecorder({
                 longitude,
             );
 
-            //指定間隔未満なら保存しない
-            if (elapsedMs < intervalMs && distance < forceDistanceMeters) {
-                return false;
-            }
-
-            if (elapsedMs >= intervalMs) {
-                return true;
-            }
-
-            //100m以上動いた場合は例外的に保存
-            if (distance >= forceDistanceMeters) {
-                return true;
-            }
-
-            return false;
+            /*
+             * 保存条件：
+             * ・指定時間以上経過
+             *      OR
+             * ・指定距離以上移動
+             * 30秒 / 20m設定なら、
+             * 「30秒経過 または 20m移動」で保存する。
+             */
+            return elapsedMs >= intervalMs || distance >= distanceMeters;
         },
-        [intervalMs, forceDistanceMeters],
+        [intervalMs, distanceMeters],
     );
 
     //
@@ -705,7 +697,7 @@ export function useForegroundLocationRecorder({
             try {
                 const subscription = await Location.watchPositionAsync(
                     {
-                        accuracy: Location.Accuracy.Balanced,
+                        accuracy: Location.Accuracy.BestForNavigation,
                         timeInterval: intervalMs,
                         distanceInterval: distanceMeters,
                     },

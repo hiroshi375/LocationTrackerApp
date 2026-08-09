@@ -21,6 +21,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { getUrl } from "aws-amplify/storage";
+import * as Updates from "expo-updates";
 import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRecorder";
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
@@ -102,6 +103,15 @@ type SavedLocationHomeSettings = {
     recordIntervalMs?: number;
     recordDistanceMeters?: number;
     selectedLiveShareUsers?: UserProfileItem[];
+};
+
+type EasUpdateInfo = {
+    updateId: string | null;
+    channel: string | null;
+    runtimeVersion: string | null;
+    createdAt: string | null;
+    isEmbeddedLaunch: boolean;
+    isEnabled: boolean;
 };
 
 const LOCATION_HOME_SETTINGS_VERSION = 2;
@@ -400,6 +410,11 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
     const [backgroundHeartbeatCheckedAt, setBackgroundHeartbeatCheckedAt] =
         useState<number | null>(null);
+    const [checkingEasUpdateInfo, setCheckingEasUpdateInfo] = useState(false);
+
+    const [easUpdateInfo, setEasUpdateInfo] = useState<EasUpdateInfo | null>(
+        null,
+    );
     const continuationAlertKeyRef = useRef<string | null>(null);
     const handledAutoStoppedSessionIdRef = useRef<string | null>(null);
     /*
@@ -655,6 +670,38 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 setCheckingBackgroundHeartbeat(false);
             }
         }, [checkingBackgroundHeartbeat]);
+
+    const handleCheckEasUpdateInfo = useCallback(async (): Promise<void> => {
+        if (checkingEasUpdateInfo) {
+            return;
+        }
+
+        try {
+            setCheckingEasUpdateInfo(true);
+
+            const info: EasUpdateInfo = {
+                updateId: Updates.updateId ?? null,
+                channel: Updates.channel ?? null,
+                runtimeVersion: Updates.runtimeVersion ?? null,
+                createdAt:
+                    Updates.createdAt instanceof Date
+                        ? Updates.createdAt.toISOString()
+                        : null,
+                isEmbeddedLaunch: Updates.isEmbeddedLaunch,
+                isEnabled: Updates.isEnabled,
+            };
+
+            setEasUpdateInfo(info);
+
+            console.log("EAS Update info:", info);
+        } catch (error) {
+            console.error("Check EAS Update info error:", error);
+
+            Alert.alert("確認エラー", "EAS Update情報を確認できませんでした。");
+        } finally {
+            setCheckingEasUpdateInfo(false);
+        }
+    }, [checkingEasUpdateInfo]);
 
     const drainCurrentLocationQueueInForeground =
         useCallback(async (): Promise<void> => {
@@ -2016,6 +2063,75 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 )}
                             </View>
                         )}
+
+                        {/* EAS Update診断 */}
+                        <Pressable
+                            style={({ pressed }) => [
+                                styles.easUpdateButton,
+                                pressed &&
+                                    !checkingEasUpdateInfo &&
+                                    styles.buttonPressed,
+                                checkingEasUpdateInfo &&
+                                    styles.appButtonDisabled,
+                            ]}
+                            onPress={() => {
+                                void handleCheckEasUpdateInfo();
+                            }}
+                            disabled={checkingEasUpdateInfo}
+                        >
+                            <Text style={styles.easUpdateButtonText}>
+                                {checkingEasUpdateInfo
+                                    ? "EAS Update確認中..."
+                                    : "EAS Update情報を確認"}
+                            </Text>
+                        </Pressable>
+
+                        {easUpdateInfo && (
+                            <View style={styles.easUpdateInfoContainer}>
+                                <Text style={styles.easUpdateInfoTitle}>
+                                    EAS Update情報
+                                </Text>
+
+                                <Text style={styles.easUpdateInfoText}>
+                                    適用状態:{" "}
+                                    {easUpdateInfo.isEmbeddedLaunch
+                                        ? "ビルド内蔵版"
+                                        : "EAS Update適用済み"}
+                                </Text>
+
+                                <Text style={styles.easUpdateInfoText}>
+                                    Channel:{" "}
+                                    {easUpdateInfo.channel ?? "取得不可"}
+                                </Text>
+
+                                <Text style={styles.easUpdateInfoText}>
+                                    Runtime Version:{" "}
+                                    {easUpdateInfo.runtimeVersion ?? "取得不可"}
+                                </Text>
+
+                                <Text
+                                    style={styles.easUpdateInfoText}
+                                    selectable
+                                >
+                                    Update ID:{" "}
+                                    {easUpdateInfo.updateId ?? "取得不可"}
+                                </Text>
+
+                                <Text style={styles.easUpdateInfoText}>
+                                    Update作成日時:{" "}
+                                    {easUpdateInfo.createdAt
+                                        ? formatEasUpdateDateTime(
+                                              easUpdateInfo.createdAt,
+                                          )
+                                        : "取得不可"}
+                                </Text>
+
+                                <Text style={styles.easUpdateInfoText}>
+                                    expo-updates:{" "}
+                                    {easUpdateInfo.isEnabled ? "有効" : "無効"}
+                                </Text>
+                            </View>
+                        )}
                     </View>
 
                     <View style={styles.autoRecordMapButtonSpace}>
@@ -2418,6 +2534,27 @@ function formatDateTime(value: string) {
     const mi = String(date.getMinutes()).padStart(2, "0");
 
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+/*
+ * EAS Updateの作成日時表示用。
+ * Updateの識別に使うため秒まで表示する。
+ */
+function formatEasUpdateDateTime(value: string): string {
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+        return value;
+    }
+
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const dd = String(date.getDate()).padStart(2, "0");
+    const hh = String(date.getHours()).padStart(2, "0");
+    const mi = String(date.getMinutes()).padStart(2, "0");
+    const ss = String(date.getSeconds()).padStart(2, "0");
+
+    return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
 }
 
 function formatElapsedTime(totalSeconds: number) {
@@ -2904,9 +3041,49 @@ const styles = StyleSheet.create({
         color: "#777",
         fontSize: 11,
     },
+
+    easUpdateButton: {
+        marginTop: 12,
+        minHeight: 40,
+        borderRadius: 8,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#4b6f8f",
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+    },
+
+    easUpdateButtonText: {
+        color: "#fff",
+        fontSize: 14,
+        fontWeight: "bold",
+    },
+
+    easUpdateInfoContainer: {
+        marginTop: 10,
+        padding: 10,
+        borderRadius: 8,
+        backgroundColor: "#eef3f7",
+    },
+
+    easUpdateInfoTitle: {
+        color: "#2f4f66",
+        fontSize: 13,
+        fontWeight: "bold",
+        marginBottom: 4,
+    },
+
+    easUpdateInfoText: {
+        marginTop: 4,
+        color: "#444",
+        fontSize: 12,
+        lineHeight: 18,
+    },
+
     autoRecordMapButtonSpace: {
         marginTop: 10,
     },
+
     stoppingRecordingBox: {
         marginTop: 8,
         padding: 10,

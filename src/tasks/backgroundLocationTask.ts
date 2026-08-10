@@ -95,6 +95,17 @@ export type BackgroundLocationTaskHeartbeat = {
  */
 const ENABLE_BACKGROUND_LOCATION_DEBUG_LOG = true;
 
+/*
+ * 同一LocationLog IDに対するcreateの並行実行を防止する。
+ *
+ * Promise.raceのtimeout後も、元のGraphQL Promiseは継続する可能性がある。
+ * そのためtimeout時には削除せず、
+ * 元のcreate Promise自体がresolve/rejectした時だけ削除する。
+ *
+ * backgroundLocationTask全体を直列化するものではない。
+ */
+const inFlightLocationLogCreateIds = new Set<string>();
+
 type BackgroundRecordingState = {
     userId: string;
 
@@ -352,6 +363,23 @@ async function withTimeout<T>(
     }
 }
 
+class LocationLogCreateAlreadyInFlightError extends Error {
+    readonly locationLogId: string;
+
+    constructor(locationLogId: string) {
+        super(`LocationLog.create is already in flight: ${locationLogId}`);
+
+        this.name = "LocationLogCreateAlreadyInFlightError";
+        this.locationLogId = locationLogId;
+    }
+}
+
+function isLocationLogCreateAlreadyInFlightError(
+    error: unknown,
+): error is LocationLogCreateAlreadyInFlightError {
+    return error instanceof LocationLogCreateAlreadyInFlightError;
+}
+
 async function prepareBackgroundAuthSession(): Promise<BackgroundAuthSessionResult> {
     try {
         /*
@@ -447,9 +475,8 @@ async function createLocationLogWithAuthRetry(
     let firstResult: any;
 
     try {
-        firstResult = await withTimeout(
-            client.models.LocationLog.create(input),
-            LOCATION_LOG_CREATE_TIMEOUT_MS,
+        firstResult = await createLocationLogSingleFlight(
+            input,
             "Background LocationLog.create",
         );
     } catch (error) {
@@ -485,9 +512,8 @@ async function createLocationLogWithAuthRetry(
             throw refreshError;
         }
 
-        const retryResult = await withTimeout(
-            client.models.LocationLog.create(input),
-            LOCATION_LOG_CREATE_TIMEOUT_MS,
+        const retryResult = await createLocationLogSingleFlight(
+            input,
             "Background LocationLog.create retry",
         );
 
@@ -528,9 +554,8 @@ async function createLocationLogWithAuthRetry(
         };
     }
 
-    const retryResult = await withTimeout(
-        client.models.LocationLog.create(input),
-        LOCATION_LOG_CREATE_TIMEOUT_MS,
+    const retryResult = await createLocationLogSingleFlight(
+        input,
         "Background LocationLog.create retry",
     );
 
@@ -539,6 +564,61 @@ async function createLocationLogWithAuthRetry(
         authRefreshAttempted: true,
         authRefreshSucceeded: true,
     };
+}
+
+async function createLocationLogSingleFlight(
+    input: LocationLogCreateInput,
+    operationName: string,
+): Promise<any> {
+    const locationLogId = input.id;
+
+    if (inFlightLocationLogCreateIds.has(locationLogId)) {
+        throw new LocationLogCreateAlreadyInFlightError(locationLogId);
+    }
+
+    /*
+     * create開始前に登録する。
+     * JavaScriptはこの区間では同期的に実行されるため、
+     * 同一runtime内で同じIDが同時に登録されることを防げる。
+     */
+    inFlightLocationLogCreateIds.add(locationLogId);
+
+    /*
+     * 重要：
+     * withTimeout()より前に、生のPromiseを保持する。
+     */
+    let rawCreatePromise: Promise<any>;
+
+    try {
+        rawCreatePromise = client.models.LocationLog.create(input);
+    } catch (error) {
+        inFlightLocationLogCreateIds.delete(locationLogId);
+        throw error;
+    }
+
+    /*
+     * timeoutではなく、
+     * 生のGraphQL Promiseが本当に完了した時だけ解除する。
+     */
+    void rawCreatePromise.then(
+        () => {
+            inFlightLocationLogCreateIds.delete(locationLogId);
+        },
+        () => {
+            inFlightLocationLogCreateIds.delete(locationLogId);
+        },
+    );
+
+    /*
+     * 呼び出し元を無期限に待たせないためのtimeout。
+     *
+     * timeoutしてもinFlightはここでは削除しない。
+     */
+    return await withTimeout(
+        rawCreatePromise,
+        LOCATION_LOG_CREATE_TIMEOUT_MS,
+        operationName,
+    );
 }
 
 TaskManager.defineTask(
@@ -2040,6 +2120,41 @@ async function saveBackgroundLocation(
             nextState,
         };
     } catch (error) {
+        if (isLocationLogCreateAlreadyInFlightError(error)) {
+            console.log("Skip in-flight background LocationLog create:", {
+                recordingSessionId,
+                recordedAt,
+                latitude,
+                longitude,
+                locationLogId: error.locationLogId,
+            });
+
+            return {
+                saved: false,
+                nextState: state,
+                skippedReason: "inProgressDuplicate",
+            };
+        }
+
+        // ② deterministic ID重複
+        if (isDuplicateLocationCreateError(error)) {
+            console.log(
+                "Skip duplicate background LocationLog exception by deterministic id:",
+                {
+                    recordingSessionId,
+                    recordedAt,
+                    latitude,
+                    longitude,
+                },
+            );
+
+            return {
+                saved: false,
+                nextState: state,
+                skippedReason: "exactDuplicate",
+            };
+        }
+
         /*
          * LocationLog.create()が重複をresult.errorsではなく
          * 例外としてthrowした場合も、正常な重複スキップとして扱う。
@@ -2088,24 +2203,6 @@ async function saveBackgroundLocation(
                 saved: false,
                 nextState: state,
                 errorMessage,
-            };
-        }
-
-        if (isDuplicateLocationCreateError(error)) {
-            console.log(
-                "Skip duplicate background LocationLog exception by deterministic id:",
-                {
-                    recordingSessionId,
-                    recordedAt,
-                    latitude,
-                    longitude,
-                },
-            );
-
-            return {
-                saved: false,
-                nextState: state,
-                skippedReason: "exactDuplicate",
             };
         }
 

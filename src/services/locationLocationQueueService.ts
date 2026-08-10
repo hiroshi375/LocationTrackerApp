@@ -2,6 +2,11 @@ import * as Location from "expo-location";
 import * as SQLite from "expo-sqlite";
 
 import {
+    calculateDistanceMeters,
+    NEAR_DUPLICATE_DISTANCE_METERS,
+    NEAR_DUPLICATE_TIME_MS,
+} from "../utils/locationDuplicate";
+import {
     createLocationLogId,
     createLocationUniqueKey,
 } from "./locationLogDeduplicationService";
@@ -768,4 +773,130 @@ export async function debugPrintLocationQueueSkipReasons(
             rows,
         }),
     );
+}
+
+type NearDuplicateDiagnosticRow = {
+    location_log_id: string;
+    recorded_at: string;
+    recorded_at_ms: number;
+    latitude: number;
+    longitude: number;
+    accuracy: number | null;
+    processed_at: string | null;
+
+    reference_location_log_id: string | null;
+    reference_recorded_at: string | null;
+    reference_recorded_at_ms: number | null;
+    reference_latitude: number | null;
+    reference_longitude: number | null;
+};
+
+export async function debugPrintNearDuplicateDetails(
+    recordingSessionId: string,
+): Promise<void> {
+    const db = await getDatabase();
+
+    const rows = await db.getAllAsync<NearDuplicateDiagnosticRow>(
+        `
+        SELECT
+            s.location_log_id,
+            s.recorded_at,
+            s.recorded_at_ms,
+            s.latitude,
+            s.longitude,
+            s.accuracy,
+            s.processed_at,
+
+            a.location_log_id AS reference_location_log_id,
+            a.recorded_at AS reference_recorded_at,
+            a.recorded_at_ms AS reference_recorded_at_ms,
+            a.latitude AS reference_latitude,
+            a.longitude AS reference_longitude
+
+        FROM ${TABLE_NAME} s
+
+        LEFT JOIN ${TABLE_NAME} a
+            ON a.location_log_id = (
+                SELECT a2.location_log_id
+                FROM ${TABLE_NAME} a2
+                WHERE
+                    a2.user_id = s.user_id
+                    AND a2.recording_session_id = s.recording_session_id
+                    AND a2.queue_status IN ('sent', 'duplicate')
+                    AND a2.processed_at IS NOT NULL
+                    AND s.processed_at IS NOT NULL
+                    AND a2.processed_at <= s.processed_at
+                ORDER BY a2.recorded_at_ms DESC
+                LIMIT 1
+            )
+
+        WHERE
+            s.recording_session_id = $recordingSessionId
+            AND s.queue_status = 'skipped'
+            AND s.skip_reason = 'nearDuplicate'
+
+        ORDER BY s.recorded_at_ms ASC
+        `,
+        {
+            $recordingSessionId: recordingSessionId,
+        },
+    );
+
+    console.log(
+        "SQLite nearDuplicate diagnostics summary:",
+        JSON.stringify({
+            recordingSessionId,
+            count: rows.length,
+            nearDuplicateTimeMs: NEAR_DUPLICATE_TIME_MS,
+            nearDuplicateDistanceMeters: NEAR_DUPLICATE_DISTANCE_METERS,
+        }),
+    );
+
+    rows.forEach((row, index) => {
+        let elapsedMs: number | null = null;
+        let distanceMeters: number | null = null;
+
+        if (
+            row.reference_recorded_at_ms != null &&
+            row.reference_latitude != null &&
+            row.reference_longitude != null
+        ) {
+            elapsedMs = Math.abs(
+                row.recorded_at_ms - row.reference_recorded_at_ms,
+            );
+
+            distanceMeters = calculateDistanceMeters(
+                row.reference_latitude,
+                row.reference_longitude,
+                row.latitude,
+                row.longitude,
+            );
+        }
+
+        console.log(
+            "SQLite nearDuplicate diagnostic:",
+            JSON.stringify({
+                no: index + 1,
+
+                recordedAt: row.recorded_at,
+                latitude: row.latitude,
+                longitude: row.longitude,
+                accuracy: row.accuracy,
+
+                referenceRecordedAt: row.reference_recorded_at,
+                referenceLatitude: row.reference_latitude,
+                referenceLongitude: row.reference_longitude,
+
+                elapsedMs,
+                distanceMeters,
+
+                within3Seconds:
+                    elapsedMs != null && elapsedMs <= NEAR_DUPLICATE_TIME_MS,
+
+                within5Meters:
+                    distanceMeters != null &&
+                    distanceMeters <= NEAR_DUPLICATE_DISTANCE_METERS,
+            }),
+        );
+    });
 }

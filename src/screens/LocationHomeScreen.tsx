@@ -35,7 +35,7 @@ import {
 } from "../services/backgroundLocationService";
 import {
     debugPrintLocationQueueSkipReasons,
-    debugPrintNearDuplicateDetails,
+    debugPrintSaveConditionNotMetDetails,
 } from "../services/locationLocationQueueService";
 import {
     clearRecordingContinuationState,
@@ -1279,7 +1279,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
             await debugPrintLocationQueueSkipReasons(recordingSessionId);
 
-            await debugPrintNearDuplicateDetails(recordingSessionId);
+            await debugPrintSaveConditionNotMetDetails(recordingSessionId);
         } catch (error) {
             console.error("SQLite skip reason debug failed:", error);
         }

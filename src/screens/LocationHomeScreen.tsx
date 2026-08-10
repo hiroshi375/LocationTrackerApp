@@ -33,6 +33,7 @@ import {
     isForegroundLocationPermissionError,
     type BackgroundLocationHeartbeatStatus,
 } from "../services/backgroundLocationService";
+import { debugPrintLocationQueueSkipReasons } from "../services/locationLocationQueueService";
 import {
     clearRecordingContinuationState,
     getRecordingContinuationState,
@@ -1269,6 +1270,16 @@ export default function LocationHomeScreen({ navigation }: Props) {
             stoppingRecording,
         ]);
 
+    const handleDebugSQLiteSkipReasons = async () => {
+        try {
+            await debugPrintLocationQueueSkipReasons(
+                "session-1786392243158-zldkkj1c",
+            );
+        } catch (error) {
+            console.error("SQLite skip reason debug failed:", error);
+        }
+    };
+
     const confirmStopRecording = useCallback((): void => {
         if (stoppingRecording) {
             return;
@@ -2301,6 +2312,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
                 {isAdmin && (
                     <View style={styles.buttonSpace}>
+                        <AppButton
+                            title="SQLite skip理由を確認"
+                            onPress={handleDebugSQLiteSkipReasons}
+                        />
                         <AppButton
                             title={
                                 backfillingSessions

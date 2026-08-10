@@ -735,3 +735,34 @@ function normalizeNullableNumber(
 ): number | null {
     return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
+
+export async function debugPrintLocationQueueSkipReasons(
+    recordingSessionId: string,
+): Promise<void> {
+    const db = await getDatabase();
+
+    const rows = await db.getAllAsync<{
+        skip_reason: string | null;
+        count: number;
+    }>(
+        `
+        SELECT
+            skip_reason,
+            COUNT(*) AS count
+        FROM ${TABLE_NAME}
+        WHERE
+            recording_session_id = $recordingSessionId
+            AND queue_status = 'skipped'
+        GROUP BY skip_reason
+        ORDER BY count DESC
+        `,
+        {
+            $recordingSessionId: recordingSessionId,
+        },
+    );
+
+    console.log("SQLite queue skip reasons:", {
+        recordingSessionId,
+        rows,
+    });
+}

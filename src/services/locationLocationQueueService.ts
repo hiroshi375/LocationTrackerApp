@@ -761,8 +761,11 @@ export async function debugPrintLocationQueueSkipReasons(
         },
     );
 
-    console.log("SQLite queue skip reasons:", {
-        recordingSessionId,
-        rows,
-    });
+    console.log(
+        "SQLite queue skip reasons:",
+        JSON.stringify({
+            recordingSessionId,
+            rows,
+        }),
+    );
 }

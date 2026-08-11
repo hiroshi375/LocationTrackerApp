@@ -837,6 +837,7 @@ export function useForegroundLocationRecorder({
                     fallbackSharedOwners: normalizedLiveShareOwnerValues,
                     maxIterations: 30,
                     forceIncludeRecent: true,
+                    forceRetryNow: true,
                 });
 
                 console.log("Stop SQLite queue drain completed:", {

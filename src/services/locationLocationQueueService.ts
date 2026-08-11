@@ -61,6 +61,7 @@ export type PendingLocationQueueRow = {
 
     queue_status: LocationQueueStatus;
     send_attempt_count: number;
+    last_send_attempt_at: string | null;
     shared_owners_json: string | null;
 };
 
@@ -385,11 +386,20 @@ export async function getPendingLocationQueueRows(input: {
     recordingSessionId: string;
     olderThanMs: number;
     limit: number;
+
+    /**
+     * 再送済み行を再取得してよい最終時刻。
+     *
+     * null の場合は再送クールダウンを無効化する。
+     * 初回送信（send_attempt_count = 0）は常に対象。
+     */
+    retryBeforeIso?: string | null;
 }): Promise<PendingLocationQueueRow[]> {
     const db = await getDatabase();
 
     const safeLimit = Math.max(1, Math.min(Math.trunc(input.limit), 100));
     const olderThanMs = Math.trunc(input.olderThanMs);
+    const retryBeforeIso = input.retryBeforeIso ?? null;
 
     return db.getAllAsync<PendingLocationQueueRow>(
         `
@@ -411,6 +421,7 @@ export async function getPendingLocationQueueRows(input: {
             speed,
             queue_status,
             send_attempt_count,
+            last_send_attempt_at,
             shared_owners_json
         FROM ${TABLE_NAME}
         WHERE
@@ -418,6 +429,12 @@ export async function getPendingLocationQueueRows(input: {
             AND user_id = $userId
             AND recording_session_id = $recordingSessionId
             AND recorded_at_ms <= $olderThanMs
+            AND (
+                send_attempt_count = 0
+                OR last_send_attempt_at IS NULL
+                OR $retryBeforeIso IS NULL
+                OR last_send_attempt_at <= $retryBeforeIso
+            )
         ORDER BY recorded_at_ms ASC
         LIMIT $limit
         `,
@@ -425,6 +442,7 @@ export async function getPendingLocationQueueRows(input: {
             $userId: input.userId,
             $recordingSessionId: input.recordingSessionId,
             $olderThanMs: olderThanMs,
+            $retryBeforeIso: retryBeforeIso,
             $limit: safeLimit,
         },
     );
@@ -456,6 +474,7 @@ export async function getLatestAcceptedLocationQueueRow(input: {
             speed,
             queue_status,
             send_attempt_count,
+            last_send_attempt_at,
             shared_owners_json
         FROM ${TABLE_NAME}
         WHERE

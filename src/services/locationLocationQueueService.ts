@@ -1021,3 +1021,156 @@ export async function debugPrintSaveConditionNotMetDetails(
         );
     });
 }
+
+type SaveThresholdTimelineRow = {
+    location_log_id: string;
+    recorded_at: string;
+    recorded_at_ms: number;
+    latitude: number;
+    longitude: number;
+    accuracy: number | null;
+    queue_status: string;
+    skip_reason: string | null;
+    processed_at: string | null;
+};
+
+export async function debugPrintSaveThresholdTimeline(
+    recordingSessionId: string,
+): Promise<void> {
+    const db = await getDatabase();
+
+    const rows = await db.getAllAsync<SaveThresholdTimelineRow>(
+        `
+        SELECT
+            location_log_id,
+            recorded_at,
+            recorded_at_ms,
+            latitude,
+            longitude,
+            accuracy,
+            queue_status,
+            skip_reason,
+            processed_at
+        FROM ${TABLE_NAME}
+        WHERE recording_session_id = $recordingSessionId
+        ORDER BY recorded_at_ms ASC
+        `,
+        {
+            $recordingSessionId: recordingSessionId,
+        },
+    );
+
+    let reference: SaveThresholdTimelineRow | null = null;
+
+    let candidate: {
+        row: SaveThresholdTimelineRow;
+        distanceMeters: number;
+        elapsedMs: number;
+        reference: SaveThresholdTimelineRow;
+    } | null = null;
+
+    let caseNo = 0;
+
+    for (const row of rows) {
+        if (!reference) {
+            if (
+                row.queue_status === "sent" ||
+                row.queue_status === "duplicate"
+            ) {
+                reference = row;
+            }
+            continue;
+        }
+
+        const elapsedMs = row.recorded_at_ms - reference.recorded_at_ms;
+
+        const distanceMeters = calculateDistanceMeters(
+            reference.latitude,
+            reference.longitude,
+            row.latitude,
+            row.longitude,
+        );
+
+        // 15m以上20m未満でsaveConditionNotMetになった地点を記憶
+        if (
+            row.queue_status === "skipped" &&
+            row.skip_reason === "saveConditionNotMet" &&
+            distanceMeters >= 15 &&
+            distanceMeters < 20 &&
+            elapsedMs < 30_000
+        ) {
+            candidate = {
+                row,
+                distanceMeters,
+                elapsedMs,
+                reference,
+            };
+
+            continue;
+        }
+
+        if (candidate) {
+            const candidateReference = candidate.reference;
+
+            const distanceFromCandidateReference = calculateDistanceMeters(
+                candidateReference.latitude,
+                candidateReference.longitude,
+                row.latitude,
+                row.longitude,
+            );
+
+            const elapsedFromCandidateReferenceMs =
+                row.recorded_at_ms - candidateReference.recorded_at_ms;
+
+            const thresholdReached =
+                distanceFromCandidateReference >= 20 ||
+                elapsedFromCandidateReferenceMs >= 30_000;
+
+            if (thresholdReached) {
+                caseNo += 1;
+
+                const correctlyAccepted =
+                    row.queue_status === "sent" ||
+                    row.queue_status === "duplicate";
+
+                console.log(
+                    "SQLite save threshold diagnostic:",
+                    JSON.stringify({
+                        no: caseNo,
+
+                        referenceRecordedAt: candidateReference.recorded_at,
+
+                        skippedRecordedAt: candidate.row.recorded_at,
+                        skippedDistanceMeters: candidate.distanceMeters,
+                        skippedElapsedSeconds: candidate.elapsedMs / 1000,
+
+                        thresholdRecordedAt: row.recorded_at,
+                        thresholdDistanceMeters: distanceFromCandidateReference,
+                        thresholdElapsedSeconds:
+                            elapsedFromCandidateReferenceMs / 1000,
+
+                        queueStatus: row.queue_status,
+                        skipReason: row.skip_reason,
+
+                        correctlyAccepted,
+                    }),
+                );
+
+                candidate = null;
+            }
+        }
+
+        // 実際にacceptedになった地点で基準点更新
+        if (row.queue_status === "sent" || row.queue_status === "duplicate") {
+            reference = row;
+        }
+    }
+
+    console.log(
+        "SQLite save threshold diagnostics summary:",
+        JSON.stringify({
+            recordingSessionId,
+            caseCount: caseNo,
+        }),
+    );
+}

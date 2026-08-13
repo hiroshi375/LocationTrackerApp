@@ -583,37 +583,25 @@ export default function LocationLogScreen({ navigation }: Props) {
             const locationLogModel = client.models.LocationLog as any;
 
             do {
-                const listParams: {
-                    filter: {
-                        recordingSessionId: {
-                            eq: string;
-                        };
-                    };
-                    limit: number;
-                    nextToken?: string;
-                } = {
-                    filter: {
-                        recordingSessionId: {
-                            eq: recordingSessionId,
+                const result =
+                    (await locationLogModel.listLocationLogsBySessionAndRecordedAt(
+                        {
+                            recordingSessionId,
                         },
-                    },
-                    limit: 1000,
-                };
-
-                if (nextToken) {
-                    listParams.nextToken = nextToken;
-                }
-
-                const result = (await locationLogModel.list(
-                    listParams,
-                )) as LocationLogListResult;
+                        {
+                            sortDirection: "ASC",
+                            limit: 1000,
+                            nextToken: nextToken ?? undefined,
+                        },
+                    )) as LocationLogListResult;
 
                 if (result.errors) {
                     console.error(
-                        "LocationLog session list errors:",
+                        "LocationLog session index query errors:",
                         result.errors,
                     );
-                    throw new Error("LocationLog session list failed");
+
+                    throw new Error("LocationLog session index query failed");
                 }
 
                 allData.push(...(result.data ?? []));
@@ -1744,40 +1732,27 @@ async function loadSessionPointCounts(
     let nextToken: string | null = null;
 
     do {
-        const listParams: {
-            filter: {
-                recordingSessionId: {
-                    eq: string;
-                };
-            };
-            limit: number;
-            nextToken?: string;
-        } = {
-            filter: {
-                recordingSessionId: {
-                    eq: recordingSessionId,
+        const result =
+            (await locationLogModel.listLocationLogsBySessionAndRecordedAt(
+                {
+                    recordingSessionId,
                 },
-            },
-            limit: 1000,
-        };
-
-        if (nextToken) {
-            listParams.nextToken = nextToken;
-        }
-
-        const result = (await locationLogModel.list(
-            listParams,
-        )) as LocationLogListResult;
+                {
+                    sortDirection: "ASC",
+                    limit: 1000,
+                    nextToken: nextToken ?? undefined,
+                },
+            )) as LocationLogListResult;
 
         if (result.errors) {
-            console.error("LocationLog point count errors:", result.errors, {
-                recordingSessionId,
-            });
+            console.error(
+                "LocationLog point count index query errors:",
+                result.errors,
+                {
+                    recordingSessionId,
+                },
+            );
 
-            /*
-             * 内訳の取得に失敗しても、
-             * アクティビティ一覧全体は表示する。
-             */
             return {
                 pointCount: 0,
                 foregroundPointCount: 0,

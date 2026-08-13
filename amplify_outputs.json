@@ -183,6 +183,17 @@
               "properties": {}
             },
             {
+              "type": "key",
+              "properties": {
+                "name": "locationLogsByRecordingSessionIdAndRecordedAt",
+                "queryField": "listLocationLogsBySessionAndRecordedAt",
+                "fields": [
+                  "recordingSessionId",
+                  "recordedAt"
+                ]
+              }
+            },
+            {
               "type": "auth",
               "properties": {
                 "rules": [

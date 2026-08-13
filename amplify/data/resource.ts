@@ -30,6 +30,17 @@ const schema = a.schema({
             activityType: a.string(),
             isAggregationTarget: a.boolean(),
         })
+        .secondaryIndexes((index) => [
+            /*
+             * recordingSessionIdごとのLocationLogを
+             * recordedAt順にQueryできるようにする。
+             *
+             * 「地図で表示」などで全LocationLogをfilterする必要がなくなる。
+             */
+            index("recordingSessionId")
+                .sortKeys(["recordedAt"])
+                .queryField("listLocationLogsBySessionAndRecordedAt"),
+        ])
         .authorization((allow) => [
             allow.owner(),
             allow.ownersDefinedIn("sharedOwners").to(["read"]),

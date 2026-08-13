@@ -21,6 +21,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { getUrl } from "aws-amplify/storage";
+import * as Location from "expo-location";
 import * as Updates from "expo-updates";
 import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRecorder";
 import { client } from "../lib/client";
@@ -169,6 +170,15 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [backfillingSessions, setBackfillingSessions] = useState(false);
     const [backfillProgress, setBackfillProgress] =
         useState<RecordingSessionBackfillProgress | null>(null);
+    const [
+        hasBackgroundLocationPermission,
+        setHasBackgroundLocationPermission,
+    ] = useState(false);
+
+    const [
+        checkingBackgroundLocationPermission,
+        setCheckingBackgroundLocationPermission,
+    ] = useState(true);
 
     const handleForceEasUpdate = useCallback(async (): Promise<void> => {
         try {
@@ -656,6 +666,29 @@ export default function LocationHomeScreen({ navigation }: Props) {
                   .map((user) => user.displayName || user.email || "名前未設定")
                   .join("、");
 
+    const refreshBackgroundLocationPermission =
+        useCallback(async (): Promise<void> => {
+            try {
+                setCheckingBackgroundLocationPermission(true);
+
+                const permission =
+                    await Location.getBackgroundPermissionsAsync();
+
+                setHasBackgroundLocationPermission(
+                    permission.status === Location.PermissionStatus.GRANTED,
+                );
+            } catch (error) {
+                console.error(
+                    "Check background location permission error:",
+                    error,
+                );
+
+                setHasBackgroundLocationPermission(false);
+            } finally {
+                setCheckingBackgroundLocationPermission(false);
+            }
+        }, []);
+
     const handleStartRecording = async () => {
         if (startingRecording) {
             return;
@@ -842,6 +875,11 @@ export default function LocationHomeScreen({ navigation }: Props) {
                          */
                         forceIncludeRecent: true,
 
+                        /*
+                         * foregroundでは1回に最大10行処理する。
+                         * background callbackは未指定なので従来通り2行。
+                         */
+                        maxItems: 10,
                         maxIterations: 50,
                     });
 
@@ -919,6 +957,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     previousAppState !== "active" &&
                     nextAppState === "active"
                 ) {
+                    /*
+                     * 設定画面から戻った場合も、
+                     * 「常に許可」状態を再確認する。
+                     */
+                    void refreshBackgroundLocationPermission();
+
                     void drainCurrentLocationQueueInForeground();
                 }
             },
@@ -927,7 +971,14 @@ export default function LocationHomeScreen({ navigation }: Props) {
         return () => {
             subscription.remove();
         };
-    }, [drainCurrentLocationQueueInForeground]);
+    }, [
+        drainCurrentLocationQueueInForeground,
+        refreshBackgroundLocationPermission,
+    ]);
+
+    useEffect(() => {
+        void refreshBackgroundLocationPermission();
+    }, [refreshBackgroundLocationPermission]);
 
     useFocusEffect(
         useCallback(() => {
@@ -2245,32 +2296,47 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             </Text>
                         </Pressable>
                     ) : (
-                        <Pressable
-                            style={({ pressed }) => [
-                                styles.autoRecordStartButton,
-                                pressed &&
-                                    hasLoadedSavedHomeSettings &&
-                                    !startingRecording &&
-                                    styles.buttonPressed,
-                                (!hasLoadedSavedHomeSettings ||
-                                    startingRecording) &&
-                                    styles.appButtonDisabled,
-                            ]}
-                            onPress={handleStartRecording}
-                            disabled={
-                                !hasLoadedSavedHomeSettings || startingRecording
-                            }
-                        >
-                            <Text style={styles.autoRecordButtonText}>
-                                {!hasLoadedSavedHomeSettings
-                                    ? "設定を読み込み中..."
-                                    : startingRecording
-                                      ? "自動記録を開始中..."
-                                      : selectedLiveShareUsers.length > 0
-                                        ? "自動記録開始＋共有"
-                                        : "自動記録開始"}
-                            </Text>
-                        </Pressable>
+                        <>
+                            <Pressable
+                                style={({ pressed }) => [
+                                    styles.autoRecordStartButton,
+                                    pressed &&
+                                        hasLoadedSavedHomeSettings &&
+                                        !startingRecording &&
+                                        styles.buttonPressed,
+                                    (!hasLoadedSavedHomeSettings ||
+                                        startingRecording ||
+                                        checkingBackgroundLocationPermission ||
+                                        !hasBackgroundLocationPermission) &&
+                                        styles.appButtonDisabled,
+                                ]}
+                                onPress={handleStartRecording}
+                                disabled={
+                                    !hasLoadedSavedHomeSettings ||
+                                    startingRecording ||
+                                    checkingBackgroundLocationPermission ||
+                                    !hasBackgroundLocationPermission
+                                }
+                            >
+                                <Text style={styles.autoRecordButtonText}>
+                                    {!hasLoadedSavedHomeSettings
+                                        ? "設定を読み込み中..."
+                                        : startingRecording
+                                          ? "自動記録を開始中..."
+                                          : selectedLiveShareUsers.length > 0
+                                            ? "自動記録開始＋共有"
+                                            : "自動記録開始"}
+                                </Text>
+                            </Pressable>
+
+                            {!checkingBackgroundLocationPermission &&
+                                !hasBackgroundLocationPermission && (
+                                    <Text style={styles.permissionWarningText}>
+                                        自動記録を開始するには、端末の設定で
+                                        位置情報を「常に許可」にしてください。
+                                    </Text>
+                                )}
+                        </>
                     )}
                 </View>
 
@@ -3286,5 +3352,12 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: "#5f6f7c",
         textAlign: "center",
+    },
+
+    permissionWarningText: {
+        marginTop: 8,
+        fontSize: 12,
+        color: "#b42318",
+        lineHeight: 18,
     },
 });

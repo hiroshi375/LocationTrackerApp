@@ -57,6 +57,16 @@ type LiveLocationMutationResult = {
     errors?: unknown;
 };
 
+const FOREGROUND_LOCATION_SAMPLE_INTERVAL_MS = 5_000;
+
+function getForegroundLocationSampleIntervalMs(intervalMs: number): number {
+    if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+        return FOREGROUND_LOCATION_SAMPLE_INTERVAL_MS;
+    }
+
+    return Math.min(intervalMs, FOREGROUND_LOCATION_SAMPLE_INTERVAL_MS);
+}
+
 export function useForegroundLocationRecorder({
     intervalMs,
     distanceMeters,
@@ -698,8 +708,15 @@ export function useForegroundLocationRecorder({
                 const subscription = await Location.watchPositionAsync(
                     {
                         accuracy: Location.Accuracy.BestForNavigation,
-                        timeInterval: intervalMs,
-                        distanceInterval: distanceMeters,
+
+                        /*
+                         * native側は細かく位置を取得する。
+                         * 実際の保存条件はshouldSaveLocation()の
+                         * 「時間 OR 距離」で判定する。
+                         */
+                        timeInterval:
+                            getForegroundLocationSampleIntervalMs(intervalMs),
+                        distanceInterval: 0,
                     },
                     async (location) => {
                         if (appStateRef.current !== "active") {
@@ -769,7 +786,12 @@ export function useForegroundLocationRecorder({
                     intervalMs,
                     distanceMeters,
                     fallbackSharedOwners: normalizedLiveShareOwnerValues,
-                    maxIterations: 20,
+
+                    /*
+                     * foregroundではbackground callbackより積極的に回収する。
+                     */
+                    maxItems: 10,
+                    maxIterations: 50,
                 });
 
                 console.log("Foreground SQLite queue drain completed:", {
@@ -835,7 +857,10 @@ export function useForegroundLocationRecorder({
                     intervalMs,
                     distanceMeters,
                     fallbackSharedOwners: normalizedLiveShareOwnerValues,
-                    maxIterations: 30,
+
+                    maxItems: 10,
+                    maxIterations: 50,
+
                     forceIncludeRecent: true,
                     forceRetryNow: true,
                 });

@@ -6,9 +6,30 @@ import { client } from "../lib/client";
 const LOCATION_LOG_SAVE_LOCK_STORAGE_KEY =
     "location-tracker-location-log-save-lock";
 
-const LOCK_TTL_MS = 15_000;
-const LOCK_RETRY_INTERVAL_MS = 50;
-const LOCK_MAX_RETRY_COUNT = 100;
+/*
+ * LocationLog direct保存用ロック。
+ *
+ * 重要：
+ * ロックが使用中の場合は待機しない。
+ *
+ * OSから受信した地点はbackgroundLocationTask側で
+ * 先にSQLiteへ保存されているため、
+ * direct保存が競合した場合はSQLite再送へ任せる。
+ *
+ * これにより、background callbackが
+ * ロック待ちで数分～数十分滞留することを防ぐ。
+ */
+const LOCK_TTL_MS = 30_000;
+
+/*
+ * 同一JS runtime内ではAsyncStorageより先に
+ * メモリ上で排他する。
+ *
+ * AsyncStorageのread → write → readだけでは
+ * 完全なatomic lockにはならないため、
+ * 同一runtime内の同時処理をここで即座に防止する。
+ */
+const activeLocationSaveLocks = new Map<string, string>();
 
 type LocationSaveLockRecord = {
     scopeKey: string;
@@ -72,36 +93,81 @@ export async function acquireLocationSaveLock(
 ): Promise<LocationSaveLock | null> {
     const token = `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 
-    for (let attempt = 0; attempt < LOCK_MAX_RETRY_COUNT; attempt += 1) {
-        const now = Date.now();
-        const current = await readLockRecord();
-
-        if (!current || current.expiresAt <= now) {
-            const next: LocationSaveLockRecord = {
-                scopeKey,
-                token,
-                expiresAt: now + LOCK_TTL_MS,
-            };
-
-            await AsyncStorage.setItem(
-                LOCATION_LOG_SAVE_LOCK_STORAGE_KEY,
-                JSON.stringify(next),
-            );
-
-            const confirmed = await readLockRecord();
-
-            if (confirmed?.scopeKey === scopeKey && confirmed.token === token) {
-                return {
-                    scopeKey,
-                    token,
-                };
-            }
-        }
-
-        await sleep(LOCK_RETRY_INTERVAL_MS);
+    /*
+     * 同一JS runtime内で既に同じセッションの保存処理が動いているなら、
+     * 待機せず即座に諦める。
+     *
+     * background側では対象地点が先にSQLiteへ保存されているため、
+     * 後からSQLite queueで回収できる。
+     */
+    if (activeLocationSaveLocks.has(scopeKey)) {
+        return null;
     }
 
-    return null;
+    /*
+     * awaitを挟む前に同期的に確保する。
+     * これにより同一runtime内の別callbackが
+     * AsyncStorage処理へ入ること自体を防ぐ。
+     */
+    activeLocationSaveLocks.set(scopeKey, token);
+
+    try {
+        const now = Date.now();
+
+        const current = await readLockRecord();
+
+        /*
+         * 有効な永続ロックが存在する場合も待たない。
+         *
+         * 以前は最大100回リトライしていたが、
+         * background callback滞留の原因になるため即returnする。
+         */
+        if (current && current.expiresAt > now) {
+            activeLocationSaveLocks.delete(scopeKey);
+
+            return null;
+        }
+
+        /*
+         * ロックが存在しない、またはTTL切れの場合だけ取得を試みる。
+         */
+        const next: LocationSaveLockRecord = {
+            scopeKey,
+            token,
+            expiresAt: now + LOCK_TTL_MS,
+        };
+
+        await AsyncStorage.setItem(
+            LOCATION_LOG_SAVE_LOCK_STORAGE_KEY,
+            JSON.stringify(next),
+        );
+
+        /*
+         * AsyncStorageはatomic compare-and-setではないため、
+         * 書き込み後に自分のtokenが残っていることを確認する。
+         */
+        const confirmed = await readLockRecord();
+
+        if (confirmed?.scopeKey !== scopeKey || confirmed.token !== token) {
+            activeLocationSaveLocks.delete(scopeKey);
+
+            return null;
+        }
+
+        return {
+            scopeKey,
+            token,
+        };
+    } catch (error) {
+        /*
+         * AsyncStorageエラー時もメモリロックを残さない。
+         */
+        if (activeLocationSaveLocks.get(scopeKey) === token) {
+            activeLocationSaveLocks.delete(scopeKey);
+        }
+
+        throw error;
+    }
 }
 
 export async function releaseLocationSaveLock(
@@ -111,14 +177,48 @@ export async function releaseLocationSaveLock(
         return;
     }
 
-    const current = await readLockRecord();
+    /*
+     * まずメモリ側を解除する。
+     *
+     * AsyncStorage処理が遅れても、
+     * JS runtime内の後続Location保存を不必要に止めない。
+     */
+    if (activeLocationSaveLocks.get(lock.scopeKey) === lock.token) {
+        activeLocationSaveLocks.delete(lock.scopeKey);
+    }
 
-    if (current?.scopeKey === lock.scopeKey && current.token === lock.token) {
-        await AsyncStorage.removeItem(LOCATION_LOG_SAVE_LOCK_STORAGE_KEY);
+    try {
+        const current = await readLockRecord();
+
+        /*
+         * 自分が所有しているロックだけ削除する。
+         *
+         * TTL切れ後に別処理が新しいロックを取得していた場合、
+         * そのロックを誤って削除しない。
+         */
+        if (
+            current?.scopeKey === lock.scopeKey &&
+            current.token === lock.token
+        ) {
+            await AsyncStorage.removeItem(LOCATION_LOG_SAVE_LOCK_STORAGE_KEY);
+        }
+    } catch (error) {
+        /*
+         * 永続ロックはTTLで自動的に無効になるため、
+         * release時のAsyncStorageエラーで
+         * LocationLog処理全体を失敗させない。
+         */
+        console.warn("Release persisted location save lock failed:", error);
     }
 }
 
 export async function clearLocationSaveLock(): Promise<void> {
+    /*
+     * 新しい記録セッション開始時などに
+     * runtime内の残留ロックも確実に破棄する。
+     */
+    activeLocationSaveLocks.clear();
+
     await AsyncStorage.removeItem(LOCATION_LOG_SAVE_LOCK_STORAGE_KEY);
 }
 
@@ -228,10 +328,4 @@ function normalizeAccuracy(value: number | null | undefined) {
     }
 
     return Number.isFinite(value) ? value.toFixed(3) : "invalid";
-}
-
-function sleep(milliseconds: number) {
-    return new Promise<void>((resolve) => {
-        setTimeout(resolve, milliseconds);
-    });
 }

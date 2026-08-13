@@ -349,47 +349,61 @@ export default function LocationMapScreen({ route }: Props) {
 
                 const locationLogModel = client.models.LocationLog as any;
 
-                do {
-                    const listParams: {
-                        limit: number;
-                        nextToken?: string;
-                        filter?: {
-                            recordingSessionId: {
-                                eq: string;
-                            };
-                        };
-                    } = {
-                        limit: 1000,
-                    };
+                if (activeSessionId) {
+                    /*
+                     * recordingSessionIdのGSIを使って、
+                     * 対象セッションのLocationLogだけを直接取得する。
+                     *
+                     * 従来のlist + filterと違い、
+                     * LocationLog全体を読みながらfilterしない。
+                     */
+                    do {
+                        const result =
+                            (await locationLogModel.listLocationLogsBySessionAndRecordedAt(
+                                {
+                                    recordingSessionId: activeSessionId,
+                                },
+                                {
+                                    sortDirection: "ASC",
+                                    limit: 1000,
+                                    nextToken: nextToken ?? undefined,
+                                },
+                            )) as LocationLogListResult;
 
-                    if (nextToken) {
-                        listParams.nextToken = nextToken;
-                    }
+                        if (result.errors) {
+                            console.error(
+                                "LocationLog session index query errors:",
+                                result.errors,
+                            );
+                            return;
+                        }
 
-                    if (activeSessionId) {
-                        listParams.filter = {
-                            recordingSessionId: {
-                                eq: activeSessionId,
-                            },
-                        };
-                    }
+                        allData.push(...(result.data ?? []));
+                        nextToken = result.nextToken ?? null;
+                    } while (nextToken);
+                } else {
+                    /*
+                     * activeSessionIdがない特殊な表示については、
+                     * 従来どおりlistを使用する。
+                     */
+                    do {
+                        const result = (await locationLogModel.list({
+                            limit: 1000,
+                            nextToken: nextToken ?? undefined,
+                        })) as LocationLogListResult;
 
-                    const result = (await locationLogModel.list(
-                        listParams,
-                    )) as LocationLogListResult;
+                        if (result.errors) {
+                            console.error(
+                                "LocationLog list errors:",
+                                result.errors,
+                            );
+                            return;
+                        }
 
-                    if (result.errors) {
-                        console.error(
-                            "LocationLog list errors:",
-                            result.errors,
-                        );
-                        return;
-                    }
-
-                    allData.push(...(result.data ?? []));
-                    nextToken = result.nextToken ?? null;
-                } while (nextToken);
-
+                        allData.push(...(result.data ?? []));
+                        nextToken = result.nextToken ?? null;
+                    } while (nextToken);
+                }
                 const items = normalizeLocationLogs(allData);
                 setLogs(items);
             } catch (error) {
@@ -1455,7 +1469,7 @@ export default function LocationMapScreen({ route }: Props) {
                                 description={buildMarkerDescription(log)}
                                 anchor={{ x: 0.5, y: 0.5 }}
                                 centerOffset={{ x: 0, y: 0 }}
-                                tracksViewChanges
+                                tracksViewChanges={false}
                             >
                                 <View
                                     collapsable={false}
@@ -1489,7 +1503,7 @@ export default function LocationMapScreen({ route }: Props) {
                         description={buildMarkerDescription(startLog)}
                         anchor={{ x: 0.5, y: 0.5 }}
                         centerOffset={{ x: 0, y: 0 }}
-                        tracksViewChanges
+                        tracksViewChanges={false}
                         zIndex={100}
                     >
                         <View
@@ -1516,7 +1530,7 @@ export default function LocationMapScreen({ route }: Props) {
                         description={buildMarkerDescription(endLog)}
                         anchor={{ x: 0.5, y: 0.5 }}
                         centerOffset={{ x: 0, y: 0 }}
-                        tracksViewChanges
+                        tracksViewChanges={false}
                         zIndex={100}
                     >
                         <View

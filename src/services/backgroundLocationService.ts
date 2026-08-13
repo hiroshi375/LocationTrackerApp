@@ -113,9 +113,36 @@ export type BackgroundLocationHeartbeatStatus = {
  */
 const BACKGROUND_TASK_HEALTH_MIN_STALE_MS = 60_000;
 const BACKGROUND_TASK_HEALTH_MAX_STALE_MS = 180_000;
+/*
+ * controlled restart後はAndroid側で最初のcallbackが
+ * 到着するまで時間がかかる場合がある。
+ *
+ * stale判定とは分離し、restart後だけ最大3分待つ。
+ */
+const BACKGROUND_TASK_RESTART_HEARTBEAT_TIMEOUT_MS = 180_000;
 const BACKGROUND_TASK_HEALTH_POLL_INTERVAL_MS = 2_000;
 
 let backgroundTaskHealthCheckGeneration = 0;
+
+/*
+ * OSからの位置受信間隔。
+ *
+ * 設定値の intervalMs / distanceMeters は
+ * LocationLogを「保存する条件」として使用する。
+ *
+ * native側で timeInterval=30秒 としてしまうと、
+ * 20m移動しても30秒以内の位置callbackを受信できないため、
+ * native側は最大5秒間隔で位置を受信する。
+ */
+const NATIVE_LOCATION_SAMPLE_INTERVAL_MS = 5_000;
+
+function getNativeLocationSampleIntervalMs(intervalMs: number): number {
+    if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+        return NATIVE_LOCATION_SAMPLE_INTERVAL_MS;
+    }
+
+    return Math.min(intervalMs, NATIVE_LOCATION_SAMPLE_INTERVAL_MS);
+}
 
 function getBackgroundTaskHeartbeatStaleMs(intervalMs: number): number {
     const safeIntervalMs =
@@ -133,13 +160,22 @@ function createRecordingLocationTaskOptions(
 ) {
     return {
         accuracy: Location.Accuracy.BestForNavigation,
-        timeInterval: intervalMs,
-        distanceInterval: distanceMeters,
+
+        /*
+         * native側では細かく位置を受信する。
+         * 実際のLocationLog保存条件
+         * 「intervalMs OR distanceMeters」は
+         * backgroundLocationTask側で判定する。
+         */
+        timeInterval: getNativeLocationSampleIntervalMs(intervalMs),
+        distanceInterval: 0,
+
         deferredUpdatesInterval: 0,
         deferredUpdatesDistance: 0,
         activityType: Location.ActivityType.Fitness,
         pausesUpdatesAutomatically: false,
         showsBackgroundLocationIndicator: true,
+
         foregroundService: {
             notificationTitle: "位置情報を記録中",
             notificationBody:
@@ -315,11 +351,39 @@ async function controlledRestartBackgroundLocationTask(input: {
         });
 
         if (!hasStartedAfterRestart) {
+            await saveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName: "backgroundLocationTaskControlledRestartFailed",
+                hasStartedLocationUpdates: false,
+                errorMessage:
+                    "Background location task restart registration could not be confirmed.",
+                details: {
+                    reason,
+                    restartStartedAtMs,
+                },
+            });
+
+            Alert.alert(
+                "バックグラウンド位置記録を再開できませんでした",
+                [
+                    "バックグラウンド位置タスクを再起動しましたが、タスクの再登録を確認できませんでした。",
+                    "",
+                    "自動記録は停止せず継続しています。",
+                    "",
+                    "改善しない場合は、",
+                    "「設定」→「位置情報」→「LocationTrackerApp」",
+                    "を開き、位置情報の権限を一度「許可しない」に変更してください。",
+                    "",
+                    "その後アプリへ戻り、再度「自動記録開始」を押して「常に許可」に変更してください。",
+                ].join("\n"),
+                [{ text: "OK" }],
+            );
+
             return false;
         }
 
-        const heartbeatTimeoutMs =
-            getBackgroundTaskHeartbeatStaleMs(intervalMs);
+        const heartbeatTimeoutMs = BACKGROUND_TASK_RESTART_HEARTBEAT_TIMEOUT_MS;
 
         const heartbeatRecovered = await waitForFreshRecordingHeartbeat(
             recordingSessionId,
@@ -357,8 +421,22 @@ async function controlledRestartBackgroundLocationTask(input: {
         });
 
         Alert.alert(
-            "バックグラウンド位置記録を確認できません",
-            "バックグラウンド位置タスクを再起動しましたが、位置情報の受信を確認できませんでした。自動記録は停止せず継続しますが、端末の位置情報・バッテリー設定を確認してください。",
+            "バックグラウンド位置情報を確認できません",
+            [
+                "バックグラウンド位置タスクを再起動しましたが、一定時間内に位置情報の受信を確認できませんでした。",
+                "",
+                "自動記録は停止せず継続しています。",
+                "",
+                "改善しない場合は、端末の設定を確認してください。",
+                "",
+                "1. 「設定」→「位置情報」→「LocationTrackerApp」を開く",
+                "2. 位置情報の権限を一度「許可しない」に変更する",
+                "3. LocationTrackerAppへ戻る",
+                "4. 再度「自動記録開始」を押す",
+                "5. 位置情報の権限を「常に許可」に変更する",
+                "",
+                "あわせて、LocationTrackerAppのバッテリー使用が制限されていないことも確認してください。",
+            ].join("\n"),
             [{ text: "OK" }],
         );
 

@@ -37,12 +37,14 @@ type DrainLocationQueueInput = {
     distanceMeters: number;
     fallbackSharedOwners?: string[];
     forceIncludeRecent?: boolean;
-
-    /**
-     * true の場合は再送クールダウンを無視する。
-     * 記録終了時など、残pendingを明示的に掃き出す用途向け。
-     */
     forceRetryNow?: boolean;
+    /*
+     * 未指定の場合はbackground用既定値
+     * SQLITE_QUEUE_UPLOAD_MAX_ITEMSを使用する。
+     *
+     * foreground復帰・停止処理では大きな値を指定可能。
+     */
+    maxItems?: number;
 };
 
 export type DrainLocationQueueResult = {
@@ -115,6 +117,19 @@ const SQLITE_QUEUE_AUTH_REFRESH_TIMEOUT_MS = 8_000;
  * 新しいLocationLog.createを開始しない。
  */
 const SQLITE_QUEUE_MIN_CREATE_TIMEOUT_MS = 1_000;
+
+const SQLITE_QUEUE_UPLOAD_MAX_OVERRIDE_ITEMS = 20;
+
+function resolveQueueUploadMaxItems(value?: number): number {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+        return SQLITE_QUEUE_UPLOAD_MAX_ITEMS;
+    }
+
+    return Math.max(
+        1,
+        Math.min(Math.trunc(value), SQLITE_QUEUE_UPLOAD_MAX_OVERRIDE_ITEMS),
+    );
+}
 
 class QueueOperationTimeoutError extends Error {
     readonly operationName: string;
@@ -259,6 +274,8 @@ export async function drainLocationQueueRepeatedly(
     let stopReason: DrainLocationQueueRepeatedResult["stopReason"] =
         "completed";
 
+    const maxItems = resolveQueueUploadMaxItems(input.maxItems);
+
     for (let index = 0; index < maxIterations; index += 1) {
         const result = await drainLocationQueueSafely(input);
 
@@ -291,7 +308,7 @@ export async function drainLocationQueueRepeatedly(
          * 取得件数が上限未満なら、
          * その時点で対象キューをほぼ処理し終えたと判断する。
          */
-        if (result.pendingCount < SQLITE_QUEUE_UPLOAD_MAX_ITEMS) {
+        if (result.pendingCount < maxItems) {
             stopReason = "completed";
             break;
         }
@@ -346,6 +363,8 @@ async function drainLocationQueue(
 
     const deadlineAtMs = startedAtMs + SQLITE_QUEUE_UPLOAD_TIME_BUDGET_MS;
 
+    const maxItems = resolveQueueUploadMaxItems(input.maxItems);
+
     let processedCount = 0;
     let sentCount = 0;
     let duplicateCount = 0;
@@ -378,7 +397,7 @@ async function drainLocationQueue(
             ? nowForSelectionMs
             : nowForSelectionMs - SQLITE_QUEUE_UPLOAD_MIN_AGE_MS,
         retryBeforeIso,
-        limit: SQLITE_QUEUE_UPLOAD_MAX_ITEMS,
+        limit: maxItems,
     });
 
     if (pendingRows.length === 0) {

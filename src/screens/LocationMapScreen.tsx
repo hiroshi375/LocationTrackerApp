@@ -362,8 +362,6 @@ export default function LocationMapScreen({ route }: Props) {
                             (await locationLogModel.listLocationLogsBySessionAndRecordedAt(
                                 {
                                     recordingSessionId: activeSessionId,
-                                },
-                                {
                                     sortDirection: "ASC",
                                     limit: 1000,
                                     nextToken: nextToken ?? undefined,

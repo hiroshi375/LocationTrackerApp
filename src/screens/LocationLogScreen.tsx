@@ -587,8 +587,6 @@ export default function LocationLogScreen({ navigation }: Props) {
                     (await locationLogModel.listLocationLogsBySessionAndRecordedAt(
                         {
                             recordingSessionId,
-                        },
-                        {
                             sortDirection: "ASC",
                             limit: 1000,
                             nextToken: nextToken ?? undefined,
@@ -1729,29 +1727,31 @@ async function loadSessionPointCounts(
     const logs: {
         source?: string | null;
     }[] = [];
+
     let nextToken: string | null = null;
 
     do {
-        const result =
-            (await locationLogModel.listLocationLogsBySessionAndRecordedAt(
-                {
-                    recordingSessionId,
+        /*
+         * 記録ポイント件数は表示上重要なため、
+         * まず既存の実績ある list + filter を使用する。
+         *
+         * GSIによる高速化は地図取得側で使用し、
+         * 件数表示についてはデグレ防止を優先する。
+         */
+        const result = (await locationLogModel.list({
+            filter: {
+                recordingSessionId: {
+                    eq: recordingSessionId,
                 },
-                {
-                    sortDirection: "ASC",
-                    limit: 1000,
-                    nextToken: nextToken ?? undefined,
-                },
-            )) as LocationLogListResult;
+            },
+            limit: 1000,
+            nextToken: nextToken ?? undefined,
+        })) as LocationLogListResult;
 
         if (result.errors) {
-            console.error(
-                "LocationLog point count index query errors:",
-                result.errors,
-                {
-                    recordingSessionId,
-                },
-            );
+            console.error("LocationLog point count errors:", result.errors, {
+                recordingSessionId,
+            });
 
             return {
                 pointCount: 0,
@@ -1766,7 +1766,7 @@ async function loadSessionPointCounts(
 
     /*
      * source未設定の過去データは、
-     * 地図画面と同様にforegroundとして扱う。
+     * 従来どおりforegroundとして扱う。
      */
     const foregroundPointCount = logs.filter(
         (log) => log.source !== "background",

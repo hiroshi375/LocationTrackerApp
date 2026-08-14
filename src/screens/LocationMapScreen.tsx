@@ -349,59 +349,57 @@ export default function LocationMapScreen({ route }: Props) {
 
                 const locationLogModel = client.models.LocationLog as any;
 
-                if (activeSessionId) {
-                    /*
-                     * recordingSessionIdのGSIを使って、
-                     * 対象セッションのLocationLogだけを直接取得する。
-                     *
-                     * 従来のlist + filterと違い、
-                     * LocationLog全体を読みながらfilterしない。
-                     */
-                    do {
-                        const result =
-                            (await locationLogModel.listLocationLogsBySessionAndRecordedAt(
-                                {
-                                    recordingSessionId: activeSessionId,
-                                    sortDirection: "ASC",
-                                    limit: 1000,
-                                    nextToken: nextToken ?? undefined,
-                                },
-                            )) as LocationLogListResult;
+                do {
+                    const listParams: {
+                        limit: number;
+                        nextToken?: string;
+                        filter?: {
+                            recordingSessionId: {
+                                eq: string;
+                            };
+                        };
+                    } = {
+                        limit: 1000,
+                    };
 
-                        if (result.errors) {
-                            console.error(
-                                "LocationLog session index query errors:",
-                                result.errors,
-                            );
-                            return;
-                        }
+                    if (nextToken) {
+                        listParams.nextToken = nextToken;
+                    }
 
-                        allData.push(...(result.data ?? []));
-                        nextToken = result.nextToken ?? null;
-                    } while (nextToken);
-                } else {
-                    /*
-                     * activeSessionIdがない特殊な表示については、
-                     * 従来どおりlistを使用する。
-                     */
-                    do {
-                        const result = (await locationLogModel.list({
-                            limit: 1000,
-                            nextToken: nextToken ?? undefined,
-                        })) as LocationLogListResult;
+                    if (activeSessionId) {
+                        listParams.filter = {
+                            recordingSessionId: {
+                                eq: activeSessionId,
+                            },
+                        };
+                    }
 
-                        if (result.errors) {
-                            console.error(
-                                "LocationLog list errors:",
-                                result.errors,
-                            );
-                            return;
-                        }
+                    const result = (await locationLogModel.list(
+                        listParams,
+                    )) as LocationLogListResult;
 
-                        allData.push(...(result.data ?? []));
-                        nextToken = result.nextToken ?? null;
-                    } while (nextToken);
-                }
+                    console.log(
+                        "[LocationMapScreen] LocationLog list result:",
+                        {
+                            activeSessionId,
+                            dataCount: result.data?.length ?? 0,
+                            nextToken: result.nextToken ?? null,
+                            errors: result.errors ?? null,
+                        },
+                    );
+
+                    if (result.errors) {
+                        console.error(
+                            "LocationLog list errors:",
+                            result.errors,
+                        );
+                        return;
+                    }
+
+                    allData.push(...(result.data ?? []));
+                    nextToken = result.nextToken ?? null;
+                } while (nextToken);
+
                 const items = normalizeLocationLogs(allData);
                 setLogs(items);
             } catch (error) {

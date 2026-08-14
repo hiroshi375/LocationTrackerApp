@@ -583,23 +583,26 @@ export default function LocationLogScreen({ navigation }: Props) {
             const locationLogModel = client.models.LocationLog as any;
 
             do {
-                const result =
-                    (await locationLogModel.listLocationLogsBySessionAndRecordedAt(
-                        {
-                            recordingSessionId,
-                            sortDirection: "ASC",
-                            limit: 1000,
-                            nextToken: nextToken ?? undefined,
+                const result = (await locationLogModel.list({
+                    filter: {
+                        recordingSessionId: {
+                            eq: recordingSessionId,
                         },
-                    )) as LocationLogListResult;
+                    },
+                    limit: 1000,
+                    nextToken: nextToken ?? undefined,
+                })) as LocationLogListResult;
 
                 if (result.errors) {
                     console.error(
-                        "LocationLog session index query errors:",
+                        "LocationLog session list errors:",
                         result.errors,
+                        {
+                            recordingSessionId,
+                        },
                     );
 
-                    throw new Error("LocationLog session index query failed");
+                    throw new Error("LocationLog session query failed");
                 }
 
                 allData.push(...(result.data ?? []));
@@ -635,10 +638,10 @@ export default function LocationLogScreen({ navigation }: Props) {
                         lowPowerMode: log.lowPowerMode ?? null,
                     }),
                 )
-                .filter(
-                    (log: LocationLogItem) =>
-                        Number.isFinite(log.latitude) &&
-                        Number.isFinite(log.longitude),
+                .sort(
+                    (a, b) =>
+                        new Date(a.recordedAt).getTime() -
+                        new Date(b.recordedAt).getTime(),
                 );
         },
         [],
@@ -1731,13 +1734,6 @@ async function loadSessionPointCounts(
     let nextToken: string | null = null;
 
     do {
-        /*
-         * 記録ポイント件数は表示上重要なため、
-         * まず既存の実績ある list + filter を使用する。
-         *
-         * GSIによる高速化は地図取得側で使用し、
-         * 件数表示についてはデグレ防止を優先する。
-         */
         const result = (await locationLogModel.list({
             filter: {
                 recordingSessionId: {
@@ -1747,6 +1743,13 @@ async function loadSessionPointCounts(
             limit: 1000,
             nextToken: nextToken ?? undefined,
         })) as LocationLogListResult;
+
+        console.log("[LocationLogScreen] LocationLog point count:", {
+            recordingSessionId,
+            dataCount: result.data?.length ?? 0,
+            nextToken: result.nextToken ?? null,
+            errors: result.errors ?? null,
+        });
 
         if (result.errors) {
             console.error("LocationLog point count errors:", result.errors, {
@@ -1764,10 +1767,6 @@ async function loadSessionPointCounts(
         nextToken = result.nextToken ?? null;
     } while (nextToken);
 
-    /*
-     * source未設定の過去データは、
-     * 従来どおりforegroundとして扱う。
-     */
     const foregroundPointCount = logs.filter(
         (log) => log.source !== "background",
     ).length;

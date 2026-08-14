@@ -1193,3 +1193,77 @@ export async function debugPrintSaveThresholdTimeline(
         }),
     );
 }
+
+export async function debugPrintLocationQueueRecoverySummary(): Promise<void> {
+    const db = await getDatabase();
+
+    const summary = await db.getFirstAsync<{
+        total_count: number;
+        pending_count: number;
+        sent_count: number;
+        duplicate_count: number;
+        skipped_count: number;
+        oldest_recorded_at: string | null;
+        latest_recorded_at: string | null;
+    }>(`
+        SELECT
+            COUNT(*) AS total_count,
+
+            SUM(
+                CASE
+                    WHEN queue_status = 'pending'
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS pending_count,
+
+            SUM(
+                CASE
+                    WHEN queue_status = 'sent'
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS sent_count,
+
+            SUM(
+                CASE
+                    WHEN queue_status = 'duplicate'
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS duplicate_count,
+
+            SUM(
+                CASE
+                    WHEN queue_status = 'skipped'
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS skipped_count,
+
+            MIN(recorded_at) AS oldest_recorded_at,
+            MAX(recorded_at) AS latest_recorded_at
+
+        FROM ${TABLE_NAME}
+    `);
+
+    const sessions = await db.getAllAsync<{
+        recording_session_id: string;
+        count: number;
+        oldest_recorded_at: string | null;
+        latest_recorded_at: string | null;
+    }>(`
+        SELECT
+            recording_session_id,
+            COUNT(*) AS count,
+            MIN(recorded_at) AS oldest_recorded_at,
+            MAX(recorded_at) AS latest_recorded_at
+        FROM ${TABLE_NAME}
+        GROUP BY recording_session_id
+        ORDER BY oldest_recorded_at ASC
+    `);
+
+    console.log("[SQLiteRecovery] summary:", JSON.stringify(summary));
+
+    console.log("[SQLiteRecovery] sessions:", JSON.stringify(sessions));
+}

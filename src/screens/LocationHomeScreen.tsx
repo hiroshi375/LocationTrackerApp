@@ -35,6 +35,7 @@ import {
     type BackgroundLocationHeartbeatStatus,
 } from "../services/backgroundLocationService";
 import {
+    debugPrintLocationQueueRecoverySummary,
     debugPrintLocationQueueSkipReasons,
     debugPrintSaveConditionNotMetDetails,
     debugPrintSaveThresholdTimeline,
@@ -230,6 +231,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
             Alert.alert("EAS Updateエラー", message);
         }
+    }, []);
+
+    useEffect(() => {
+        void debugPrintLocationQueueRecoverySummary();
     }, []);
 
     useEffect(() => {

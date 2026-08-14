@@ -1465,7 +1465,7 @@ export default function LocationMapScreen({ route }: Props) {
                                 description={buildMarkerDescription(log)}
                                 anchor={{ x: 0.5, y: 0.5 }}
                                 centerOffset={{ x: 0, y: 0 }}
-                                tracksViewChanges={false}
+                                zIndex={10}
                             >
                                 <View
                                     collapsable={false}
@@ -1499,7 +1499,6 @@ export default function LocationMapScreen({ route }: Props) {
                         description={buildMarkerDescription(startLog)}
                         anchor={{ x: 0.5, y: 0.5 }}
                         centerOffset={{ x: 0, y: 0 }}
-                        tracksViewChanges={false}
                         zIndex={100}
                     >
                         <View
@@ -1526,7 +1525,6 @@ export default function LocationMapScreen({ route }: Props) {
                         description={buildMarkerDescription(endLog)}
                         anchor={{ x: 0.5, y: 0.5 }}
                         centerOffset={{ x: 0, y: 0 }}
-                        tracksViewChanges={false}
                         zIndex={100}
                     >
                         <View

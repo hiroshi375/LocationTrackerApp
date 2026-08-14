@@ -3,6 +3,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
 import ActivityCalendarScreen from "../screens/ActivityCalendarScreen";
 import ActivityRankingScreen from "../screens/ActivityRankingScreen";
+import AdminLocationLogImportScreen from "../screens/AdminLocationLogImportScreen";
 import AppInfoScreen from "../screens/AppInfoScreen";
 import ContactScreen from "../screens/ContactScreen";
 import LiveLocationMapScreen from "../screens/LiveLocationMapScreen";
@@ -17,6 +18,7 @@ import TermsOfServiceScreen from "../screens/TermsOfServiceScreen";
 export type RootStackParamList = {
     LocationHome: undefined;
     LocationLog: undefined;
+    AdminLocationLogImport: undefined;
     ActivityCalendar: undefined;
     LocationMap: {
         recordingSessionId?: string | null;
@@ -71,6 +73,11 @@ export default function RootNavigator() {
                     name="LocationLog"
                     component={LocationLogScreen}
                     options={{ title: "位置履歴" }}
+                />
+                <Stack.Screen
+                    name="AdminLocationLogImport"
+                    component={AdminLocationLogImportScreen}
+                    options={{ title: "LocationLog CSVインポート" }}
                 />
                 <Stack.Screen
                     name="ActivityCalendar"

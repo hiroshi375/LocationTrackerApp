@@ -2392,8 +2392,17 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 {isAdmin && (
                     <View style={styles.buttonSpace}>
                         <AppButton
+                            title="LocationLog CSVインポート"
+                            onPress={() =>
+                                navigation.navigate("AdminLocationLogImport")
+                            }
+                            disabled={isRecording}
+                            backgroundColor="#27445c"
+                        />
+                        <AppButton
                             title="SQLite skip理由を確認"
                             onPress={handleDebugSQLiteSkipReasons}
+                            backgroundColor="#27445c"
                         />
                         <AppButton
                             title={

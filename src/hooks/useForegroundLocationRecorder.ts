@@ -80,6 +80,7 @@ export function useForegroundLocationRecorder({
 
     const lastSavedLocationRef = useRef<SavedLocation | null>(null);
     const savingLocationKeyRef = useRef<string | null>(null);
+    const foregroundSaveRunningRef = useRef(false);
     const recordingSessionIdRef = useRef<string | null>(null);
     const recordingUserIdRef = useRef<string | null>(null);
     const liveLocationIdRef = useRef<string | null>(null);
@@ -117,34 +118,57 @@ export function useForegroundLocationRecorder({
         return Array.from(new Set(liveShareOwnerValues.filter(Boolean)));
     }, [liveShareOwnerValues]);
 
+    const getLatestSavedLocation = useCallback(
+        (
+            foregroundLocation: SavedLocation | null,
+            backgroundLocation: SavedLocation | null,
+        ): SavedLocation | null => {
+            if (!foregroundLocation) {
+                return backgroundLocation;
+            }
+
+            if (!backgroundLocation) {
+                return foregroundLocation;
+            }
+
+            return backgroundLocation.recordedAt > foregroundLocation.recordedAt
+                ? backgroundLocation
+                : foregroundLocation;
+        },
+        [],
+    );
+
     // 位置を保存すべきか判定する関数
     const shouldSaveLocation = useCallback(
-        (latitude: number, longitude: number, recordedAtMs: number) => {
-            if (!lastSavedLocationRef.current) {
+        (
+            latitude: number,
+            longitude: number,
+            recordedAtMs: number,
+            baselineLocation: SavedLocation | null,
+        ) => {
+            if (!baselineLocation) {
                 return true;
             }
 
-            const elapsedMs =
-                recordedAtMs - lastSavedLocationRef.current.recordedAt;
+            const elapsedMs = recordedAtMs - baselineLocation.recordedAt;
 
             if (elapsedMs <= 0) {
                 return false;
             }
 
             const distance = calculateDistanceMeters(
-                lastSavedLocationRef.current.latitude,
-                lastSavedLocationRef.current.longitude,
+                baselineLocation.latitude,
+                baselineLocation.longitude,
                 latitude,
                 longitude,
             );
 
             /*
-             * 保存条件：
-             * ・指定時間以上経過
-             *      OR
-             * ・指定距離以上移動
-             * 30秒 / 20m設定なら、
-             * 「30秒経過 または 20m移動」で保存する。
+             * 保存条件は従来と同じ。
+             *
+             * 指定時間以上経過
+             * OR
+             * 指定距離以上移動
              */
             return elapsedMs >= intervalMs || distance >= distanceMeters;
         },
@@ -287,6 +311,26 @@ export function useForegroundLocationRecorder({
                 recordedAtMs,
             );
 
+            /*
+             * Foreground LocationLog保存処理を完全に直列化する。
+             *
+             * native側は最大5秒ごとにcallbackするため、
+             * 前回LocationLog.create()が終わっていない間に
+             * 次の地点が保存判定へ入らないようにする。
+             */
+            if (foregroundSaveRunningRef.current) {
+                console.log(
+                    "Skip foreground location while previous save is running:",
+                    {
+                        latitude,
+                        longitude,
+                        recordedAt,
+                    },
+                );
+
+                return;
+            }
+
             if (savingLocationKeyRef.current === duplicateKey) {
                 return;
             }
@@ -314,6 +358,8 @@ export function useForegroundLocationRecorder({
                 return;
             }
 
+            let baselineLocation = lastSavedLocationRef.current;
+
             if (!forceSave) {
                 try {
                     const { state } = await getBackgroundRecordingStatus();
@@ -321,26 +367,37 @@ export function useForegroundLocationRecorder({
                     const backgroundLastSavedLocation =
                         state?.lastSavedLocation ?? null;
 
+                    /*
+                     * FG/BGのうち、新しい保存地点を
+                     * 次回保存判定の共通基準にする。
+                     */
+                    baselineLocation = getLatestSavedLocation(
+                        lastSavedLocationRef.current,
+                        backgroundLastSavedLocation,
+                    );
+
                     if (
                         isExactDuplicateLocation(
-                            backgroundLastSavedLocation,
+                            baselineLocation,
                             latitude,
                             longitude,
                             recordedAtMs,
                         ) ||
                         isNearDuplicateLocation(
-                            backgroundLastSavedLocation,
+                            baselineLocation,
                             latitude,
                             longitude,
                             recordedAtMs,
                         )
                     ) {
                         console.log(
-                            "Skip duplicate foreground location by background state:",
+                            "Skip duplicate foreground location by latest saved state:",
                             {
                                 latitude,
                                 longitude,
                                 recordedAt,
+                                baselineRecordedAt:
+                                    baselineLocation?.recordedAt ?? null,
                             },
                         );
 
@@ -348,20 +405,46 @@ export function useForegroundLocationRecorder({
                     }
                 } catch (error) {
                     console.error(
-                        "Check background duplicate location error:",
+                        "Check background saved location error:",
                         error,
                     );
+
+                    /*
+                     * Background stateの取得に失敗しても、
+                     * Foreground側の最終保存地点を使って
+                     * 従来どおり判定する。
+                     */
+                    baselineLocation = lastSavedLocationRef.current;
                 }
             }
 
             if (
                 !forceSave &&
-                !shouldSaveLocation(latitude, longitude, recordedAtMs)
+                !shouldSaveLocation(
+                    latitude,
+                    longitude,
+                    recordedAtMs,
+                    baselineLocation,
+                )
             ) {
+                console.log("Skip foreground location by save condition:", {
+                    latitude,
+                    longitude,
+                    recordedAt,
+                    baselineRecordedAt: baselineLocation?.recordedAt ?? null,
+                    intervalMs,
+                    distanceMeters,
+                });
+
                 return;
             }
 
             try {
+                /*
+                 * ここからLocationLog.create完了まで、
+                 * 別のForeground callbackを保存処理へ入れない。
+                 */
+                foregroundSaveRunningRef.current = true;
                 savingLocationKeyRef.current = duplicateKey;
 
                 const currentUser = await getCurrentUser();
@@ -469,12 +552,17 @@ export function useForegroundLocationRecorder({
                 if (savingLocationKeyRef.current === duplicateKey) {
                     savingLocationKeyRef.current = null;
                 }
+
+                foregroundSaveRunningRef.current = false;
             }
         },
         [
             shouldSaveLocation,
+            getLatestSavedLocation,
             updateDistanceFromStart,
             normalizedLiveShareOwnerValues,
+            intervalMs,
+            distanceMeters,
         ],
     );
 

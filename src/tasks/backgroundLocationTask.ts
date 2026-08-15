@@ -39,7 +39,17 @@ export const BACKGROUND_LOCATION_TASK_NAME =
 
 export const BACKGROUND_RECORDING_STATE_KEY =
     "location-tracker-background-recording-state";
-
+/*
+ * Foreground側が最後にLocationLog保存成功した地点を保持するキー。
+ *
+ * backgroundLocationService.ts の
+ * FOREGROUND_LAST_SAVED_LOCATION_KEY と同じ値を使用する。
+ *
+ * backgroundLocationService.ts はこのbackgroundLocationTask.tsを
+ * importしているため、循環importを避けてここでは同じキー文字列を定義する。
+ */
+const FOREGROUND_LAST_SAVED_LOCATION_KEY =
+    "location-tracker-foreground-last-saved-location";
 /**
  * バックグラウンド位置タスクが実際に呼び出された時刻を保存するキー。
  *
@@ -105,14 +115,16 @@ type BackgroundRecordingState = {
     liveShareOwnerValues: string[];
     liveLocationId?: string | null;
 
-    lastSavedLocation?: {
-        latitude: number;
-        longitude: number;
-        recordedAt: number;
-    } | null;
+    lastSavedLocation?: SavedLocation | null;
 
     intervalMs: number;
     distanceMeters: number;
+};
+
+type SavedLocation = {
+    latitude: number;
+    longitude: number;
+    recordedAt: number;
 };
 
 type BackgroundLocationSkipReason =
@@ -1465,6 +1477,62 @@ async function getBackgroundRecordingState(): Promise<BackgroundRecordingState |
     }
 }
 
+async function getForegroundLastSavedLocation(): Promise<SavedLocation | null> {
+    try {
+        const raw = await AsyncStorage.getItem(
+            FOREGROUND_LAST_SAVED_LOCATION_KEY,
+        );
+
+        if (!raw) {
+            return null;
+        }
+
+        const parsed = JSON.parse(raw) as Partial<SavedLocation>;
+
+        if (
+            typeof parsed.latitude !== "number" ||
+            !Number.isFinite(parsed.latitude) ||
+            typeof parsed.longitude !== "number" ||
+            !Number.isFinite(parsed.longitude) ||
+            typeof parsed.recordedAt !== "number" ||
+            !Number.isFinite(parsed.recordedAt)
+        ) {
+            return null;
+        }
+
+        return {
+            latitude: parsed.latitude,
+            longitude: parsed.longitude,
+            recordedAt: parsed.recordedAt,
+        };
+    } catch (error) {
+        /*
+         * Foreground側の最終保存地点が読めなくても、
+         * Background記録そのものは止めない。
+         */
+        console.error("Read foreground lastSavedLocation error:", error);
+
+        return null;
+    }
+}
+
+function getLatestSavedLocation(
+    backgroundLocation: SavedLocation | null,
+    foregroundLocation: SavedLocation | null,
+): SavedLocation | null {
+    if (!backgroundLocation) {
+        return foregroundLocation;
+    }
+
+    if (!foregroundLocation) {
+        return backgroundLocation;
+    }
+
+    return foregroundLocation.recordedAt > backgroundLocation.recordedAt
+        ? foregroundLocation
+        : backgroundLocation;
+}
+
 async function setBackgroundRecordingState(state: BackgroundRecordingState) {
     await AsyncStorage.setItem(
         BACKGROUND_RECORDING_STATE_KEY,
@@ -1797,7 +1865,48 @@ async function saveBackgroundLocation(
             };
         }
 
-        const lastSavedLocation = latestState.lastSavedLocation ?? null;
+        /*
+         * Foreground側で最後に保存成功した地点も取得する。
+         */
+        let foregroundLastSavedLocation =
+            await getForegroundLastSavedLocation();
+
+        /*
+         * 新しい記録セッションより前のForeground保存地点は
+         * 前回セッションのデータなので今回の基準には使わない。
+         */
+        if (foregroundLastSavedLocation && latestState.startedAt) {
+            const sessionStartedAtMs = new Date(
+                latestState.startedAt,
+            ).getTime();
+
+            if (
+                Number.isFinite(sessionStartedAtMs) &&
+                foregroundLastSavedLocation.recordedAt < sessionStartedAtMs
+            ) {
+                foregroundLastSavedLocation = null;
+            }
+        }
+
+        /*
+         * Background / Foregroundのうち、
+         * recordedAtが新しい地点を保存判定の共通基準にする。
+         */
+        const lastSavedLocation = getLatestSavedLocation(
+            latestState.lastSavedLocation ?? null,
+            foregroundLastSavedLocation,
+        );
+
+        /*
+         * 保存条件判定専用state。
+         *
+         * AsyncStorage上のBackground state自体はここでは書き換えず、
+         * 保存判定時だけ共通の最新地点を使用する。
+         */
+        const evaluationState: BackgroundRecordingState = {
+            ...latestState,
+            lastSavedLocation,
+        };
 
         if (
             isAbnormalSpeedLocation(
@@ -1870,7 +1979,12 @@ async function saveBackgroundLocation(
         }
 
         if (
-            !shouldSaveLocation(latitude, longitude, recordedAtMs, latestState)
+            !shouldSaveLocation(
+                latitude,
+                longitude,
+                recordedAtMs,
+                evaluationState,
+            )
         ) {
             return {
                 saved: false,

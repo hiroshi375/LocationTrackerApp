@@ -297,16 +297,45 @@ export async function drainLocationQueueRepeatedly(
 
         if (
             result.stopReason === "alreadyRunning" ||
-            result.stopReason === "createFailed" ||
-            result.stopReason === "createTimedOut"
+            result.stopReason === "createFailed"
         ) {
             stopReason = result.stopReason;
             break;
         }
 
         /*
+         * timeoutした1行のために、
+         * キュー全体の書き出しを止めない。
+         */
+        if (result.stopReason === "createTimedOut") {
+            stopReason = "createTimedOut";
+
+            if (index === maxIterations - 1) {
+                break;
+            }
+
+            await delay(100);
+            continue;
+        }
+
+        /*
+         * 1回のdrainの時間予算を使い切っただけなら、
+         * 次iterationで残りを続行する。
+         */
+        if (result.stopReason === "timeBudgetExceeded") {
+            stopReason = "timeBudgetExceeded";
+
+            if (index === maxIterations - 1) {
+                break;
+            }
+
+            await delay(100);
+            continue;
+        }
+
+        /*
          * 取得件数が上限未満なら、
-         * その時点で対象キューをほぼ処理し終えたと判断する。
+         * 現時点の対象キューを処理し終えたと判断する。
          */
         if (result.pendingCount < maxItems) {
             stopReason = "completed";
@@ -315,6 +344,7 @@ export async function drainLocationQueueRepeatedly(
 
         if (index === maxIterations - 1) {
             stopReason = "maxIterationsReached";
+            break;
         }
 
         /*

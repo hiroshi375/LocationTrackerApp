@@ -21,7 +21,7 @@ export const KEEP_DIRECT_LOCATION_LOG_SAVE = true;
  * 直接保存処理と競合しないよう、
  * SQLiteへ入ってから一定時間以上経過した地点だけ再送対象にする。
  */
-export const SQLITE_QUEUE_UPLOAD_MIN_AGE_MS = 60_000;
+export const SQLITE_QUEUE_UPLOAD_MIN_AGE_MS = 10_000;
 
 /**
  * 1回のbackground callbackで処理する最大件数。
@@ -29,7 +29,7 @@ export const SQLITE_QUEUE_UPLOAD_MIN_AGE_MS = 60_000;
  * 新しい位置情報の直接保存を優先するため、
  * SQLite pendingの再送は少量ずつ行う。
  */
-export const SQLITE_QUEUE_UPLOAD_MAX_ITEMS = 2;
+export const SQLITE_QUEUE_UPLOAD_MAX_ITEMS = 5;
 
 /**
  * SQLiteキュー送信処理全体の最大時間。

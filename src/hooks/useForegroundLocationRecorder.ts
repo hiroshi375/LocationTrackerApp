@@ -1450,6 +1450,31 @@ export function useForegroundLocationRecorder({
         };
     }, [isRecording, verifyAndRecoverLocationRecording]);
 
+    useEffect(() => {
+        if (!isRecording) {
+            return;
+        }
+
+        /*
+         * Foregroundで自動記録中の場合、
+         * SQLite pendingを定期的にLocationLogへ反映する。
+         *
+         * drainLocationQueueSafely側で多重実行防止されているため、
+         * Background側のdrainと競合した場合はalreadyRunningで安全に終了する。
+         */
+        const timerId = setInterval(() => {
+            if (AppState.currentState !== "active") {
+                return;
+            }
+
+            void drainSQLiteQueueOnForeground();
+        }, 30_000);
+
+        return () => {
+            clearInterval(timerId);
+        };
+    }, [isRecording, drainSQLiteQueueOnForeground]);
+
     // ここに追加
     useEffect(() => {
         if (!isRecording) {

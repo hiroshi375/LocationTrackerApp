@@ -15,6 +15,7 @@ import {
     stopBackgroundLocationRecording,
     updateBackgroundRecordingLiveLocationId,
     updateForegroundLastSavedLocation,
+    verifyAndRecoverBackgroundLocationRecording,
 } from "../services/backgroundLocationService";
 import {
     createLocationLogId,
@@ -477,6 +478,70 @@ export function useForegroundLocationRecorder({
         ],
     );
 
+    /**
+     * Foreground位置監視を登録する。
+     *
+     * forceRestart=trueの場合だけ既存watcherを破棄して再登録する。
+     *
+     * 位置取得条件・保存条件は従来と同じ。
+     */
+    const ensureForegroundRecordingWatcher = useCallback(
+        async (forceRestart: boolean = false): Promise<boolean> => {
+            if (!recordingSessionIdRef.current) {
+                return false;
+            }
+
+            if (forceRestart) {
+                recordingSubscriptionRef.current?.remove();
+                recordingSubscriptionRef.current = null;
+            }
+
+            if (recordingSubscriptionRef.current) {
+                return true;
+            }
+
+            try {
+                const subscription = await Location.watchPositionAsync(
+                    {
+                        accuracy: Location.Accuracy.BestForNavigation,
+
+                        /*
+                         * 現在と同じ位置取得方法を維持する。
+                         */
+                        timeInterval:
+                            getForegroundLocationSampleIntervalMs(intervalMs),
+
+                        distanceInterval: 0,
+                    },
+                    async (location) => {
+                        if (appStateRef.current !== "active") {
+                            return;
+                        }
+
+                        await saveLocationLog(location);
+                    },
+                );
+
+                recordingSubscriptionRef.current = subscription;
+
+                console.log("Foreground recording watcher registered:", {
+                    recordingSessionId: recordingSessionIdRef.current,
+                    forceRestart,
+                });
+
+                return true;
+            } catch (error) {
+                console.error(
+                    "Foreground recording watcher registration error:",
+                    error,
+                );
+
+                return false;
+            }
+        },
+        [intervalMs, saveLocationLog],
+    );
+
     const resetRecordingState = useCallback(() => {
         recordingSubscriptionRef.current?.remove();
         recordingSubscriptionRef.current = null;
@@ -704,39 +769,13 @@ export function useForegroundLocationRecorder({
                 throw error;
             }
 
-            try {
-                const subscription = await Location.watchPositionAsync(
-                    {
-                        accuracy: Location.Accuracy.BestForNavigation,
+            const foregroundWatcherStarted =
+                await ensureForegroundRecordingWatcher(false);
 
-                        /*
-                         * native側は細かく位置を取得する。
-                         * 実際の保存条件はshouldSaveLocation()の
-                         * 「時間 OR 距離」で判定する。
-                         */
-                        timeInterval:
-                            getForegroundLocationSampleIntervalMs(intervalMs),
-                        distanceInterval: 0,
-                    },
-                    async (location) => {
-                        if (appStateRef.current !== "active") {
-                            return;
-                        }
-
-                        /*
-                         * LiveLocation更新は共有専用watcherが担当する。
-                         */
-                        await saveLocationLog(location);
-                    },
+            if (!foregroundWatcherStarted) {
+                console.error(
+                    "Foreground recording watcher could not be started.",
                 );
-
-                recordingSubscriptionRef.current = subscription;
-            } catch (error) {
-                console.error("Foreground watch position start error:", error);
-
-                // backgroundLocationRecording はすでに開始済みのため止めない。
-                // foreground の watchPositionAsync に失敗しても、
-                // background task による自動記録は継続させる。
             }
 
             isRecordingRef.current = true;
@@ -758,7 +797,70 @@ export function useForegroundLocationRecorder({
         distanceMeters,
         normalizedLiveShareOwnerValues,
         resetRecordingState,
+        ensureForegroundRecordingWatcher,
     ]);
+
+    const locationHealthCheckRunningRef = useRef(false);
+
+    const verifyAndRecoverLocationRecording = useCallback(
+        async (reason: "periodic" | "returnedToForeground"): Promise<void> => {
+            if (locationHealthCheckRunningRef.current) {
+                return;
+            }
+
+            if (!isRecordingRef.current || !recordingSessionIdRef.current) {
+                return;
+            }
+
+            /*
+             * Android background中にJS timerが停止していて、
+             * activeへ戻った瞬間に呼ばれた場合も、
+             * health checkはforegroundで実行する。
+             */
+            if (AppState.currentState !== "active") {
+                return;
+            }
+
+            locationHealthCheckRunningRef.current = true;
+
+            try {
+                const result =
+                    await verifyAndRecoverBackgroundLocationRecording();
+
+                console.log("Location recording health check completed:", {
+                    triggerReason: reason,
+                    recordingSessionId: recordingSessionIdRef.current,
+                    ...result,
+                });
+
+                if (!result.permissionGranted) {
+                    /*
+                     * 権限が本当に失われている場合だけ、
+                     * アプリ側で勝手に再許可はできない。
+                     *
+                     * ここでは再登録を行わない。
+                     */
+                    return;
+                }
+
+                /*
+                 * foregroundへ復帰した場合:
+                 * Android側の位置registrationを確実に作り直す。
+                 *
+                 * またBG taskが異常でcontrolled restartされた場合も、
+                 * FG watcherを一緒に再登録する。
+                 */
+                if (reason === "returnedToForeground" || result.restarted) {
+                    await ensureForegroundRecordingWatcher(true);
+                }
+            } catch (error) {
+                console.error("Location recording health check error:", error);
+            } finally {
+                locationHealthCheckRunningRef.current = false;
+            }
+        },
+        [ensureForegroundRecordingWatcher],
+    );
 
     const drainSQLiteQueueOnForeground =
         useCallback(async (): Promise<void> => {
@@ -1212,6 +1314,20 @@ export function useForegroundLocationRecorder({
                     return;
                 }
 
+                /*
+                 * まず位置取得系をhealth checkする。
+                 *
+                 * BG heartbeatがstaleならBG taskを再登録し、
+                 * FG watcherも再登録する。
+                 *
+                 * heartbeat正常でもforeground復帰時には
+                 * FG watcherだけ再登録する。
+                 */
+                void verifyAndRecoverLocationRecording("returnedToForeground");
+
+                /*
+                 * SQLite pending回収は従来通り維持。
+                 */
                 void drainSQLiteQueueOnForeground();
             },
         );
@@ -1219,7 +1335,32 @@ export function useForegroundLocationRecorder({
         return () => {
             subscription.remove();
         };
-    }, [drainSQLiteQueueOnForeground]);
+    }, [drainSQLiteQueueOnForeground, verifyAndRecoverLocationRecording]);
+
+    useEffect(() => {
+        if (!isRecording) {
+            return;
+        }
+
+        /*
+         * 記録中、foregroundにいる間だけheartbeatを継続確認する。
+         *
+         * Androidでアプリが完全にbackgroundになると
+         * JS timer自体が止まる可能性があるため、
+         * foreground復帰時のAppState health checkも併用する。
+         */
+        const timerId = setInterval(() => {
+            if (AppState.currentState !== "active") {
+                return;
+            }
+
+            void verifyAndRecoverLocationRecording("periodic");
+        }, 30_000);
+
+        return () => {
+            clearInterval(timerId);
+        };
+    }, [isRecording, verifyAndRecoverLocationRecording]);
 
     // ここに追加
     useEffect(() => {
@@ -1244,6 +1385,29 @@ export function useForegroundLocationRecorder({
             clearInterval(timerId);
         };
     }, [isRecording, checkRecordingContinuation]);
+
+    useEffect(() => {
+        if (!isRecording) {
+            return;
+        }
+
+        if (!recordingSessionIdRef.current) {
+            return;
+        }
+
+        if (AppState.currentState !== "active") {
+            return;
+        }
+
+        /*
+         * アプリ再起動などでbackground記録状態を復元した場合、
+         * Foreground watcherはJavaScript側に残っていないため再登録する。
+         *
+         * 既にwatcherが存在する場合は
+         * ensureForegroundRecordingWatcher(false) 内で何もしない。
+         */
+        void ensureForegroundRecordingWatcher(false);
+    }, [isRecording, ensureForegroundRecordingWatcher]);
 
     useEffect(() => {
         void restoreRecordingState();

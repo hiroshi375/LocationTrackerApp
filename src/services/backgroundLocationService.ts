@@ -566,6 +566,196 @@ async function safeHasStartedLocationUpdates(): Promise<boolean> {
     }
 }
 
+export type BackgroundLocationHealthCheckResult = {
+    healthy: boolean;
+    restarted: boolean;
+    permissionGranted: boolean;
+    hasStartedLocationUpdates: boolean;
+    heartbeatAgeMs: number | null;
+    heartbeatStaleMs: number;
+    reason:
+        | "healthy"
+        | "notRecording"
+        | "permissionNotGranted"
+        | "taskNotStarted"
+        | "heartbeatMissing"
+        | "heartbeatStale"
+        | "heartbeatInvalid"
+        | "heartbeatSessionMismatch"
+        | "restartFailed";
+};
+
+/**
+ * 自動記録中のBackground location taskを診断し、
+ * 必要な場合だけcontrolled restartする。
+ *
+ * 注意:
+ * ・記録間隔/距離などの記録方法は変更しない
+ * ・権限要求UIは出さない
+ * ・hasStarted=trueでもheartbeatがstaleなら異常扱い
+ */
+export async function verifyAndRecoverBackgroundLocationRecording(): Promise<BackgroundLocationHealthCheckResult> {
+    const state = await readBackgroundRecordingStateSafely();
+
+    if (!state?.isRecording || !state.recordingSessionId || !state.userId) {
+        return {
+            healthy: true,
+            restarted: false,
+            permissionGranted: true,
+            hasStartedLocationUpdates: false,
+            heartbeatAgeMs: null,
+            heartbeatStaleMs: 0,
+            reason: "notRecording",
+        };
+    }
+
+    const { userId, recordingSessionId, intervalMs, distanceMeters } = state;
+
+    /*
+     * health checkでは権限要求をしない。
+     * 現在の状態を読むだけにする。
+     */
+    const [foregroundPermission, backgroundPermission] = await Promise.all([
+        Location.getForegroundPermissionsAsync(),
+        Location.getBackgroundPermissionsAsync(),
+    ]);
+
+    const permissionGranted =
+        foregroundPermission.status === "granted" &&
+        backgroundPermission.status === "granted";
+
+    const heartbeatStaleMs = getBackgroundTaskHeartbeatStaleMs(intervalMs);
+
+    const hasStartedLocationUpdates = await safeHasStartedLocationUpdates();
+
+    const heartbeatStatus = await getBackgroundLocationTaskHeartbeatStatus();
+
+    const heartbeatAgeMs = heartbeatStatus.ageMs;
+
+    if (!permissionGranted) {
+        await saveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "backgroundLocationContinuousHealthPermissionNotGranted",
+            hasStartedLocationUpdates,
+            details: {
+                foregroundPermissionStatus: foregroundPermission.status,
+                backgroundPermissionStatus: backgroundPermission.status,
+                heartbeatAgeMs,
+                heartbeatStaleMs,
+            },
+        });
+
+        return {
+            healthy: false,
+            restarted: false,
+            permissionGranted: false,
+            hasStartedLocationUpdates,
+            heartbeatAgeMs,
+            heartbeatStaleMs,
+            reason: "permissionNotGranted",
+        };
+    }
+
+    const heartbeat = heartbeatStatus.heartbeat;
+
+    const heartbeatSessionMatches =
+        heartbeat?.recordingSessionId === recordingSessionId &&
+        heartbeat?.isRecording === true &&
+        heartbeat?.hasTaskError !== true;
+
+    const heartbeatIsRecent =
+        heartbeatSessionMatches &&
+        heartbeatAgeMs !== null &&
+        heartbeatAgeMs <= heartbeatStaleMs &&
+        !heartbeatStatus.invalidStoredValue;
+
+    /*
+     * native登録あり + heartbeat正常なら何もしない。
+     */
+    if (hasStartedLocationUpdates && heartbeatIsRecent) {
+        return {
+            healthy: true,
+            restarted: false,
+            permissionGranted: true,
+            hasStartedLocationUpdates: true,
+            heartbeatAgeMs,
+            heartbeatStaleMs,
+            reason: "healthy",
+        };
+    }
+
+    let reason: BackgroundLocationHealthCheckResult["reason"];
+
+    if (!hasStartedLocationUpdates) {
+        reason = "taskNotStarted";
+    } else if (heartbeatStatus.invalidStoredValue) {
+        reason = "heartbeatInvalid";
+    } else if (!heartbeat) {
+        reason = "heartbeatMissing";
+    } else if (!heartbeatSessionMatches) {
+        reason = "heartbeatSessionMismatch";
+    } else {
+        reason = "heartbeatStale";
+    }
+
+    await saveBackgroundLocationDebugLog({
+        userId,
+        recordingSessionId,
+        eventName: "backgroundLocationContinuousHealthIssueDetected",
+        hasStartedLocationUpdates,
+        details: {
+            reason,
+            heartbeatAgeMs,
+            heartbeatStaleMs,
+            heartbeatRecordingSessionId: heartbeat?.recordingSessionId ?? null,
+            heartbeatIsRecording: heartbeat?.isRecording ?? null,
+            heartbeatHasTaskError: heartbeat?.hasTaskError ?? null,
+            invalidStoredHeartbeat: heartbeatStatus.invalidStoredValue,
+        },
+    });
+
+    /*
+     * 現在の記録sessionでstart時に作られたgenerationをそのまま使う。
+     *
+     * stopRecording()された場合はgenerationが変わるため、
+     * controlledRestartBackgroundLocationTask内の既存ガードで
+     * 古いhealth checkからの再起動を防止できる。
+     */
+    const generation = backgroundTaskHealthCheckGeneration;
+
+    const restarted = await controlledRestartBackgroundLocationTask({
+        userId,
+        recordingSessionId,
+        intervalMs,
+        distanceMeters,
+        reason: `continuousHealthCheck:${reason}`,
+        generation,
+    });
+
+    if (!restarted) {
+        return {
+            healthy: false,
+            restarted: false,
+            permissionGranted: true,
+            hasStartedLocationUpdates: await safeHasStartedLocationUpdates(),
+            heartbeatAgeMs,
+            heartbeatStaleMs,
+            reason: "restartFailed",
+        };
+    }
+
+    return {
+        healthy: true,
+        restarted: true,
+        permissionGranted: true,
+        hasStartedLocationUpdates: true,
+        heartbeatAgeMs,
+        heartbeatStaleMs,
+        reason,
+    };
+}
+
 export async function startBackgroundLocationRecording({
     userId,
     recordingSessionId,

@@ -563,24 +563,43 @@ async function listMyShareCandidates(
  *
  * fieldNameによって処理を振り分ける。
  */
+/**
+ * 1つのLambdaを複数のCustom Query / Mutationから利用するため、
+ * AppSyncから渡されるfieldNameで処理を振り分ける。
+ */
 export const handler = async (event: any) => {
-    switch (event.info?.fieldName) {
+    const operation =
+        event?.fieldName ??
+        event?.info?.fieldName ??
+        event?.requestContext?.fieldName ??
+        null;
+
+    console.log(
+        "[ShareGroupApi] event summary:",
+        JSON.stringify({
+            typeName: event?.typeName ?? null,
+            fieldName: event?.fieldName ?? null,
+            operation,
+            arguments: event?.arguments ?? null,
+            userId: event?.identity?.sub ?? event?.identity?.username ?? null,
+        }),
+    );
+
+    switch (operation) {
         case "createShareGroupWithInviteCode":
-            return createShareGroup(event);
+            return await createShareGroup(event);
 
         case "joinShareGroupByInviteCode":
-            return joinShareGroupByInviteCode(event);
+            return await joinShareGroupByInviteCode(event);
 
         case "listMyShareCandidates":
-            return listMyShareCandidates(event);
+            return await listMyShareCandidates(event);
 
         case "listMyShareGroups":
-            return listMyShareGroups(event);
+            return await listMyShareGroups(event);
 
         default:
-            throw new Error(
-                `Unsupported operation: ${event.info?.fieldName ?? "unknown"}`,
-            );
+            throw new Error(`Unsupported operation: ${operation ?? "unknown"}`);
     }
 };
 

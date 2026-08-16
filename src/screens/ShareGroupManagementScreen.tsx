@@ -62,24 +62,20 @@ function getFirstGraphQLErrorMessage(
 
 export default function ShareGroupManagementScreen() {
     const [groups, setGroups] = useState<ShareGroupSummaryItem[]>([]);
-
     const [loadingGroups, setLoadingGroups] = useState(false);
-
     const [groupName, setGroupName] = useState("");
-
     const [creatingGroup, setCreatingGroup] = useState(false);
-
     const [inviteCodeInput, setInviteCodeInput] = useState("");
-
     const [joiningGroup, setJoiningGroup] = useState(false);
-
     const [createdGroupName, setCreatedGroupName] = useState<string | null>(
         null,
     );
-
     const [createdInviteCode, setCreatedInviteCode] = useState<string | null>(
         null,
     );
+    const [regeneratingGroupId, setRegeneratingGroupId] = useState<
+        string | null
+    >(null);
 
     const loadGroups = useCallback(async () => {
         try {
@@ -235,6 +231,102 @@ export default function ShareGroupManagementScreen() {
             setJoiningGroup(false);
         }
     }, [inviteCodeInput, joiningGroup, loadGroups]);
+
+    const handleRegenerateInviteCode = useCallback(
+        async (group: ShareGroupSummaryItem) => {
+            if (regeneratingGroupId) {
+                return;
+            }
+
+            try {
+                setRegeneratingGroupId(group.groupId);
+
+                const result = (await (
+                    client.mutations.regenerateShareGroupInviteCode as any
+                )({
+                    groupId: group.groupId,
+                })) as ShareGroupActionResult;
+
+                if (result.errors?.length) {
+                    console.error(
+                        "regenerateShareGroupInviteCode errors:",
+                        result.errors,
+                    );
+
+                    throw new Error(
+                        getFirstGraphQLErrorMessage(result.errors) ??
+                            "招待コードを再発行できませんでした。",
+                    );
+                }
+
+                if (!result.data?.success) {
+                    throw new Error(
+                        result.data?.message ??
+                            "招待コードを再発行できませんでした。",
+                    );
+                }
+
+                const inviteCode = result.data.inviteCode;
+
+                if (!inviteCode) {
+                    throw new Error(
+                        "再発行された招待コードを取得できませんでした。",
+                    );
+                }
+
+                setCreatedGroupName(result.data.groupName ?? group.name);
+
+                setCreatedInviteCode(inviteCode);
+
+                Alert.alert(
+                    "再発行完了",
+                    [
+                        "新しい招待コードを発行しました。",
+                        "",
+                        "以前の招待コードは使用できなくなります。",
+                    ].join("\n"),
+                );
+            } catch (error) {
+                console.error(
+                    "Regenerate share group invite code error:",
+                    error,
+                );
+
+                Alert.alert("再発行エラー", getErrorMessage(error));
+            } finally {
+                setRegeneratingGroupId(null);
+            }
+        },
+        [regeneratingGroupId],
+    );
+
+    const confirmRegenerateInviteCode = useCallback(
+        (group: ShareGroupSummaryItem) => {
+            Alert.alert(
+                "招待コードを再発行",
+                [
+                    `「${group.name}」の招待コードを再発行します。`,
+                    "",
+                    "現在の招待コードは使用できなくなります。",
+                    "",
+                    "再発行しますか？",
+                ].join("\n"),
+                [
+                    {
+                        text: "キャンセル",
+                        style: "cancel",
+                    },
+                    {
+                        text: "再発行",
+                        onPress: () => {
+                            void handleRegenerateInviteCode(group);
+                        },
+                    },
+                ],
+            );
+        },
+        [handleRegenerateInviteCode],
+    );
 
     const handleShareInviteCode = async () => {
         if (!createdInviteCode) {
@@ -400,21 +492,51 @@ export default function ShareGroupManagementScreen() {
                         所属しているグループはありません。
                     </Text>
                 ) : (
-                    groups.map((group) => (
-                        <View key={group.groupId} style={styles.groupItem}>
-                            <View style={styles.groupNameArea}>
-                                <Text style={styles.groupName}>
-                                    {group.name}
-                                </Text>
+                    groups.map((group) => {
+                        const isOwner = group.role === "OWNER";
 
-                                <Text style={styles.groupRoleText}>
-                                    {group.role === "OWNER"
-                                        ? "作成者"
-                                        : "メンバー"}
-                                </Text>
+                        const isRegenerating =
+                            regeneratingGroupId === group.groupId;
+
+                        return (
+                            <View key={group.groupId} style={styles.groupItem}>
+                                <View style={styles.groupNameArea}>
+                                    <Text style={styles.groupName}>
+                                        {group.name}
+                                    </Text>
+
+                                    <Text style={styles.groupRoleText}>
+                                        {isOwner ? "作成者" : "メンバー"}
+                                    </Text>
+                                </View>
+
+                                {isOwner && (
+                                    <Pressable
+                                        style={({ pressed }) => [
+                                            styles.regenerateButton,
+                                            pressed &&
+                                                !isRegenerating &&
+                                                styles.buttonPressed,
+                                            isRegenerating &&
+                                                styles.disabledButton,
+                                        ]}
+                                        onPress={() => {
+                                            confirmRegenerateInviteCode(group);
+                                        }}
+                                        disabled={isRegenerating}
+                                    >
+                                        <Text
+                                            style={styles.regenerateButtonText}
+                                        >
+                                            {isRegenerating
+                                                ? "再発行中..."
+                                                : "招待コードを再発行"}
+                                        </Text>
+                                    </Pressable>
+                                )}
                             </View>
-                        </View>
-                    ))
+                        );
+                    })
                 )}
             </View>
         </ScrollView>
@@ -586,5 +708,22 @@ const styles = StyleSheet.create({
     groupRoleText: {
         fontSize: 13,
         color: "#777",
+    },
+
+    regenerateButton: {
+        marginTop: 10,
+        borderWidth: 1,
+        borderColor: "#4b6f8f",
+        borderRadius: 8,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    regenerateButtonText: {
+        color: "#4b6f8f",
+        fontSize: 14,
+        fontWeight: "bold",
     },
 });

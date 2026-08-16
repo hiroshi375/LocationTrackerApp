@@ -5,6 +5,7 @@ import {
     Alert,
     Pressable,
     ScrollView,
+    Share,
     StyleSheet,
     Text,
     TextInput,
@@ -235,6 +236,33 @@ export default function ShareGroupManagementScreen() {
         }
     }, [inviteCodeInput, joiningGroup, loadGroups]);
 
+    const handleShareInviteCode = async () => {
+        if (!createdInviteCode) {
+            Alert.alert(
+                "招待コードがありません",
+                "先に共有グループを作成してください。",
+            );
+            return;
+        }
+
+        try {
+            await Share.share({
+                message: [
+                    "LocationTrackerAppの共有グループに招待します。",
+                    "",
+                    `グループ名: ${createdGroupName || "共有グループ"}`,
+                    `招待コード: ${createdInviteCode}`,
+                    "",
+                    "アプリの「共有グループを管理」から招待コードを入力して参加してください。",
+                ].join("\n"),
+            });
+        } catch (error) {
+            console.error("Share invite code error:", error);
+
+            Alert.alert("共有エラー", "招待コードを共有できませんでした。");
+        }
+    };
+
     return (
         <ScrollView
             contentContainerStyle={styles.container}
@@ -289,6 +317,20 @@ export default function ShareGroupManagementScreen() {
                         <Text style={styles.inviteCodeHelp}>
                             このコードを参加してほしい相手へ伝えてください。
                         </Text>
+
+                        <Pressable
+                            style={({ pressed }) => [
+                                styles.shareInviteButton,
+                                pressed && styles.buttonPressed,
+                            ]}
+                            onPress={() => {
+                                void handleShareInviteCode();
+                            }}
+                        >
+                            <Text style={styles.shareInviteButtonText}>
+                                招待コードを共有
+                            </Text>
+                        </Pressable>
 
                         <Text style={styles.inviteCodeWarning}>
                             この画面を離れると招待コードは再表示できません。
@@ -484,6 +526,23 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: "#8b5a3c",
         textAlign: "center",
+    },
+
+    shareInviteButton: {
+        marginTop: 8,
+        backgroundColor: "#4b6f8f",
+        borderRadius: 8,
+        paddingVertical: 10,
+        paddingHorizontal: 24,
+        alignItems: "center",
+        justifyContent: "center",
+        alignSelf: "stretch",
+    },
+
+    shareInviteButtonText: {
+        color: "#fff",
+        fontSize: 15,
+        fontWeight: "bold",
     },
 
     groupHeader: {

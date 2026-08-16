@@ -2,6 +2,7 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
+import * as TaskManager from "expo-task-manager";
 import { Alert, Linking, Platform } from "react-native";
 import { client } from "../lib/client";
 
@@ -121,6 +122,11 @@ const BACKGROUND_TASK_HEALTH_MAX_STALE_MS = 180_000;
  */
 const BACKGROUND_TASK_RESTART_HEARTBEAT_TIMEOUT_MS = 180_000;
 const BACKGROUND_TASK_HEALTH_POLL_INTERVAL_MS = 2_000;
+/*
+ * Android側でstopしたLocation task / foreground serviceが
+ * 完全に終了する時間を確保してから再登録する。
+ */
+const BACKGROUND_TASK_COLD_RESTART_DELAY_MS = 1_000;
 
 let backgroundTaskHealthCheckGeneration = 0;
 
@@ -317,6 +323,16 @@ async function controlledRestartBackgroundLocationTask(input: {
             await Location.stopLocationUpdatesAsync(
                 BACKGROUND_LOCATION_TASK_NAME,
             );
+
+            /*
+             * Android側でLocation task / foreground serviceが
+             * 完全に停止する時間を与える。
+             *
+             * stop直後に同じtask名でstartすると、
+             * 古いnative側の状態を引き継ぐ可能性があるため、
+             * 1秒待ってから再登録する。
+             */
+            await delay(BACKGROUND_TASK_COLD_RESTART_DELAY_MS);
         }
 
         const stateAfterStop = await readBackgroundRecordingStateSafely();
@@ -552,6 +568,131 @@ function scheduleBackgroundLocationHealthVerification(input: {
             error,
         );
     });
+}
+
+async function fullyRestartBackgroundLocationTask(input: {
+    userId: string;
+    recordingSessionId: string;
+    intervalMs: number;
+    distanceMeters: number;
+    reason: string;
+}): Promise<boolean> {
+    const { userId, recordingSessionId, intervalMs, distanceMeters, reason } =
+        input;
+
+    await saveBackgroundLocationDebugLog({
+        userId,
+        recordingSessionId,
+        eventName: "backgroundLocationTaskColdRestartStarted",
+        hasStartedLocationUpdates: await safeHasStartedLocationUpdates(),
+        details: {
+            reason,
+            intervalMs,
+            distanceMeters,
+        },
+    });
+
+    try {
+        /*
+         * まずexpo-locationの正規APIで停止する。
+         */
+        const locationStarted = await Location.hasStartedLocationUpdatesAsync(
+            BACKGROUND_LOCATION_TASK_NAME,
+        );
+
+        if (locationStarted) {
+            await Location.stopLocationUpdatesAsync(
+                BACKGROUND_LOCATION_TASK_NAME,
+            );
+        }
+
+        /*
+         * Android側のForeground Service / LocationManagerが
+         * 完全に破棄される時間を少し与える。
+         */
+        await delay(BACKGROUND_TASK_COLD_RESTART_DELAY_MS);
+
+        /*
+         * stopLocationUpdatesAsync後もTaskManager登録が残る
+         * 異常状態だけフォールバックで明示解除する。
+         */
+        const locationStillStarted =
+            await Location.hasStartedLocationUpdatesAsync(
+                BACKGROUND_LOCATION_TASK_NAME,
+            );
+
+        const taskStillRegistered = await TaskManager.isTaskRegisteredAsync(
+            BACKGROUND_LOCATION_TASK_NAME,
+        );
+
+        if (locationStillStarted || taskStillRegistered) {
+            await saveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName: "backgroundLocationTaskResidualRegistrationDetected",
+                hasStartedLocationUpdates: locationStillStarted,
+                details: {
+                    reason,
+                    taskStillRegistered,
+                },
+            });
+
+            if (taskStillRegistered) {
+                await TaskManager.unregisterTaskAsync(
+                    BACKGROUND_LOCATION_TASK_NAME,
+                );
+            }
+
+            await delay(BACKGROUND_TASK_COLD_RESTART_DELAY_MS);
+        }
+
+        /*
+         * 現在の自動記録条件で新規登録する。
+         */
+        await Location.startLocationUpdatesAsync(
+            BACKGROUND_LOCATION_TASK_NAME,
+            createRecordingLocationTaskOptions(intervalMs, distanceMeters),
+        );
+
+        const hasStartedAfterRestart =
+            await Location.hasStartedLocationUpdatesAsync(
+                BACKGROUND_LOCATION_TASK_NAME,
+            );
+
+        const taskRegisteredAfterRestart =
+            await TaskManager.isTaskRegisteredAsync(
+                BACKGROUND_LOCATION_TASK_NAME,
+            );
+
+        await saveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "backgroundLocationTaskColdRestartCompleted",
+            hasStartedLocationUpdates: hasStartedAfterRestart,
+            details: {
+                reason,
+                taskRegisteredAfterRestart,
+            },
+        });
+
+        return hasStartedAfterRestart && taskRegisteredAfterRestart;
+    } catch (error) {
+        await saveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "backgroundLocationTaskColdRestartFailed",
+            hasStartedLocationUpdates: await safeHasStartedLocationUpdates(),
+            errorMessage:
+                error instanceof Error ? error.message : String(error),
+            details: {
+                reason,
+            },
+        });
+
+        console.error("Background location task cold restart error:", error);
+
+        return false;
+    }
 }
 
 async function safeHasStartedLocationUpdates(): Promise<boolean> {
@@ -890,29 +1031,74 @@ export async function startBackgroundLocationRecording({
         },
     });
 
-    if (hasStarted && heartbeatIsRecent) {
+    /*
+     * 新しい自動記録session開始時は、
+     * 現在地共有用として残っていたBackground taskを
+     * そのまま再利用しない。
+     *
+     * 今回の実機ログでは、
+     * previousIsRecording=false / heartbeatSessionId=null
+     * のtaskをhealthyと誤判定して再利用し、
+     * callbackが来ない状態が発生していた。
+     */
+    const previousTaskCanBeReused =
+        hasStarted &&
+        heartbeatIsRecent &&
+        previousState?.isRecording === true &&
+        previousState.recordingSessionId === recordingSessionId &&
+        heartbeatStatusBeforeStart.heartbeat?.isRecording === true &&
+        heartbeatStatusBeforeStart.heartbeat?.recordingSessionId ===
+            recordingSessionId;
+
+    if (previousTaskCanBeReused) {
         await saveBackgroundLocationDebugLog({
             userId,
             recordingSessionId,
             eventName: "startBackgroundLocationRecordingSkippedAlreadyStarted",
             hasStartedLocationUpdates: true,
             details: {
-                reason: "reuseHealthyExistingBackgroundLocationTask",
+                reason: "reuseSameHealthyRecordingTask",
                 previousIsRecording: previousState?.isRecording ?? null,
-                intervalMs,
-                distanceMeters,
-                liveLocationId,
-                liveShareOwnerCount: normalizedLiveShareOwnerValues.length,
                 heartbeatAgeMs: heartbeatStatusBeforeStart.ageMs,
                 heartbeatStaleMs,
             },
         });
 
+        scheduleBackgroundLocationHealthVerification({
+            userId,
+            recordingSessionId,
+            intervalMs,
+            distanceMeters,
+            stateActivatedAtMs,
+            generation: healthCheckGeneration,
+        });
+
+        return;
+    }
+
+    /*
+     * 新しいsession開始時にtaskが既に存在する場合は、
+     * 前回の現在地共有taskや古いLocation registrationを
+     * 引き継がず、必ずcold restartする。
+     */
+    if (hasStarted) {
+        const restarted = await fullyRestartBackgroundLocationTask({
+            userId,
+            recordingSessionId,
+            intervalMs,
+            distanceMeters,
+            reason: previousState?.isRecording
+                ? "newRecordingSessionStarted"
+                : "switchFromLiveSharingToRecording",
+        });
+
+        if (!restarted) {
+            throw new Error("Background location task cold restart failed.");
+        }
+
         /*
-         * hasStarted=trueだけでは正常扱いしない。
-         * 新しいrecording stateへ切り替えた後、このsessionのfresh heartbeatが
-         * 実際に届くことを非同期で確認する。
-         * 届かなければ、その時点で初めてcontrolled restartする。
+         * 登録済みだけでは成功としない。
+         * 現在sessionのheartbeat到着確認は継続する。
          */
         scheduleBackgroundLocationHealthVerification({
             userId,

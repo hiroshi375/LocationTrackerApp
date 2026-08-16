@@ -142,20 +142,38 @@ export default function LocationLogScreen({ navigation }: Props) {
     const [savingEditSessionName, setSavingEditSessionName] = useState(false);
 
     const editSessionNameInputRef = useRef<TextInput | null>(null);
-    const lastOpenedSessionRef = useRef<RecordingSessionDisplayItem | null>(
+    /*
+     * 地図から戻ったときに、
+     * 参照していたアクティビティを一覧の先頭へ戻すために保持する。
+     */
+    const returnAnchorSessionRef = useRef<RecordingSessionDisplayItem | null>(
         null,
     );
 
-    const recordingSessionListRef =
-        useRef<FlatList<RecordingSessionDisplayItem> | null>(null);
+    /*
+     * 地図から戻った後の一覧で、
+     * 「もっと見る」を押した場合も同じ時点より過去を取得するための上限。
+     *
+     * null:
+     *   通常の最新履歴表示
+     *
+     * string:
+     *   このendedAtより古い履歴だけを取得
+     */
+    const [recordingSessionBeforeEndAt, setRecordingSessionBeforeEndAt] =
+        useState<string | null>(null);
 
     const loadRecordingSessions = useCallback(
         async ({
             reset,
             nextToken,
+            beforeEndAt = null,
+            prependSession = null,
         }: {
             reset: boolean;
             nextToken?: string | null;
+            beforeEndAt?: string | null;
+            prependSession?: RecordingSessionDisplayItem | null;
         }) => {
             try {
                 if (reset) {
@@ -170,16 +188,47 @@ export default function LocationLogScreen({ navigation }: Props) {
                 const recordingSessionModel = client.models
                     .RecordingSession as any;
 
+                /*
+                 * 地図から戻った直後は、
+                 *
+                 *   選択したsession 1件
+                 *   +
+                 *   それより古いsession 14件
+                 *
+                 * の合計15件にする。
+                 */
+                const pageLimit =
+                    reset && prependSession
+                        ? Math.max(1, SESSION_PAGE_SIZE - 1)
+                        : SESSION_PAGE_SIZE;
+
+                const queryParams: {
+                    userId: string;
+                    endedAt?: {
+                        lt: string;
+                    };
+                    sortDirection: "DESC";
+                    limit: number;
+                    nextToken?: string;
+                } = {
+                    userId: currentUser.userId,
+                    sortDirection: "DESC",
+                    limit: pageLimit,
+                };
+
+                if (beforeEndAt) {
+                    queryParams.endedAt = {
+                        lt: beforeEndAt,
+                    };
+                }
+
+                if (!reset && nextToken) {
+                    queryParams.nextToken = nextToken;
+                }
+
                 const result =
                     (await recordingSessionModel.listRecordingSessionsByUserAndEndedAt(
-                        {
-                            userId: currentUser.userId,
-                            sortDirection: "DESC",
-                            limit: SESSION_PAGE_SIZE,
-                            nextToken: reset
-                                ? undefined
-                                : (nextToken ?? undefined),
-                        },
+                        queryParams,
                     )) as RecordingSessionListResult;
 
                 if (result.errors) {
@@ -318,49 +367,29 @@ export default function LocationLogScreen({ navigation }: Props) {
 
                 setRecordingSessions((currentItems) => {
                     if (reset) {
-                        const lastOpenedSession = lastOpenedSessionRef.current;
-
                         /*
-                         * 通常の初期表示・更新では、取得した最新15件をそのまま表示する。
+                         * 地図から戻った場合は、
+                         * 参照したsessionを必ず先頭に置く。
+                         *
+                         * GSIではそれより古いsessionだけを取得しているため、
+                         * 選択sessionとの重複も発生しない。
                          */
-                        if (!lastOpenedSession) {
-                            return nextItems;
+                        if (prependSession) {
+                            return [prependSession, ...nextItems].slice(
+                                0,
+                                SESSION_PAGE_SIZE,
+                            );
                         }
 
                         /*
-                         * 地図を開いたセッションを先頭へ移動する。
-                         *
-                         * 対象が最新15件に含まれている場合：
-                         *   対象を除外してから先頭へ追加する。
-                         *
-                         * 対象が15件より後の場合：
-                         *   refに保持していた対象を先頭へ追加する。
+                         * 通常表示では最新15件。
                          */
-                        const reorderedItems = [
-                            lastOpenedSession,
-                            ...nextItems.filter(
-                                (item) => item.id !== lastOpenedSession.id,
-                            ),
-                        ];
-
-                        /*
-                         * 今回の戻り表示で使用した後は解除する。
-                         * 以降の通常更新では日時順の表示へ戻す。
-                         */
-                        lastOpenedSessionRef.current = null;
-
-                        requestAnimationFrame(() => {
-                            recordingSessionListRef.current?.scrollToOffset({
-                                offset: 0,
-                                animated: false,
-                            });
-                        });
-
-                        return reorderedItems;
+                        return nextItems;
                     }
 
                     /*
-                     * nextToken再読込などで同じデータが返った場合に備え、
+                     * 「もっと見る」の場合。
+                     * nextToken再読込などによる重複に備え、
                      * id単位で重複を除外する。
                      */
                     const itemMap = new Map<
@@ -376,11 +405,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                         itemMap.set(item.id, item);
                     });
 
-                    return Array.from(itemMap.values()).sort(
-                        (a, b) =>
-                            new Date(b.endAt).getTime() -
-                            new Date(a.endAt).getTime(),
-                    );
+                    return Array.from(itemMap.values());
                 });
 
                 setRecordingSessionNextToken(result.nextToken ?? null);
@@ -528,15 +553,27 @@ export default function LocationLogScreen({ navigation }: Props) {
         void loadRecordingSessions({
             reset: false,
             nextToken: recordingSessionNextToken,
+            beforeEndAt: recordingSessionBeforeEndAt,
+            prependSession: null,
         });
-    }, [loadingMore, recordingSessionNextToken, loadRecordingSessions]);
+    }, [
+        loadingMore,
+        recordingSessionNextToken,
+        recordingSessionBeforeEndAt,
+        loadRecordingSessions,
+    ]);
 
     const handleRefresh = useCallback(() => {
+        returnAnchorSessionRef.current = null;
+
         setRecordingSessionNextToken(null);
+        setRecordingSessionBeforeEndAt(null);
 
         void loadRecordingSessions({
             reset: true,
             nextToken: null,
+            beforeEndAt: null,
+            prependSession: null,
         });
 
         void loadRecordingSessionTotalCount();
@@ -564,11 +601,10 @@ export default function LocationLogScreen({ navigation }: Props) {
 
     const handleOpenSessionMap = (item: RecordingSessionDisplayItem) => {
         /*
-         * 地図画面から戻った際、このセッションを一覧の先頭へ表示する。
-         * 15件より後から開いたセッションでも保持できるよう、
-         * セッション全体をrefへ保存する。
+         * 地図から戻ったときの一覧位置を復元するため、
+         * 開いたsessionを覚えておく。
          */
-        lastOpenedSessionRef.current = item;
+        returnAnchorSessionRef.current = item;
 
         navigation.push("LocationMap", {
             recordingSessionId: item.recordingSessionId,
@@ -583,19 +619,19 @@ export default function LocationLogScreen({ navigation }: Props) {
             const locationLogModel = client.models.LocationLog as any;
 
             do {
-                const result = (await locationLogModel.list({
-                    filter: {
-                        recordingSessionId: {
-                            eq: recordingSessionId,
+                const result =
+                    (await locationLogModel.listLocationLogsBySessionAndRecordedAt(
+                        {
+                            recordingSessionId,
+                            sortDirection: "ASC",
+                            limit: 1000,
+                            nextToken: nextToken ?? undefined,
                         },
-                    },
-                    limit: 1000,
-                    nextToken: nextToken ?? undefined,
-                })) as LocationLogListResult;
+                    )) as LocationLogListResult;
 
                 if (result.errors) {
                     console.error(
-                        "LocationLog session list errors:",
+                        "LocationLog session GSI query errors:",
                         result.errors,
                         {
                             recordingSessionId,
@@ -1072,12 +1108,46 @@ export default function LocationLogScreen({ navigation }: Props) {
 
     useFocusEffect(
         useCallback(() => {
+            const returnAnchorSession = returnAnchorSessionRef.current;
+
+            /*
+             * 一度だけ使用する。
+             * 次に通常focusしたときまで残さない。
+             */
+            returnAnchorSessionRef.current = null;
+
             setRecordingSessionNextToken(null);
 
-            void loadRecordingSessions({
-                reset: true,
-                nextToken: null,
-            });
+            if (returnAnchorSession) {
+                /*
+                 * 地図から戻った場合。
+                 *
+                 * 選択sessionを先頭に置き、
+                 * それより古い14件をGSIで取得する。
+                 */
+                setRecordingSessionBeforeEndAt(returnAnchorSession.endAt);
+
+                void loadRecordingSessions({
+                    reset: true,
+                    nextToken: null,
+                    beforeEndAt: returnAnchorSession.endAt,
+                    prependSession: returnAnchorSession,
+                });
+            } else {
+                /*
+                 * 通常の画面表示。
+                 *
+                 * 最新15件を表示する。
+                 */
+                setRecordingSessionBeforeEndAt(null);
+
+                void loadRecordingSessions({
+                    reset: true,
+                    nextToken: null,
+                    beforeEndAt: null,
+                    prependSession: null,
+                });
+            }
 
             void loadRecordingSessionTotalCount();
             void loadUserProfiles();
@@ -1120,7 +1190,6 @@ export default function LocationLogScreen({ navigation }: Props) {
                 <ActivityIndicator />
             ) : (
                 <FlatList
-                    ref={recordingSessionListRef}
                     data={filteredItems}
                     keyExtractor={(item) => item.id}
                     refreshControl={
@@ -1734,17 +1803,24 @@ async function loadSessionPointCounts(
     let nextToken: string | null = null;
 
     do {
-        const result = (await locationLogModel.list({
-            filter: {
-                recordingSessionId: {
-                    eq: recordingSessionId,
-                },
-            },
-            limit: 1000,
-            nextToken: nextToken ?? undefined,
-        })) as LocationLogListResult;
+        /*
+         * recordingSessionId + recordedAt のGSIを利用して、
+         * 対象アクティビティのLocationLogだけを直接取得する。
+         *
+         * 従来の
+         *   LocationLog.list() + filter(recordingSessionId)
+         * ではLocationLog全体を走査する可能性があるため、
+         * 一覧表示時のポイント数集計が遅くなりやすい。
+         */
+        const result =
+            (await locationLogModel.listLocationLogsBySessionAndRecordedAt({
+                recordingSessionId,
+                sortDirection: "ASC",
+                limit: 1000,
+                nextToken: nextToken ?? undefined,
+            })) as LocationLogListResult;
 
-        console.log("[LocationLogScreen] LocationLog point count:", {
+        console.log("[LocationLogScreen] LocationLog point count GSI query:", {
             recordingSessionId,
             dataCount: result.data?.length ?? 0,
             nextToken: result.nextToken ?? null,
@@ -1752,9 +1828,13 @@ async function loadSessionPointCounts(
         });
 
         if (result.errors) {
-            console.error("LocationLog point count errors:", result.errors, {
-                recordingSessionId,
-            });
+            console.error(
+                "LocationLog point count GSI query errors:",
+                result.errors,
+                {
+                    recordingSessionId,
+                },
+            );
 
             return {
                 pointCount: 0,

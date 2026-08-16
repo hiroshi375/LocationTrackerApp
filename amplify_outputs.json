@@ -1569,6 +1569,22 @@
               "isRequired": true
             }
           }
+        },
+        "regenerateShareGroupInviteCode": {
+          "name": "regenerateShareGroupInviteCode",
+          "isArray": false,
+          "type": {
+            "nonModel": "ShareGroupActionResult"
+          },
+          "isRequired": false,
+          "arguments": {
+            "groupId": {
+              "name": "groupId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true
+            }
+          }
         }
       }
     }

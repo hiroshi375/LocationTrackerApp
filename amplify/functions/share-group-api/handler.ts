@@ -598,6 +598,9 @@ export const handler = async (event: any) => {
         case "listMyShareGroups":
             return await listMyShareGroups(event);
 
+        case "regenerateShareGroupInviteCode":
+            return await regenerateShareGroupInviteCode(event);
+
         default:
             throw new Error(`Unsupported operation: ${operation ?? "unknown"}`);
     }
@@ -675,4 +678,68 @@ async function listMyShareGroups(
             } => group !== null,
         )
         .sort((a, b) => a.name.localeCompare(b.name, "ja"));
+}
+
+async function regenerateShareGroupInviteCode(
+    event: Parameters<
+        Schema["regenerateShareGroupInviteCode"]["functionHandler"]
+    >[0],
+) {
+    const { userId } = getCaller(event);
+
+    const groupId = event.arguments.groupId;
+
+    const groupResult = await client.models.ShareGroup.get({
+        groupId,
+    });
+
+    if (groupResult.errors?.length) {
+        console.error(
+            "[ShareGroupApi] regenerate get group errors:",
+            groupResult.errors,
+        );
+
+        throw new Error("共有グループを取得できませんでした。");
+    }
+
+    const group = groupResult.data;
+
+    if (!group) {
+        throw new Error("共有グループが見つかりません。");
+    }
+
+    if (!group.isActive) {
+        throw new Error("この共有グループは現在利用できません。");
+    }
+
+    if (group.ownerUserId !== userId) {
+        throw new Error("招待コードを再発行できるのはグループ作成者だけです。");
+    }
+
+    /*
+     * 既存の招待コードと衝突しないコードを生成する。
+     */
+    const { inviteCode, inviteCodeHash } = await createUniqueInviteCode();
+
+    const updateResult = await client.models.ShareGroup.update({
+        groupId,
+        inviteCodeHash,
+    });
+
+    if (updateResult.errors?.length) {
+        console.error(
+            "[ShareGroupApi] regenerate update errors:",
+            updateResult.errors,
+        );
+
+        throw new Error("招待コードを再発行できませんでした。");
+    }
+
+    return {
+        success: true,
+        message: "招待コードを再発行しました。",
+        groupId: group.groupId,
+        groupName: group.name,
+        inviteCode,
+    };
 }

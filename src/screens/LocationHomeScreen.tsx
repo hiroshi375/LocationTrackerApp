@@ -169,6 +169,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [liveShareStatusMessage, setLiveShareStatusMessage] = useState("");
     const [openingSharedLiveMap, setOpeningSharedLiveMap] = useState(false);
     const [backfillingSessions, setBackfillingSessions] = useState(false);
+    const [forcingEasUpdate, setForcingEasUpdate] = useState(false);
     const [backfillProgress, setBackfillProgress] =
         useState<RecordingSessionBackfillProgress | null>(null);
     const [
@@ -182,7 +183,16 @@ export default function LocationHomeScreen({ navigation }: Props) {
     ] = useState(true);
 
     const handleForceEasUpdate = useCallback(async (): Promise<void> => {
+        /*
+         * 連打による二重実行を防止する。
+         */
+        if (forcingEasUpdate) {
+            return;
+        }
+
         try {
+            setForcingEasUpdate(true);
+
             if (!Updates.isEnabled) {
                 Alert.alert(
                     "EAS Update",
@@ -230,8 +240,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
             console.error("Force EAS Update error:", error);
 
             Alert.alert("EAS Updateエラー", message);
+        } finally {
+            setForcingEasUpdate(false);
         }
-    }, []);
+    }, [forcingEasUpdate]);
 
     useEffect(() => {
         void debugPrintLocationQueueRecoverySummary();
@@ -483,7 +495,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [backgroundHeartbeatCheckedAt, setBackgroundHeartbeatCheckedAt] =
         useState<number | null>(null);
     const [checkingEasUpdateInfo, setCheckingEasUpdateInfo] = useState(false);
-
     const [easUpdateInfo, setEasUpdateInfo] = useState<EasUpdateInfo | null>(
         null,
     );
@@ -2216,14 +2227,20 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         <Pressable
                             style={({ pressed }) => [
                                 styles.easUpdateButton,
-                                pressed && styles.buttonPressed,
+                                pressed &&
+                                    !forcingEasUpdate &&
+                                    styles.buttonPressed,
+                                forcingEasUpdate && styles.appButtonDisabled,
                             ]}
                             onPress={() => {
                                 void handleForceEasUpdate();
                             }}
+                            disabled={forcingEasUpdate}
                         >
                             <Text style={styles.easUpdateButtonText}>
-                                最新EAS Updateを適用
+                                {forcingEasUpdate
+                                    ? "最新EAS Updateを確認中..."
+                                    : "最新EAS Updateを適用"}
                             </Text>
                         </Pressable>
 

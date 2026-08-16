@@ -903,6 +903,267 @@
             "sortKeyFieldNames": []
           }
         },
+        "ShareGroup": {
+          "name": "ShareGroup",
+          "fields": {
+            "groupId": {
+              "name": "groupId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true,
+              "attributes": []
+            },
+            "name": {
+              "name": "name",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "ownerUserId": {
+              "name": "ownerUserId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "inviteCodeHash": {
+              "name": "inviteCodeHash",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "isActive": {
+              "name": "isActive",
+              "isArray": false,
+              "type": "Boolean",
+              "isRequired": true,
+              "attributes": []
+            },
+            "createdAt": {
+              "name": "createdAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": [],
+              "isReadOnly": true
+            },
+            "updatedAt": {
+              "name": "updatedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": [],
+              "isReadOnly": true
+            }
+          },
+          "syncable": true,
+          "pluralName": "ShareGroups",
+          "attributes": [
+            {
+              "type": "model",
+              "properties": {}
+            },
+            {
+              "type": "key",
+              "properties": {
+                "fields": [
+                  "groupId"
+                ]
+              }
+            },
+            {
+              "type": "key",
+              "properties": {
+                "name": "shareGroupsByOwnerUserId",
+                "queryField": "listShareGroupsByOwner",
+                "fields": [
+                  "ownerUserId"
+                ]
+              }
+            },
+            {
+              "type": "key",
+              "properties": {
+                "name": "shareGroupsByInviteCodeHash",
+                "queryField": "listShareGroupsByInviteCodeHash",
+                "fields": [
+                  "inviteCodeHash"
+                ]
+              }
+            },
+            {
+              "type": "auth",
+              "properties": {
+                "rules": [
+                  {
+                    "provider": "userPools",
+                    "ownerField": "ownerUserId",
+                    "allow": "owner",
+                    "identityClaim": "cognito:username",
+                    "operations": [
+                      "create",
+                      "update",
+                      "delete",
+                      "read"
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "primaryKeyInfo": {
+            "isCustomPrimaryKey": true,
+            "primaryKeyFieldName": "groupId",
+            "sortKeyFieldNames": []
+          }
+        },
+        "ShareGroupMember": {
+          "name": "ShareGroupMember",
+          "fields": {
+            "membershipId": {
+              "name": "membershipId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "groupId": {
+              "name": "groupId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true,
+              "attributes": []
+            },
+            "userId": {
+              "name": "userId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "ownerValue": {
+              "name": "ownerValue",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "displayName": {
+              "name": "displayName",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "email": {
+              "name": "email",
+              "isArray": false,
+              "type": "AWSEmail",
+              "isRequired": false,
+              "attributes": []
+            },
+            "iconImagePath": {
+              "name": "iconImagePath",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "role": {
+              "name": "role",
+              "isArray": false,
+              "type": {
+                "enum": "ShareGroupMemberRole"
+              },
+              "isRequired": false,
+              "attributes": []
+            },
+            "joinedAt": {
+              "name": "joinedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": true,
+              "attributes": []
+            },
+            "createdAt": {
+              "name": "createdAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": [],
+              "isReadOnly": true
+            },
+            "updatedAt": {
+              "name": "updatedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": [],
+              "isReadOnly": true
+            }
+          },
+          "syncable": true,
+          "pluralName": "ShareGroupMembers",
+          "attributes": [
+            {
+              "type": "model",
+              "properties": {}
+            },
+            {
+              "type": "key",
+              "properties": {
+                "fields": [
+                  "membershipId"
+                ]
+              }
+            },
+            {
+              "type": "key",
+              "properties": {
+                "name": "shareGroupMembersByGroupIdAndJoinedAt",
+                "queryField": "listShareGroupMembersByGroup",
+                "fields": [
+                  "groupId",
+                  "joinedAt"
+                ]
+              }
+            },
+            {
+              "type": "key",
+              "properties": {
+                "name": "shareGroupMembersByUserIdAndJoinedAt",
+                "queryField": "listShareGroupMembershipsByUser",
+                "fields": [
+                  "userId",
+                  "joinedAt"
+                ]
+              }
+            },
+            {
+              "type": "auth",
+              "properties": {
+                "rules": [
+                  {
+                    "provider": "userPools",
+                    "ownerField": "userId",
+                    "allow": "owner",
+                    "operations": [
+                      "read"
+                    ],
+                    "identityClaim": "cognito:username"
+                  }
+                ]
+              }
+            }
+          ],
+          "primaryKeyInfo": {
+            "isCustomPrimaryKey": true,
+            "primaryKeyFieldName": "membershipId",
+            "sortKeyFieldNames": []
+          }
+        },
         "BackgroundLocationDebugLog": {
           "name": "BackgroundLocationDebugLog",
           "fields": {
@@ -1139,8 +1400,177 @@
           }
         }
       },
-      "enums": {},
-      "nonModels": {}
+      "enums": {
+        "ShareGroupMemberRole": {
+          "name": "ShareGroupMemberRole",
+          "values": [
+            "OWNER",
+            "MEMBER"
+          ]
+        }
+      },
+      "nonModels": {
+        "ShareGroupActionResult": {
+          "name": "ShareGroupActionResult",
+          "fields": {
+            "success": {
+              "name": "success",
+              "isArray": false,
+              "type": "Boolean",
+              "isRequired": true,
+              "attributes": []
+            },
+            "message": {
+              "name": "message",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "groupId": {
+              "name": "groupId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": false,
+              "attributes": []
+            },
+            "groupName": {
+              "name": "groupName",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "inviteCode": {
+              "name": "inviteCode",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            }
+          }
+        },
+        "ShareCandidate": {
+          "name": "ShareCandidate",
+          "fields": {
+            "userId": {
+              "name": "userId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "ownerValue": {
+              "name": "ownerValue",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "displayName": {
+              "name": "displayName",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "email": {
+              "name": "email",
+              "isArray": false,
+              "type": "AWSEmail",
+              "isRequired": false,
+              "attributes": []
+            },
+            "iconImagePath": {
+              "name": "iconImagePath",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            }
+          }
+        },
+        "ShareGroupSummary": {
+          "name": "ShareGroupSummary",
+          "fields": {
+            "groupId": {
+              "name": "groupId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true,
+              "attributes": []
+            },
+            "name": {
+              "name": "name",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "role": {
+              "name": "role",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            }
+          }
+        }
+      },
+      "queries": {
+        "listMyShareCandidates": {
+          "name": "listMyShareCandidates",
+          "isArray": true,
+          "type": {
+            "nonModel": "ShareCandidate"
+          },
+          "isRequired": false,
+          "isArrayNullable": true
+        },
+        "listMyShareGroups": {
+          "name": "listMyShareGroups",
+          "isArray": true,
+          "type": {
+            "nonModel": "ShareGroupSummary"
+          },
+          "isRequired": false,
+          "isArrayNullable": true
+        }
+      },
+      "mutations": {
+        "createShareGroupWithInviteCode": {
+          "name": "createShareGroupWithInviteCode",
+          "isArray": false,
+          "type": {
+            "nonModel": "ShareGroupActionResult"
+          },
+          "isRequired": false,
+          "arguments": {
+            "name": {
+              "name": "name",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            }
+          }
+        },
+        "joinShareGroupByInviteCode": {
+          "name": "joinShareGroupByInviteCode",
+          "isArray": false,
+          "type": {
+            "nonModel": "ShareGroupActionResult"
+          },
+          "isRequired": false,
+          "arguments": {
+            "inviteCode": {
+              "name": "inviteCode",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            }
+          }
+        }
+      }
     }
   },
   "storage": {

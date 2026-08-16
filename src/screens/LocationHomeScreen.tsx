@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { getCurrentUser, signOut } from "aws-amplify/auth";
+import { signOut } from "aws-amplify/auth";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
@@ -73,11 +73,6 @@ type UserProfileItem = {
     iconImagePath?: string | null;
 };
 
-type UserProfileListResult = {
-    data?: any[] | null;
-    errors?: unknown;
-};
-
 type LocationLogListResult = {
     data?: any[] | null;
     errors?: unknown;
@@ -119,6 +114,19 @@ type EasUpdateInfo = {
     createdAt: string | null;
     isEmbeddedLaunch: boolean;
     isEnabled: boolean;
+};
+
+type ShareCandidateItem = {
+    userId: string;
+    ownerValue: string;
+    displayName?: string | null;
+    email?: string | null;
+    iconImagePath?: string | null;
+};
+
+type ShareCandidateQueryResult = {
+    data?: (ShareCandidateItem | null)[] | null;
+    errors?: readonly unknown[];
 };
 
 const LOCATION_HOME_SETTINGS_VERSION = 2;
@@ -299,70 +307,14 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 user.ownerValue.length > 0,
                         );
 
-                    try {
-                        const userProfileModel = client.models
-                            .UserProfile as any;
-
-                        const profileResult = (await userProfileModel.list({
-                            limit: 1000,
-                        })) as UserProfileListResult;
-
-                        if (profileResult.errors) {
-                            console.error(
-                                "Restore live share users profile errors:",
-                                profileResult.errors,
-                            );
-
-                            setSelectedLiveShareUsers(savedUsers);
-                        } else {
-                            const latestProfileMap = new Map(
-                                (profileResult.data ?? [])
-                                    .filter(
-                                        (profile: any) =>
-                                            profile?.id && profile?.userId,
-                                    )
-                                    .map((profile: any) => [
-                                        profile.userId,
-                                        profile,
-                                    ]),
-                            );
-
-                            const restoredUsers: UserProfileItem[] =
-                                savedUsers.map((savedUser) => {
-                                    const latestProfile = latestProfileMap.get(
-                                        savedUser.userId,
-                                    );
-
-                                    if (!latestProfile) {
-                                        return savedUser;
-                                    }
-
-                                    return {
-                                        id: latestProfile.id,
-                                        userId: latestProfile.userId,
-                                        email: latestProfile.email ?? null,
-                                        displayName:
-                                            latestProfile.displayName ?? null,
-                                        ownerValue:
-                                            latestProfile.ownerValue ?? null,
-                                        searchText:
-                                            latestProfile.searchText ?? null,
-                                        iconImagePath:
-                                            latestProfile.iconImagePath ?? null,
-                                    };
-                                });
-
-                            setSelectedLiveShareUsers(
-                                restoredUsers.filter(
-                                    (user) => !!user.ownerValue,
-                                ),
-                            );
-                        }
-                    } catch (error) {
-                        console.error("Restore live share users error:", error);
-
-                        setSelectedLiveShareUsers(savedUsers);
-                    }
+                    /*
+                     * ここでは一旦ローカル保存値を復元する。
+                     *
+                     * 画面Focus時のloadLiveShareUsers()で
+                     * 現在のグループメンバーと照合し、
+                     * 有効な共有先だけに絞り込む。
+                     */
+                    setSelectedLiveShareUsers(savedUsers);
                 }
             } catch (error) {
                 console.error("Load saved home settings error:", error);
@@ -564,69 +516,109 @@ export default function LocationHomeScreen({ navigation }: Props) {
         try {
             setLoadingLiveShareUsers(true);
 
-            const currentUser = await getCurrentUser();
+            /*
+             * UserProfile全件ではなく、
+             * 自分と同じShareGroupに所属するユーザーだけを取得する。
+             */
+            const result = (await (client.queries.listMyShareCandidates as any)(
+                {},
+            )) as ShareCandidateQueryResult;
 
-            const userProfileModel = client.models.UserProfile as any;
+            if (result.errors?.length) {
+                console.error("listMyShareCandidates errors:", result.errors);
 
-            const result = (await userProfileModel.list({
-                limit: 1000,
-            })) as UserProfileListResult;
+                /*
+                 * 取得失敗時に古い共有先をそのまま使わない。
+                 * プライバシー優先で共有先を空にする。
+                 */
+                setLiveShareUsers([]);
+                setSelectedLiveShareUsers([]);
+                setDraftLiveShareUsers([]);
 
-            if (result.errors) {
-                console.error("UserProfile list errors:", result.errors);
                 Alert.alert(
                     "取得エラー",
-                    "共有先ユーザーを取得できませんでした。",
+                    "共有可能なグループメンバーを取得できませんでした。",
                 );
+
                 return;
             }
 
             const users: UserProfileItem[] = (result.data ?? [])
-                .map((user) => ({
-                    id: user.id,
-                    userId: user.userId,
-                    email: user.email ?? null,
-                    displayName: user.displayName ?? null,
-                    ownerValue: user.ownerValue ?? null,
-                    searchText: user.searchText ?? null,
-                    iconImagePath: user.iconImagePath ?? null,
-                }))
-                .filter((user) => {
-                    if (!user.ownerValue) {
-                        return false;
-                    }
-
-                    // 自分自身は候補から除外
-                    return user.userId !== currentUser.userId;
-                })
+                .filter(
+                    (user): user is ShareCandidateItem =>
+                        user !== null &&
+                        typeof user.userId === "string" &&
+                        typeof user.ownerValue === "string" &&
+                        user.ownerValue.length > 0,
+                )
+                .map(
+                    (user: ShareCandidateItem): UserProfileItem => ({
+                        id: user.userId,
+                        userId: user.userId,
+                        email: user.email ?? null,
+                        displayName: user.displayName ?? null,
+                        ownerValue: user.ownerValue,
+                        searchText: null,
+                        iconImagePath: user.iconImagePath ?? null,
+                    }),
+                )
                 .sort((a, b) => {
                     const aName = a.displayName || a.email || "";
+
                     const bName = b.displayName || b.email || "";
-                    return aName.localeCompare(bName);
+
+                    return aName.localeCompare(bName, "ja");
                 });
 
             setLiveShareUsers(users);
-            setSelectedLiveShareUsers((currentSelectedUsers) => {
-                if (currentSelectedUsers.length === 0) {
-                    return currentSelectedUsers;
-                }
 
-                const latestUserMap = new Map(
+            /*
+             * 以前選択していた共有先が
+             * 現在も同じグループに所属している場合だけ残す。
+             *
+             * グループを抜けたユーザーなどは自動的に除外する。
+             */
+            setSelectedLiveShareUsers((currentSelectedUsers) => {
+                const candidateMap = new Map(
                     users.map((user) => [user.userId, user]),
                 );
 
                 return currentSelectedUsers
-                    .map((selectedUser) => {
-                        return (
-                            latestUserMap.get(selectedUser.userId) ??
-                            selectedUser
-                        );
-                    })
-                    .filter((user) => Boolean(user.ownerValue));
+                    .map((selectedUser) =>
+                        candidateMap.get(selectedUser.userId),
+                    )
+                    .filter(
+                        (user): user is UserProfileItem => user !== undefined,
+                    );
+            });
+
+            setDraftLiveShareUsers((currentDraftUsers) => {
+                const candidateMap = new Map(
+                    users.map((user) => [user.userId, user]),
+                );
+
+                return currentDraftUsers
+                    .map((draftUser) => candidateMap.get(draftUser.userId))
+                    .filter(
+                        (user): user is UserProfileItem => user !== undefined,
+                    );
             });
         } catch (error) {
             console.error("Load live share users error:", error);
-            Alert.alert("取得エラー", "共有先ユーザーの取得に失敗しました。");
+
+            /*
+             * 知らない／過去のユーザーへ
+             * 誤って共有し続けないため、
+             * エラー時はfail closedとする。
+             */
+            setLiveShareUsers([]);
+            setSelectedLiveShareUsers([]);
+            setDraftLiveShareUsers([]);
+
+            Alert.alert(
+                "取得エラー",
+                "共有可能なグループメンバーの取得に失敗しました。",
+            );
         } finally {
             setLoadingLiveShareUsers(false);
         }
@@ -999,7 +991,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
     useFocusEffect(
         useCallback(() => {
             void loadLoginUserName();
-        }, [loadLoginUserName]),
+            void loadLiveShareUsers();
+        }, [loadLoginUserName, loadLiveShareUsers]),
     );
 
     useEffect(() => {
@@ -1922,6 +1915,17 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     </Text>
 
                     <Pressable
+                        style={styles.liveShareGroupManageButton}
+                        onPress={() => {
+                            navigation.navigate("ShareGroupManagement");
+                        }}
+                    >
+                        <Text style={styles.liveShareGroupManageButtonText}>
+                            共有グループを管理
+                        </Text>
+                    </Pressable>
+
+                    <Pressable
                         style={styles.liveShareSelectButton}
                         onPress={openLiveShareModal}
                     >
@@ -2623,10 +2627,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                     />
                                 ) : filteredLiveShareUsers.length === 0 ? (
                                     <Text style={styles.liveShareEmptyText}>
-                                        共有先ユーザーが見つかりません。
+                                        共有できるグループメンバーがいません。
                                         {"\n"}
-                                        UserProfile
-                                        に他のユーザーが存在するか確認してください。
+                                        「共有グループを管理」からグループを作成するか、
+                                        招待コードでグループに参加してください。
                                     </Text>
                                 ) : (
                                     filteredLiveShareUsers.map((user) => {
@@ -3390,5 +3394,21 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: "#b42318",
         lineHeight: 18,
+    },
+
+    liveShareGroupManageButton: {
+        borderWidth: 1,
+        borderColor: "#4b6f8f",
+        borderRadius: 8,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        alignItems: "center",
+        backgroundColor: "#fff",
+    },
+
+    liveShareGroupManageButtonText: {
+        color: "#4b6f8f",
+        fontSize: 14,
+        fontWeight: "bold",
     },
 });

@@ -13,6 +13,7 @@ import LocationLogScreen from "../screens/LocationLogScreen";
 import LocationMapScreen from "../screens/LocationMapScreen";
 import PrivacyPolicyScreen from "../screens/PrivacyPolicyScreen";
 import ProfileScreen from "../screens/ProfileScreen";
+import ShareGroupManagementScreen from "../screens/ShareGroupManagementScreen";
 import TermsOfServiceScreen from "../screens/TermsOfServiceScreen";
 
 export type RootStackParamList = {
@@ -56,6 +57,7 @@ export type RootStackParamList = {
     PrivacyPolicy: undefined;
     TermsOfService: undefined;
     Contact: undefined;
+    ShareGroupManagement: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -131,6 +133,12 @@ export default function RootNavigator() {
                     name="Contact"
                     component={ContactScreen}
                     options={{ title: "お問い合わせ" }}
+                />
+
+                <Stack.Screen
+                    name="ShareGroupManagement"
+                    component={ShareGroupManagementScreen}
+                    options={{ title: "共有グループ管理" }}
                 />
             </Stack.Navigator>
         </NavigationContainer>

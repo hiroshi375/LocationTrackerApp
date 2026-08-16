@@ -162,6 +162,17 @@ export default function LocationLogScreen({ navigation }: Props) {
      */
     const [recordingSessionBeforeEndAt, setRecordingSessionBeforeEndAt] =
         useState<string | null>(null);
+    /*
+     * アクティビティ一覧のスクロール制御用。
+     */
+    const recordingSessionListRef =
+        useRef<FlatList<RecordingSessionDisplayItem> | null>(null);
+
+    /*
+     * 地図から戻ったあと、一覧データの反映後に
+     * 先頭へスクロールする必要があるかを保持する。
+     */
+    const shouldScrollToReturnAnchorRef = useRef(false);
 
     const loadRecordingSessions = useCallback(
         async ({
@@ -565,6 +576,7 @@ export default function LocationLogScreen({ navigation }: Props) {
 
     const handleRefresh = useCallback(() => {
         returnAnchorSessionRef.current = null;
+        shouldScrollToReturnAnchorRef.current = false;
 
         setRecordingSessionNextToken(null);
         setRecordingSessionBeforeEndAt(null);
@@ -1106,6 +1118,39 @@ export default function LocationLogScreen({ navigation }: Props) {
         };
     }, [editNameModalVisible]);
 
+    /*
+     * 地図から戻った場合、
+     * 新しい一覧データがFlatListへ反映されたあとで
+     * 参照したアクティビティ（index 0）へスクロールする。
+     */
+    useEffect(() => {
+        if (!shouldScrollToReturnAnchorRef.current) {
+            return;
+        }
+
+        if (recordingSessions.length === 0) {
+            return;
+        }
+
+        /*
+         * setRecordingSessions直後ではFlatListの描画が
+         * まだ完了していない可能性があるため、
+         * 次の描画タイミングでスクロールする。
+         */
+        const frameId = requestAnimationFrame(() => {
+            recordingSessionListRef.current?.scrollToOffset({
+                offset: 0,
+                animated: false,
+            });
+
+            shouldScrollToReturnAnchorRef.current = false;
+        });
+
+        return () => {
+            cancelAnimationFrame(frameId);
+        };
+    }, [recordingSessions]);
+
     useFocusEffect(
         useCallback(() => {
             const returnAnchorSession = returnAnchorSessionRef.current;
@@ -1119,6 +1164,11 @@ export default function LocationLogScreen({ navigation }: Props) {
             setRecordingSessionNextToken(null);
 
             if (returnAnchorSession) {
+                /*
+                 * データ取得完了後に、
+                 * 参照していたアクティビティ（先頭）まで戻す。
+                 */
+                shouldScrollToReturnAnchorRef.current = true;
                 /*
                  * 地図から戻った場合。
                  *
@@ -1134,6 +1184,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                     prependSession: returnAnchorSession,
                 });
             } else {
+                shouldScrollToReturnAnchorRef.current = false;
                 /*
                  * 通常の画面表示。
                  *
@@ -1190,6 +1241,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                 <ActivityIndicator />
             ) : (
                 <FlatList
+                    ref={recordingSessionListRef}
                     data={filteredItems}
                     keyExtractor={(item) => item.id}
                     refreshControl={

@@ -252,6 +252,18 @@ export default function LocationMapScreen({ route }: Props) {
         !isSharedLiveLocationMap,
     );
 
+    /*
+     * アクティビティ履歴の「地図で表示」から開いた過去ルート。
+     *
+     * recordingSessionId はあるが、
+     * 自動記録中の地図でも共有地図でもない場合。
+     */
+    const isActivityHistoryMap = Boolean(
+        routeRecordingSessionId &&
+        !isOwnLiveRecordingMap &&
+        !isSharedLiveLocationMap,
+    );
+
     const shouldShowLiveCurrentLocation =
         isOwnLiveRecordingMap || isSharedLiveLocationMap;
 
@@ -571,7 +583,13 @@ export default function LocationMapScreen({ route }: Props) {
                     setShowPoints(false);
                 }
 
-                if (
+                if (isActivityHistoryMap) {
+                    /*
+                     * 過去アクティビティでは、
+                     * 保存済みの追跡モードを復元せずルート全体表示に固定する。
+                     */
+                    setRouteViewMode("route");
+                } else if (
                     savedRouteViewMode === "current" ||
                     savedRouteViewMode === "route" ||
                     savedRouteViewMode === "none"
@@ -586,7 +604,7 @@ export default function LocationMapScreen({ route }: Props) {
         };
 
         void loadMapPreferences();
-    }, []);
+    }, [isActivityHistoryMap]);
 
     useEffect(() => {
         if (!hasLoadedMapPreferences) {
@@ -1846,22 +1864,38 @@ export default function LocationMapScreen({ route }: Props) {
                         <Pressable
                             style={({ pressed }) => [
                                 styles.mapActionButton,
+
                                 isRouteFitButtonActive &&
+                                    !isActivityHistoryMap &&
                                     styles.mapActionButtonActive,
-                                pressed && styles.mapActionButtonPressed,
+
+                                pressed &&
+                                    !isActivityHistoryMap &&
+                                    styles.mapActionButtonPressed,
+
+                                isActivityHistoryMap &&
+                                    styles.mapActionButtonDisabled,
                             ]}
                             onPress={toggleRouteViewMode}
+                            disabled={isActivityHistoryMap}
                         >
                             <Text
                                 style={[
                                     styles.mapActionButtonText,
+
                                     isRouteFitButtonActive &&
+                                        !isActivityHistoryMap &&
                                         styles.mapActionButtonTextActive,
+
+                                    isActivityHistoryMap &&
+                                        styles.mapActionButtonTextDisabled,
                                 ]}
                                 numberOfLines={1}
                                 adjustsFontSizeToFit
                             >
-                                {routeFitButtonText}
+                                {isActivityHistoryMap
+                                    ? "ルート全体を表示"
+                                    : routeFitButtonText}
                             </Text>
                         </Pressable>
                     </View>
@@ -2609,5 +2643,13 @@ const styles = StyleSheet.create({
 
     pointCountText: {
         marginBottom: 4,
+    },
+
+    mapActionButtonDisabled: {
+        opacity: 0.5,
+    },
+
+    mapActionButtonTextDisabled: {
+        color: "#777",
     },
 });

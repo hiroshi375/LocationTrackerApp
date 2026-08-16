@@ -72,7 +72,7 @@ export default function RootNavigator() {
                 <Stack.Screen
                     name="LocationLog"
                     component={LocationLogScreen}
-                    options={{ title: "位置履歴" }}
+                    options={{ title: "アクティビティ履歴" }}
                 />
                 <Stack.Screen
                     name="AdminLocationLogImport"

@@ -349,59 +349,99 @@ export default function LocationMapScreen({ route }: Props) {
 
                 const locationLogModel = client.models.LocationLog as any;
 
-                do {
-                    const listParams: {
-                        limit: number;
-                        nextToken?: string;
-                        filter?: {
-                            recordingSessionId: {
-                                eq: string;
-                            };
-                        };
-                    } = {
-                        limit: 1000,
-                    };
+                if (activeSessionId) {
+                    /*
+                     * recordingSessionId + recordedAt のGSIを使用する。
+                     *
+                     * 従来:
+                     *   LocationLog.list()
+                     *   + filter(recordingSessionId)
+                     *
+                     * 変更後:
+                     *   recordingSessionIdをPartition Keyとする
+                     *   DynamoDB Queryで対象sessionだけを直接取得する。
+                     *
+                     * recordedAtがSort Keyなので、
+                     * sortDirection: "ASC" で時系列順に取得する。
+                     */
+                    do {
+                        const result =
+                            (await locationLogModel.listLocationLogsBySessionAndRecordedAt(
+                                {
+                                    recordingSessionId: activeSessionId,
+                                    sortDirection: "ASC",
+                                    limit: 1000,
+                                    nextToken: nextToken ?? undefined,
+                                },
+                            )) as LocationLogListResult;
 
-                    if (nextToken) {
-                        listParams.nextToken = nextToken;
-                    }
-
-                    if (activeSessionId) {
-                        listParams.filter = {
-                            recordingSessionId: {
-                                eq: activeSessionId,
+                        console.log(
+                            "[LocationMapScreen] LocationLog GSI query result:",
+                            {
+                                activeSessionId,
+                                dataCount: result.data?.length ?? 0,
+                                nextToken: result.nextToken ?? null,
+                                errors: result.errors ?? null,
                             },
-                        };
-                    }
-
-                    const result = (await locationLogModel.list(
-                        listParams,
-                    )) as LocationLogListResult;
-
-                    console.log(
-                        "[LocationMapScreen] LocationLog list result:",
-                        {
-                            activeSessionId,
-                            dataCount: result.data?.length ?? 0,
-                            nextToken: result.nextToken ?? null,
-                            errors: result.errors ?? null,
-                        },
-                    );
-
-                    if (result.errors) {
-                        console.error(
-                            "LocationLog list errors:",
-                            result.errors,
                         );
-                        return;
-                    }
 
-                    allData.push(...(result.data ?? []));
-                    nextToken = result.nextToken ?? null;
-                } while (nextToken);
+                        if (result.errors) {
+                            console.error(
+                                "LocationLog session GSI query errors:",
+                                result.errors,
+                            );
+                            return;
+                        }
+
+                        allData.push(...(result.data ?? []));
+                        nextToken = result.nextToken ?? null;
+                    } while (nextToken);
+                } else {
+                    /*
+                     * activeSessionIdを持たない特殊な表示については、
+                     * これまでどおり通常のlist()を使用する。
+                     *
+                     * 通常の「地図で見る」ではactiveSessionIdがあるため、
+                     * この経路には入らない。
+                     */
+                    do {
+                        const result = (await locationLogModel.list({
+                            limit: 1000,
+                            nextToken: nextToken ?? undefined,
+                        })) as LocationLogListResult;
+
+                        console.log(
+                            "[LocationMapScreen] LocationLog list result:",
+                            {
+                                activeSessionId,
+                                dataCount: result.data?.length ?? 0,
+                                nextToken: result.nextToken ?? null,
+                                errors: result.errors ?? null,
+                            },
+                        );
+
+                        if (result.errors) {
+                            console.error(
+                                "LocationLog list errors:",
+                                result.errors,
+                            );
+                            return;
+                        }
+
+                        allData.push(...(result.data ?? []));
+                        nextToken = result.nextToken ?? null;
+                    } while (nextToken);
+                }
 
                 const items = normalizeLocationLogs(allData);
+
                 setLogs(items);
+
+                console.log("[LocationMapScreen] LocationLog load completed:", {
+                    activeSessionId,
+                    queryType: activeSessionId ? "GSI" : "LIST",
+                    count: items.length,
+                });
             } catch (error) {
                 console.error("Map loadLogs error:", error);
             } finally {

@@ -174,6 +174,9 @@ let backgroundTaskRecoveryStartedAtMs: number | null = null;
  */
 const NATIVE_LOCATION_SAMPLE_INTERVAL_MS = 5_000;
 
+let backgroundTaskStartupRecoverySessionId: string | null = null;
+let backgroundTaskStartupRecoveryGeneration: number | null = null;
+
 function getNativeLocationSampleIntervalMs(intervalMs: number): number {
     if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
         return NATIVE_LOCATION_SAMPLE_INTERVAL_MS;
@@ -612,94 +615,99 @@ function scheduleBackgroundLocationStartupRecovery(input: {
     } = input;
 
     void (async () => {
-        /*
-         * まず通常起動を待つ。
-         *
-         * 正常なら何も変更しない。
-         */
-        const heartbeatReceived = await waitForFreshRecordingHeartbeat(
-            recordingSessionId,
-            stateActivatedAtMs,
-            BACKGROUND_TASK_STARTUP_HEARTBEAT_TIMEOUT_MS,
-            generation,
-        );
+        try {
+            /*
+             * まず通常起動を待つ。
+             * 正常なら何も変更しない。
+             */
+            const heartbeatReceived = await waitForFreshRecordingHeartbeat(
+                recordingSessionId,
+                stateActivatedAtMs,
+                BACKGROUND_TASK_STARTUP_HEARTBEAT_TIMEOUT_MS,
+                generation,
+            );
 
-        if (generation !== backgroundTaskHealthCheckGeneration) {
-            return;
-        }
+            if (generation !== backgroundTaskHealthCheckGeneration) {
+                return;
+            }
 
-        const currentState = await readBackgroundRecordingStateSafely();
+            const currentState = await readBackgroundRecordingStateSafely();
 
-        if (
-            !currentState?.isRecording ||
-            currentState.recordingSessionId !== recordingSessionId
-        ) {
-            return;
-        }
+            if (
+                !currentState?.isRecording ||
+                currentState.recordingSessionId !== recordingSessionId
+            ) {
+                return;
+            }
 
-        if (heartbeatReceived) {
+            if (heartbeatReceived) {
+                await saveBackgroundLocationDebugLog({
+                    userId,
+                    recordingSessionId,
+                    eventName: "backgroundLocationTaskStartupHealthCheckPassed",
+                    hasStartedLocationUpdates:
+                        await safeHasStartedLocationUpdates(),
+                    details: {
+                        heartbeatTimeoutMs:
+                            BACKGROUND_TASK_STARTUP_HEARTBEAT_TIMEOUT_MS,
+                    },
+                });
+
+                return;
+            }
+
+            const heartbeatStatus =
+                await getBackgroundLocationTaskHeartbeatStatus();
+
             await saveBackgroundLocationDebugLog({
                 userId,
                 recordingSessionId,
-                eventName: "backgroundLocationTaskStartupHealthCheckPassed",
+                eventName: "backgroundLocationTaskStartupHeartbeatMissing",
                 hasStartedLocationUpdates:
                     await safeHasStartedLocationUpdates(),
                 details: {
                     heartbeatTimeoutMs:
                         BACKGROUND_TASK_STARTUP_HEARTBEAT_TIMEOUT_MS,
+                    heartbeatAgeMs: heartbeatStatus.ageMs,
+                    heartbeatRecordingSessionId:
+                        heartbeatStatus.heartbeat?.recordingSessionId ?? null,
+                    heartbeatIsRecording:
+                        heartbeatStatus.heartbeat?.isRecording ?? null,
+                    invalidStoredHeartbeat: heartbeatStatus.invalidStoredValue,
                 },
             });
 
-            return;
-        }
-
-        /*
-         * 登録済みかどうかにかかわらず、
-         * callbackが来ていないことを異常として扱う。
-         */
-        const heartbeatStatus =
-            await getBackgroundLocationTaskHeartbeatStatus();
-
-        await saveBackgroundLocationDebugLog({
-            userId,
-            recordingSessionId,
-            eventName: "backgroundLocationTaskStartupHeartbeatMissing",
-            hasStartedLocationUpdates: await safeHasStartedLocationUpdates(),
-            details: {
-                heartbeatTimeoutMs:
-                    BACKGROUND_TASK_STARTUP_HEARTBEAT_TIMEOUT_MS,
-                heartbeatAgeMs: heartbeatStatus.ageMs,
-                heartbeatRecordingSessionId:
-                    heartbeatStatus.heartbeat?.recordingSessionId ?? null,
-                heartbeatIsRecording:
-                    heartbeatStatus.heartbeat?.isRecording ?? null,
-                invalidStoredHeartbeat: heartbeatStatus.invalidStoredValue,
-            },
-        });
-
-        const recovered = await recoverBackgroundLocationTaskAtStartupOnce({
-            userId,
-            recordingSessionId,
-            intervalMs,
-            distanceMeters,
-            generation,
-        });
-
-        /*
-         * startup recoveryで復旧できなかった場合でも、
-         * 自動記録state自体は消さない。
-         *
-         * 既存のcontinuous health check /
-         * controlled restartに復旧機会を残す。
-         */
-        if (!recovered) {
-            await saveBackgroundLocationDebugLog({
+            const recovered = await recoverBackgroundLocationTaskAtStartupOnce({
                 userId,
                 recordingSessionId,
-                eventName: "backgroundLocationTaskStartupRecoveryExhausted",
-                hasStartedLocationUpdates:
-                    await safeHasStartedLocationUpdates(),
+                intervalMs,
+                distanceMeters,
+                generation,
             });
+
+            if (!recovered) {
+                await saveBackgroundLocationDebugLog({
+                    userId,
+                    recordingSessionId,
+                    eventName: "backgroundLocationTaskStartupRecoveryExhausted",
+                    hasStartedLocationUpdates:
+                        await safeHasStartedLocationUpdates(),
+                });
+            }
+        } finally {
+            /*
+             * このstartup recovery自身のsession/generationの場合だけ解除する。
+             *
+             * 途中で新しいRecordingSessionが開始されていた場合に、
+             * 新しいsessionのstartupフラグを誤って解除しない。
+             */
+            if (
+                backgroundTaskStartupRecoverySessionId === recordingSessionId &&
+                backgroundTaskStartupRecoveryGeneration === generation
+            ) {
+                backgroundTaskStartupRecoverySessionId = null;
+                backgroundTaskStartupRecoveryGeneration = null;
+            }
         }
     })().catch((error) => {
         console.error("Background location startup recovery error:", error);
@@ -1196,6 +1204,39 @@ export async function verifyAndRecoverBackgroundLocationRecording(): Promise<Bac
         };
     }
 
+    const startupRecoveryInProgress =
+        backgroundTaskStartupRecoverySessionId === state.recordingSessionId &&
+        backgroundTaskStartupRecoveryGeneration ===
+            backgroundTaskHealthCheckGeneration;
+
+    if (startupRecoveryInProgress) {
+        const heartbeatStatus =
+            await getBackgroundLocationTaskHeartbeatStatus();
+
+        await saveBackgroundLocationDebugLog({
+            userId: state.userId,
+            recordingSessionId: state.recordingSessionId,
+            eventName:
+                "backgroundLocationContinuousHealthSkippedDuringStartupRecovery",
+            hasStartedLocationUpdates: await safeHasStartedLocationUpdates(),
+            details: {
+                heartbeatAgeMs: heartbeatStatus.ageMs,
+            },
+        });
+
+        return {
+            healthy: true,
+            restarted: false,
+            permissionGranted: true,
+            hasStartedLocationUpdates: await safeHasStartedLocationUpdates(),
+            heartbeatAgeMs: heartbeatStatus.ageMs,
+            heartbeatStaleMs: getBackgroundTaskHeartbeatStaleMs(
+                state.intervalMs,
+            ),
+            reason: "healthy",
+        };
+    }
+
     const { userId, recordingSessionId, intervalMs, distanceMeters } = state;
 
     /*
@@ -1435,6 +1476,8 @@ export async function startBackgroundLocationRecording({
 
     const stateActivatedAtMs = Date.now();
     const healthCheckGeneration = ++backgroundTaskHealthCheckGeneration;
+    backgroundTaskStartupRecoverySessionId = recordingSessionId;
+    backgroundTaskStartupRecoveryGeneration = healthCheckGeneration;
 
     const hasStarted = await Location.hasStartedLocationUpdatesAsync(
         BACKGROUND_LOCATION_TASK_NAME,
@@ -1710,6 +1753,8 @@ export async function stopBackgroundLocationRecording(
 ) {
     /* 停止済みsessionの遅延health checkがtaskを再起動しないよう無効化する。 */
     backgroundTaskHealthCheckGeneration += 1;
+    backgroundTaskStartupRecoverySessionId = null;
+    backgroundTaskStartupRecoveryGeneration = null;
 
     const continueLiveSharing = options.continueLiveSharing === true;
     const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);

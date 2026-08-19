@@ -3,7 +3,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
-import { Alert, Linking, Platform } from "react-native";
+import { Alert, AppState, Linking, Platform } from "react-native";
 import { client } from "../lib/client";
 
 import {
@@ -135,7 +135,7 @@ const BACKGROUND_TASK_COLD_RESTART_DELAY_MS = 1_000;
  * 20秒間まったく現在sessionのheartbeatが来なければ、
  * 登録済みに見えても実際のcallback配送が開始していない可能性がある。
  */
-const BACKGROUND_TASK_STARTUP_HEARTBEAT_TIMEOUT_MS = 20_000;
+const BACKGROUND_TASK_STARTUP_HEARTBEAT_TIMEOUT_MS = 10_000;
 
 /*
  * startup recoveryでTaskManager登録まで完全解除したあと、
@@ -148,7 +148,7 @@ const BACKGROUND_TASK_STARTUP_REINITIALIZE_DELAY_MS = 2_000;
 /*
  * startup recovery後のfresh heartbeat確認時間。
  */
-const BACKGROUND_TASK_STARTUP_RECOVERY_HEARTBEAT_TIMEOUT_MS = 30_000;
+const BACKGROUND_TASK_STARTUP_RECOVERY_HEARTBEAT_TIMEOUT_MS = 20_000;
 
 let backgroundTaskHealthCheckGeneration = 0;
 /*
@@ -266,6 +266,57 @@ function delay(milliseconds: number): Promise<void> {
     });
 }
 
+async function waitForAppToBecomeActive(input: {
+    recordingSessionId: string;
+    generation: number;
+}): Promise<boolean> {
+    const { recordingSessionId, generation } = input;
+
+    const isStillCurrentRecording = async () => {
+        if (generation !== backgroundTaskHealthCheckGeneration) {
+            return false;
+        }
+
+        const state = await readBackgroundRecordingStateSafely();
+
+        return Boolean(
+            state?.isRecording &&
+            state.recordingSessionId === recordingSessionId,
+        );
+    };
+
+    if (AppState.currentState === "active") {
+        return isStillCurrentRecording();
+    }
+
+    return new Promise<boolean>((resolve) => {
+        let settled = false;
+
+        const finish = (result: boolean) => {
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+            subscription.remove();
+            resolve(result);
+        };
+
+        const subscription = AppState.addEventListener(
+            "change",
+            (nextState) => {
+                if (nextState !== "active") {
+                    return;
+                }
+
+                void (async () => {
+                    finish(await isStillCurrentRecording());
+                })();
+            },
+        );
+    });
+}
+
 async function waitForFreshRecordingHeartbeat(
     recordingSessionId: string,
     notBeforeMs: number,
@@ -305,6 +356,57 @@ async function waitForFreshRecordingHeartbeat(
     }
 
     return false;
+}
+
+type StartupHeartbeatWaitResult =
+    | "heartbeat"
+    | "timeout"
+    | "appInactive"
+    | "cancelled";
+
+async function waitForFreshRecordingHeartbeatDuringStartup(
+    recordingSessionId: string,
+    notBeforeMs: number,
+    timeoutMs: number,
+    generation: number,
+): Promise<StartupHeartbeatWaitResult> {
+    const deadlineAtMs = Date.now() + timeoutMs;
+
+    while (Date.now() < deadlineAtMs) {
+        if (generation !== backgroundTaskHealthCheckGeneration) {
+            return "cancelled";
+        }
+
+        const state = await readBackgroundRecordingStateSafely();
+
+        if (
+            !state?.isRecording ||
+            state.recordingSessionId !== recordingSessionId
+        ) {
+            return "cancelled";
+        }
+
+        if (AppState.currentState !== "active") {
+            return "appInactive";
+        }
+
+        const heartbeatStatus =
+            await getBackgroundLocationTaskHeartbeatStatus();
+
+        if (
+            isHeartbeatForRecordingSession(
+                heartbeatStatus,
+                recordingSessionId,
+                notBeforeMs,
+            )
+        ) {
+            return "heartbeat";
+        }
+
+        await delay(BACKGROUND_TASK_HEALTH_POLL_INTERVAL_MS);
+    }
+
+    return "timeout";
 }
 
 async function controlledRestartBackgroundLocationTask(input: {
@@ -597,14 +699,14 @@ async function fullyRestartBackgroundLocationTaskOnce(input: {
     }
 }
 
-function scheduleBackgroundLocationStartupRecovery(input: {
+async function ensureBackgroundLocationStartupHealthy(input: {
     userId: string;
     recordingSessionId: string;
     intervalMs: number;
     distanceMeters: number;
     stateActivatedAtMs: number;
     generation: number;
-}): void {
+}): Promise<void> {
     const {
         userId,
         recordingSessionId,
@@ -614,33 +716,51 @@ function scheduleBackgroundLocationStartupRecovery(input: {
         generation,
     } = input;
 
-    void (async () => {
-        try {
-            /*
-             * まず通常起動を待つ。
-             * 正常なら何も変更しない。
-             */
-            const heartbeatReceived = await waitForFreshRecordingHeartbeat(
+    try {
+        /*
+         * startup確認・強いrecoveryはforegroundでのみ実施する。
+         */
+        if (AppState.currentState !== "active") {
+            await saveBackgroundLocationDebugLog({
+                userId,
                 recordingSessionId,
-                stateActivatedAtMs,
-                BACKGROUND_TASK_STARTUP_HEARTBEAT_TIMEOUT_MS,
+                eventName:
+                    "backgroundLocationTaskStartupCheckPausedForBackground",
+                hasStartedLocationUpdates:
+                    await safeHasStartedLocationUpdates(),
+            });
+
+            const activeAgain = await waitForAppToBecomeActive({
+                recordingSessionId,
                 generation,
-            );
+            });
 
-            if (generation !== backgroundTaskHealthCheckGeneration) {
-                return;
+            if (!activeAgain) {
+                throw new Error(
+                    "Background location startup verification was cancelled.",
+                );
             }
 
-            const currentState = await readBackgroundRecordingStateSafely();
+            await saveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName:
+                    "backgroundLocationTaskStartupCheckResumedInForeground",
+                hasStartedLocationUpdates:
+                    await safeHasStartedLocationUpdates(),
+            });
+        }
 
-            if (
-                !currentState?.isRecording ||
-                currentState.recordingSessionId !== recordingSessionId
-            ) {
-                return;
-            }
+        while (true) {
+            const heartbeatResult =
+                await waitForFreshRecordingHeartbeatDuringStartup(
+                    recordingSessionId,
+                    stateActivatedAtMs,
+                    BACKGROUND_TASK_STARTUP_HEARTBEAT_TIMEOUT_MS,
+                    generation,
+                );
 
-            if (heartbeatReceived) {
+            if (heartbeatResult === "heartbeat") {
                 await saveBackgroundLocationDebugLog({
                     userId,
                     recordingSessionId,
@@ -656,6 +776,51 @@ function scheduleBackgroundLocationStartupRecovery(input: {
                 return;
             }
 
+            if (heartbeatResult === "cancelled") {
+                throw new Error(
+                    "Background location startup verification was cancelled.",
+                );
+            }
+
+            if (heartbeatResult === "appInactive") {
+                await saveBackgroundLocationDebugLog({
+                    userId,
+                    recordingSessionId,
+                    eventName:
+                        "backgroundLocationTaskStartupCheckPausedForBackground",
+                    hasStartedLocationUpdates:
+                        await safeHasStartedLocationUpdates(),
+                });
+
+                const activeAgain = await waitForAppToBecomeActive({
+                    recordingSessionId,
+                    generation,
+                });
+
+                if (!activeAgain) {
+                    throw new Error(
+                        "Background location startup verification was cancelled.",
+                    );
+                }
+
+                await saveBackgroundLocationDebugLog({
+                    userId,
+                    recordingSessionId,
+                    eventName:
+                        "backgroundLocationTaskStartupCheckResumedInForeground",
+                    hasStartedLocationUpdates:
+                        await safeHasStartedLocationUpdates(),
+                });
+
+                /*
+                 * foreground復帰後にもう一度heartbeatを確認する。
+                 */
+                continue;
+            }
+
+            /*
+             * foregroundで10秒待ってもheartbeatが来なかった。
+             */
             const heartbeatStatus =
                 await getBackgroundLocationTaskHeartbeatStatus();
 
@@ -677,6 +842,20 @@ function scheduleBackgroundLocationStartupRecovery(input: {
                 },
             });
 
+            /*
+             * 強いstartup recoveryを行う直前にもforegroundを保証する。
+             */
+            const activeBeforeRecovery = await waitForAppToBecomeActive({
+                recordingSessionId,
+                generation,
+            });
+
+            if (!activeBeforeRecovery) {
+                throw new Error(
+                    "Background location startup recovery was cancelled.",
+                );
+            }
+
             const recovered = await recoverBackgroundLocationTaskAtStartupOnce({
                 userId,
                 recordingSessionId,
@@ -685,33 +864,31 @@ function scheduleBackgroundLocationStartupRecovery(input: {
                 generation,
             });
 
-            if (!recovered) {
-                await saveBackgroundLocationDebugLog({
-                    userId,
-                    recordingSessionId,
-                    eventName: "backgroundLocationTaskStartupRecoveryExhausted",
-                    hasStartedLocationUpdates:
-                        await safeHasStartedLocationUpdates(),
-                });
+            if (recovered) {
+                return;
             }
-        } finally {
-            /*
-             * このstartup recovery自身のsession/generationの場合だけ解除する。
-             *
-             * 途中で新しいRecordingSessionが開始されていた場合に、
-             * 新しいsessionのstartupフラグを誤って解除しない。
-             */
-            if (
-                backgroundTaskStartupRecoverySessionId === recordingSessionId &&
-                backgroundTaskStartupRecoveryGeneration === generation
-            ) {
-                backgroundTaskStartupRecoverySessionId = null;
-                backgroundTaskStartupRecoveryGeneration = null;
-            }
+
+            await saveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName: "backgroundLocationTaskStartupRecoveryExhausted",
+                hasStartedLocationUpdates:
+                    await safeHasStartedLocationUpdates(),
+            });
+
+            throw new Error(
+                "Background location task startup recovery failed.",
+            );
         }
-    })().catch((error) => {
-        console.error("Background location startup recovery error:", error);
-    });
+    } finally {
+        if (
+            backgroundTaskStartupRecoverySessionId === recordingSessionId &&
+            backgroundTaskStartupRecoveryGeneration === generation
+        ) {
+            backgroundTaskStartupRecoverySessionId = null;
+            backgroundTaskStartupRecoveryGeneration = null;
+        }
+    }
 }
 
 async function fullyRestartBackgroundLocationTask(input: {
@@ -951,6 +1128,23 @@ async function reinitializeBackgroundLocationTaskForStartup(input: {
     }
 
     try {
+        const activeBeforeRecovery = await waitForAppToBecomeActive({
+            recordingSessionId,
+            generation,
+        });
+
+        if (!activeBeforeRecovery) {
+            return false;
+        }
+
+        await saveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName:
+                "backgroundLocationTaskStartupRecoveryForegroundConfirmed",
+            hasStartedLocationUpdates: await safeHasStartedLocationUpdates(),
+        });
+
         /*
          * expo-location側の登録を停止する。
          */
@@ -987,8 +1181,38 @@ async function reinitializeBackgroundLocationTaskForStartup(input: {
         await delay(BACKGROUND_TASK_STARTUP_REINITIALIZE_DELAY_MS);
 
         /*
-         * 待機中に記録停止、新session開始などが起きていないか再確認する。
+         * stop/unregister中にbackgroundへ移った場合は、
+         * foregroundへ戻るまで新しいLocation taskを開始しない。
          */
+        if (AppState.currentState !== "active") {
+            await saveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName:
+                    "backgroundLocationTaskStartupRecoveryPausedForBackground",
+                hasStartedLocationUpdates:
+                    await safeHasStartedLocationUpdates(),
+            });
+
+            const activeAgain = await waitForAppToBecomeActive({
+                recordingSessionId,
+                generation,
+            });
+
+            if (!activeAgain) {
+                return false;
+            }
+
+            await saveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName:
+                    "backgroundLocationTaskStartupRecoveryResumedInForeground",
+                hasStartedLocationUpdates:
+                    await safeHasStartedLocationUpdates(),
+            });
+        }
+
         const stateAfterStop = await readBackgroundRecordingStateSafely();
 
         if (
@@ -1052,12 +1276,64 @@ async function reinitializeBackgroundLocationTaskForStartup(input: {
          * 今回のsessionのcallbackが本当に届いたことを
          * heartbeatで確認する。
          */
-        const heartbeatRecovered = await waitForFreshRecordingHeartbeat(
-            recordingSessionId,
-            restartStartedAtMs,
-            BACKGROUND_TASK_STARTUP_RECOVERY_HEARTBEAT_TIMEOUT_MS,
-            generation,
-        );
+        let heartbeatRecovered = false;
+
+        while (true) {
+            const heartbeatResult =
+                await waitForFreshRecordingHeartbeatDuringStartup(
+                    recordingSessionId,
+                    restartStartedAtMs,
+                    BACKGROUND_TASK_STARTUP_RECOVERY_HEARTBEAT_TIMEOUT_MS,
+                    generation,
+                );
+
+            if (heartbeatResult === "heartbeat") {
+                heartbeatRecovered = true;
+                break;
+            }
+
+            if (heartbeatResult === "cancelled") {
+                return false;
+            }
+
+            if (heartbeatResult === "timeout") {
+                break;
+            }
+
+            /*
+             * backgroundへ移動した場合は、
+             * foreground復帰後にheartbeatを再確認する。
+             *
+             * background中にtaskが正常発火していれば、
+             * 復帰直後の確認でheartbeatを検出できる。
+             */
+            await saveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName:
+                    "backgroundLocationTaskStartupHeartbeatWaitPausedForBackground",
+                hasStartedLocationUpdates:
+                    await safeHasStartedLocationUpdates(),
+            });
+
+            const activeAgain = await waitForAppToBecomeActive({
+                recordingSessionId,
+                generation,
+            });
+
+            if (!activeAgain) {
+                return false;
+            }
+
+            await saveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName:
+                    "backgroundLocationTaskStartupHeartbeatWaitResumedInForeground",
+                hasStartedLocationUpdates:
+                    await safeHasStartedLocationUpdates(),
+            });
+        }
 
         if (heartbeatRecovered) {
             await saveBackgroundLocationDebugLog({
@@ -1550,7 +1826,7 @@ export async function startBackgroundLocationRecording({
             },
         });
 
-        scheduleBackgroundLocationStartupRecovery({
+        await ensureBackgroundLocationStartupHealthy({
             userId,
             recordingSessionId,
             intervalMs,
@@ -1586,7 +1862,7 @@ export async function startBackgroundLocationRecording({
          * 登録済みだけでは成功としない。
          * 現在sessionのheartbeat到着確認は継続する。
          */
-        scheduleBackgroundLocationStartupRecovery({
+        await ensureBackgroundLocationStartupHealthy({
             userId,
             recordingSessionId,
             intervalMs,
@@ -1641,7 +1917,7 @@ export async function startBackgroundLocationRecording({
          * このsessionのfresh heartbeatが来ることを確認し、来なければ
          * controlled restartを1回だけ実施する。
          */
-        scheduleBackgroundLocationStartupRecovery({
+        await ensureBackgroundLocationStartupHealthy({
             userId,
             recordingSessionId,
             intervalMs,

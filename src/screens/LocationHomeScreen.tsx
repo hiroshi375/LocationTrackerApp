@@ -438,6 +438,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const [startingRecording, setStartingRecording] = useState(false);
     const [stoppingRecording, setStoppingRecording] = useState(false);
+    const recordingControlsLocked = isRecording || startingRecording;
     const [checkingBackgroundHeartbeat, setCheckingBackgroundHeartbeat] =
         useState(false);
 
@@ -640,6 +641,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
     }, [liveShareUsers, liveShareSearchText]);
 
     const openLiveShareModal = () => {
+        if (recordingControlsLocked) {
+            return;
+        }
+
         setDraftLiveShareUsers(selectedLiveShareUsers);
         setLiveShareSearchText("");
         setLiveShareModalVisible(true);
@@ -647,6 +652,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
     };
 
     const clearLiveShareUsers = () => {
+        if (recordingControlsLocked) {
+            return;
+        }
+
         setSelectedLiveShareUsers([]);
         setLiveShareStatusMessage("");
     };
@@ -1915,7 +1924,11 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     </Text>
 
                     <Pressable
-                        style={styles.liveShareGroupManageButton}
+                        style={[
+                            styles.liveShareGroupManageButton,
+                            startingRecording && styles.appButtonDisabled,
+                        ]}
+                        disabled={startingRecording}
                         onPress={() => {
                             navigation.navigate("ShareGroupManagement");
                         }}
@@ -1926,8 +1939,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     </Pressable>
 
                     <Pressable
-                        style={styles.liveShareSelectButton}
+                        style={[
+                            styles.liveShareSelectButton,
+                            recordingControlsLocked && styles.appButtonDisabled,
+                        ]}
                         onPress={openLiveShareModal}
+                        disabled={recordingControlsLocked}
                     >
                         <Text style={styles.liveShareSelectButtonText}>
                             {selectedLiveShareUsers.length > 0
@@ -1993,8 +2010,13 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
                     {selectedLiveShareUsers.length > 0 && (
                         <Pressable
-                            style={styles.liveShareClearButton}
+                            style={[
+                                styles.liveShareClearButton,
+                                recordingControlsLocked &&
+                                    styles.appButtonDisabled,
+                            ]}
                             onPress={clearLiveShareUsers}
+                            disabled={recordingControlsLocked}
                         >
                             <Text style={styles.liveShareClearButtonText}>
                                 共有先をすべて解除
@@ -2078,12 +2100,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 return (
                                     <Pressable
                                         key={option.value}
-                                        disabled={isRecording}
+                                        disabled={recordingControlsLocked}
                                         style={[
                                             styles.optionButton,
                                             selected &&
                                                 styles.optionButtonSelected,
-                                            isRecording &&
+                                            recordingControlsLocked &&
                                                 styles.optionButtonDisabled,
                                         ]}
                                         onPress={() =>
@@ -2117,12 +2139,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 return (
                                     <Pressable
                                         key={option.value}
-                                        disabled={isRecording}
+                                        disabled={recordingControlsLocked}
                                         style={[
                                             styles.optionButton,
                                             selected &&
                                                 styles.optionButtonSelected,
-                                            isRecording &&
+                                            recordingControlsLocked &&
                                                 styles.optionButtonDisabled,
                                         ]}
                                         onPress={() =>
@@ -2303,6 +2325,25 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             disabled={!canOpenRecordingMap}
                         />
                     </View>
+
+                    {startingRecording && (
+                        <View style={styles.recordingStartingBox}>
+                            <ActivityIndicator size="small" />
+
+                            <View style={styles.recordingStartingTextBox}>
+                                <Text style={styles.recordingStartingTitle}>
+                                    自動記録を開始しています…
+                                </Text>
+
+                                <Text
+                                    style={styles.recordingStartingDescription}
+                                >
+                                    バックグラウンド位置情報の準備を確認しています。
+                                    この画面を開いたままお待ちください。
+                                </Text>
+                            </View>
+                        </View>
+                    )}
                     {isRecording ? (
                         <Pressable
                             style={({ pressed }) => [
@@ -2849,6 +2890,33 @@ const styles = StyleSheet.create({
         color: "#fff",
         fontSize: 15,
         fontWeight: "bold",
+    },
+    recordingStartingBox: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+        marginTop: 10,
+        marginBottom: 4,
+        paddingVertical: 12,
+        paddingHorizontal: 14,
+        borderRadius: 8,
+        backgroundColor: "#eef3f7",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+    },
+    recordingStartingTextBox: {
+        flex: 1,
+    },
+    recordingStartingTitle: {
+        fontSize: 15,
+        fontWeight: "bold",
+        color: "#2f4f66",
+    },
+    recordingStartingDescription: {
+        marginTop: 3,
+        fontSize: 12,
+        lineHeight: 18,
+        color: "#666",
     },
     buttonPressed: {
         opacity: 0.75,

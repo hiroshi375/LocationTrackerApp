@@ -6,6 +6,10 @@ import { Alert, AppState } from "react-native";
 import * as Battery from "expo-battery";
 import { client } from "../lib/client";
 import {
+    getErrorMessage,
+    saveBackgroundLocationDebugLog,
+} from "../services/backgroundLocationDebugLogService";
+import {
     ensureBackgroundLocationPermission,
     getBackgroundRecordingStatus,
     isBackgroundLocationDisclosureDeclined,
@@ -23,6 +27,7 @@ import {
     isDuplicateLocationCreateError,
 } from "../services/locationLogDeduplicationService";
 import {
+    clearRecordingContinuationState,
     confirmRecordingContinuation,
     evaluateRecordingContinuation,
     initializeRecordingContinuationState,
@@ -60,12 +65,117 @@ type LiveLocationMutationResult = {
 
 const FOREGROUND_LOCATION_SAMPLE_INTERVAL_MS = 5_000;
 
+/*
+ * 自動記録開始時の現在地取得が長時間返らない場合に備える。
+ *
+ * Android実機では getCurrentPositionAsync() が
+ * GPS状態などによって長時間待機するケースがあるため、
+ * Background Task開始処理まで到達できない状態を防ぐ。
+ */
+const START_CURRENT_LOCATION_TIMEOUT_MS = 15_000;
+
+/*
+ * timeout時に利用を許可する最終既知位置の最大経過時間。
+ */
+const START_LAST_KNOWN_LOCATION_MAX_AGE_MS = 60_000;
+
+/*
+ * fallbackとして許可するaccuracy上限。
+ *
+ * 500mを超える位置は開始地点として不正確すぎるため使用しない。
+ */
+const START_LAST_KNOWN_LOCATION_MAX_ACCURACY_METERS = 500;
+
+class StartCurrentLocationTimeoutError extends Error {
+    constructor(timeoutMs: number) {
+        super(`Current location request timed out after ${timeoutMs}ms`);
+
+        this.name = "StartCurrentLocationTimeoutError";
+    }
+}
+
+type ForegroundDebugLogInput = Parameters<
+    typeof saveBackgroundLocationDebugLog
+>[0];
+
+async function safeSaveForegroundLocationDebugLog(
+    input: ForegroundDebugLogInput,
+): Promise<void> {
+    try {
+        await saveBackgroundLocationDebugLog(input);
+    } catch (debugLogError) {
+        console.error(
+            "Failed to save foreground location debug log:",
+            debugLogError,
+        );
+    }
+}
+
 function getForegroundLocationSampleIntervalMs(intervalMs: number): number {
     if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
         return FOREGROUND_LOCATION_SAMPLE_INTERVAL_MS;
     }
 
     return Math.min(intervalMs, FOREGROUND_LOCATION_SAMPLE_INTERVAL_MS);
+}
+
+async function getCurrentPositionWithTimeout(
+    timeoutMs: number,
+): Promise<Location.LocationObject> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    try {
+        return await Promise.race([
+            Location.getCurrentPositionAsync({
+                accuracy: Location.Accuracy.Balanced,
+            }),
+
+            new Promise<Location.LocationObject>((_, reject) => {
+                timeoutId = setTimeout(() => {
+                    reject(new StartCurrentLocationTimeoutError(timeoutMs));
+                }, timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+        }
+    }
+}
+
+async function getStartLocationFallback(): Promise<Location.LocationObject | null> {
+    try {
+        const location = await Location.getLastKnownPositionAsync({
+            maxAge: START_LAST_KNOWN_LOCATION_MAX_AGE_MS,
+            requiredAccuracy: START_LAST_KNOWN_LOCATION_MAX_ACCURACY_METERS,
+        });
+
+        if (!location) {
+            console.warn(
+                "[StartRecording] Last known location is not available.",
+            );
+
+            return null;
+        }
+
+        const ageMs = Math.max(0, Date.now() - location.timestamp);
+
+        console.warn("[StartRecording] Using last known location fallback:", {
+            ageMs,
+            accuracy: location.coords.accuracy ?? null,
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+        });
+
+        return location;
+    } catch (error) {
+        console.error(
+            "[StartRecording] Get last known location failed:",
+            error,
+        );
+
+        return null;
+    }
 }
 
 export function useForegroundLocationRecorder({
@@ -766,28 +876,195 @@ export function useForegroundLocationRecorder({
 
             const startedAt = new Date().toISOString();
 
+            console.log(
+                "[StartRecording] Continuation state initialization started:",
+                {
+                    recordingSessionId: newSessionId,
+                    startedAt,
+                },
+            );
+
             await initializeRecordingContinuationState(newSessionId, startedAt);
+
+            console.log(
+                "[StartRecording] Continuation state initialization completed:",
+                {
+                    recordingSessionId: newSessionId,
+                },
+            );
 
             setRecordingStartedAt(startedAt);
 
-            let currentLocation: Location.LocationObject;
+            let currentLocation: Location.LocationObject | null = null;
+
+            const currentLocationRequestStartedAt = Date.now();
+
+            console.log("[StartRecording] Current location request started:", {
+                recordingSessionId: newSessionId,
+                timeoutMs: START_CURRENT_LOCATION_TIMEOUT_MS,
+            });
+
+            void safeSaveForegroundLocationDebugLog({
+                recordingSessionId: newSessionId,
+                eventName: "startRecordingCurrentLocationRequestStarted",
+                details: {
+                    timeoutMs: START_CURRENT_LOCATION_TIMEOUT_MS,
+                    intervalMs,
+                    distanceMeters,
+                    liveShareOwnerCount: normalizedLiveShareOwnerValues.length,
+                },
+            });
 
             try {
-                currentLocation = await Location.getCurrentPositionAsync({
-                    accuracy: Location.Accuracy.Balanced,
+                currentLocation = await getCurrentPositionWithTimeout(
+                    START_CURRENT_LOCATION_TIMEOUT_MS,
+                );
+
+                const currentLocationRequestDurationMs =
+                    Date.now() - currentLocationRequestStartedAt;
+
+                const currentLocationAgeMs = Math.max(
+                    0,
+                    Date.now() - currentLocation.timestamp,
+                );
+
+                console.log(
+                    "[StartRecording] Current location request completed:",
+                    {
+                        recordingSessionId: newSessionId,
+                        durationMs: currentLocationRequestDurationMs,
+                        accuracy: currentLocation.coords.accuracy ?? null,
+                        locationAgeMs: currentLocationAgeMs,
+                    },
+                );
+
+                void safeSaveForegroundLocationDebugLog({
+                    recordingSessionId: newSessionId,
+                    eventName: "startRecordingCurrentLocationRequestCompleted",
+                    details: {
+                        durationMs: currentLocationRequestDurationMs,
+                        accuracy: currentLocation.coords.accuracy ?? null,
+                        locationAgeMs: currentLocationAgeMs,
+                    },
                 });
             } catch (error) {
-                resetRecordingState();
+                const timedOut =
+                    error instanceof StartCurrentLocationTimeoutError;
 
-                console.error("Get current location error:", error);
+                console.warn(
+                    "[StartRecording] Current location request failed:",
+                    {
+                        recordingSessionId: newSessionId,
+                        durationMs:
+                            Date.now() - currentLocationRequestStartedAt,
+                        timedOut,
+                        error:
+                            error instanceof Error
+                                ? {
+                                      name: error.name,
+                                      message: error.message,
+                                  }
+                                : String(error),
+                    },
+                );
+
+                if (timedOut) {
+                    void safeSaveForegroundLocationDebugLog({
+                        recordingSessionId: newSessionId,
+                        eventName:
+                            "startRecordingCurrentLocationRequestTimedOut",
+                        errorMessage: getErrorMessage(error),
+                        details: {
+                            durationMs:
+                                Date.now() - currentLocationRequestStartedAt,
+                            timeoutMs: START_CURRENT_LOCATION_TIMEOUT_MS,
+                        },
+                    });
+                } else {
+                    void safeSaveForegroundLocationDebugLog({
+                        recordingSessionId: newSessionId,
+                        eventName: "startRecordingCurrentLocationRequestFailed",
+                        errorMessage: getErrorMessage(error),
+                        details: {
+                            durationMs:
+                                Date.now() - currentLocationRequestStartedAt,
+                        },
+                    });
+                }
+                /*
+                 * 現在地の新規取得がtimeout / errorになった場合、
+                 * 直近の十分新しく、精度も許容範囲の位置だけfallbackとして利用する。
+                 */
+                console.log(
+                    "[StartRecording] Last known location fallback started:",
+                    {
+                        recordingSessionId: newSessionId,
+                        maxAgeMs: START_LAST_KNOWN_LOCATION_MAX_AGE_MS,
+                        maxAccuracyMeters:
+                            START_LAST_KNOWN_LOCATION_MAX_ACCURACY_METERS,
+                    },
+                );
+
+                currentLocation = await getStartLocationFallback();
+
+                if (currentLocation) {
+                    const fallbackLocationAgeMs = Math.max(
+                        0,
+                        Date.now() - currentLocation.timestamp,
+                    );
+
+                    const fallbackAccuracy =
+                        currentLocation.coords.accuracy ?? null;
+
+                    console.log(
+                        "[StartRecording] Last known location fallback completed:",
+                        {
+                            recordingSessionId: newSessionId,
+                            locationAgeMs: fallbackLocationAgeMs,
+                            accuracy: fallbackAccuracy,
+                        },
+                    );
+
+                    void safeSaveForegroundLocationDebugLog({
+                        recordingSessionId: newSessionId,
+                        eventName: "startRecordingLastKnownLocationUsed",
+                        details: {
+                            locationAgeMs: fallbackLocationAgeMs,
+                            accuracy: fallbackAccuracy,
+                            maxAgeMs: START_LAST_KNOWN_LOCATION_MAX_AGE_MS,
+                            maxAccuracyMeters:
+                                START_LAST_KNOWN_LOCATION_MAX_ACCURACY_METERS,
+                        },
+                    });
+                }
+            }
+
+            if (!currentLocation) {
+                console.error("[StartRecording] Start location unavailable:", {
+                    recordingSessionId: newSessionId,
+                });
+
+                try {
+                    await clearRecordingContinuationState(newSessionId);
+                } catch (cleanupError) {
+                    console.error(
+                        "[StartRecording] Continuation state cleanup failed after location error:",
+                        {
+                            recordingSessionId: newSessionId,
+                            error: cleanupError,
+                        },
+                    );
+                }
+
+                resetRecordingState();
 
                 Alert.alert(
                     "現在地を取得できませんでした",
-                    "位置情報サービスが有効になっているか確認してください。",
+                    "現在地を取得できませんでした。屋外など位置情報を取得しやすい場所で、もう一度お試しください。",
                 );
+
                 return;
             }
-
             const currentLocationRecordedAtMs =
                 typeof currentLocation.timestamp === "number" &&
                 Number.isFinite(currentLocation.timestamp)
@@ -802,8 +1079,40 @@ export function useForegroundLocationRecorder({
             setDistanceFromStartMeters(0);
 
             try {
+                const getCurrentUserStartedAt = Date.now();
+
+                console.log("[StartRecording] Get current user started:", {
+                    recordingSessionId: newSessionId,
+                });
+
                 const currentUser = await getCurrentUser();
+
+                const getCurrentUserDurationMs =
+                    Date.now() - getCurrentUserStartedAt;
+
+                console.log("[StartRecording] Get current user completed:", {
+                    recordingSessionId: newSessionId,
+                    durationMs: getCurrentUserDurationMs,
+                    userId: currentUser.userId,
+                });
+
+                void safeSaveForegroundLocationDebugLog({
+                    userId: currentUser.userId,
+                    recordingSessionId: newSessionId,
+                    eventName: "startRecordingCurrentUserCompleted",
+                    details: {
+                        durationMs: getCurrentUserDurationMs,
+                    },
+                });
+
                 recordingUserIdRef.current = currentUser.userId;
+
+                console.log(
+                    "[StartRecording] Background recording start requested:",
+                    {
+                        recordingSessionId: newSessionId,
+                    },
+                );
 
                 await startBackgroundLocationRecording({
                     userId: currentUser.userId,
@@ -820,6 +1129,13 @@ export function useForegroundLocationRecorder({
                         recordedAt: currentLocationRecordedAtMs,
                     },
                 });
+
+                console.log(
+                    "[StartRecording] Background recording start completed:",
+                    {
+                        recordingSessionId: newSessionId,
+                    },
+                );
             } catch (error) {
                 try {
                     await stopBackgroundLocationRecording();
@@ -827,6 +1143,18 @@ export function useForegroundLocationRecorder({
                     console.error(
                         "Stop background after start error:",
                         stopError,
+                    );
+                }
+
+                try {
+                    await clearRecordingContinuationState(newSessionId);
+                } catch (cleanupError) {
+                    console.error(
+                        "[StartRecording] Continuation state cleanup failed after background start error:",
+                        {
+                            recordingSessionId: newSessionId,
+                            error: cleanupError,
+                        },
                     );
                 }
 
@@ -838,10 +1166,6 @@ export function useForegroundLocationRecorder({
                     isBackgroundLocationPermissionError(error);
 
                 if (isExpectedPermissionResult) {
-                    /*
-                     * 想定された権限関連の結果は、
-                     * LocationHomeScreen側へ返す。
-                     */
                     throw error;
                 }
 
@@ -850,10 +1174,6 @@ export function useForegroundLocationRecorder({
                     error,
                 );
 
-                /*
-                 * 画面側でエラーを表示するため、
-                 * このフック内ではAlertを表示しない。
-                 */
                 throw error;
             }
 

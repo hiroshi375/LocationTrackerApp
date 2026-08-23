@@ -1052,7 +1052,6 @@ export function useForegroundLocationRecorder({
                     maxIterations: 50,
 
                     forceIncludeRecent: true,
-                    forceRetryNow: true,
                 });
 
                 console.log("Stop SQLite queue drain completed:", {

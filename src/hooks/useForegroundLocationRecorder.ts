@@ -932,13 +932,13 @@ export function useForegroundLocationRecorder({
                 }
 
                 /*
-                 * foregroundへ復帰した場合:
-                 * Android側の位置registrationを確実に作り直す。
+                 * foregroundへ復帰した場合は、
+                 * foreground側の位置watcherを確実に再登録する。
                  *
-                 * またBG taskが異常でcontrolled restartされた場合も、
-                 * FG watcherを一緒に再登録する。
+                 * Background taskのhealth checkは診断専用とし、
+                 * ここからBackground taskの再起動は行わない。
                  */
-                if (reason === "returnedToForeground" || result.restarted) {
+                if (reason === "returnedToForeground") {
                     await ensureForegroundRecordingWatcher(true);
                 }
             } catch (error) {

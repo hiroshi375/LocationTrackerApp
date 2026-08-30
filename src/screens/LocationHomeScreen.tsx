@@ -32,6 +32,7 @@ import {
     isBackgroundLocationDisclosureDeclined,
     isBackgroundLocationPermissionError,
     isForegroundLocationPermissionError,
+    stopBackgroundLocationRecording,
     type BackgroundLocationHeartbeatStatus,
 } from "../services/backgroundLocationService";
 import {
@@ -722,13 +723,40 @@ export default function LocationHomeScreen({ navigation }: Props) {
         void loadLiveShareUsers();
     };
 
-    const clearLiveShareUsers = () => {
+    const clearLiveShareUsers = async (): Promise<void> => {
         if (recordingControlsLocked) {
             return;
         }
 
-        setSelectedLiveShareUsers([]);
-        setLiveShareStatusMessage("");
+        try {
+            /*
+             * 自動記録停止後も現在地共有が継続している場合、
+             * UI上の共有先を空にするだけでは、
+             * background側のliveShareOwnerValuesと
+             * Background Location taskが残ってしまう。
+             *
+             * 「共有先をすべて解除」した場合は、
+             * Background Locationも完全停止する。
+             */
+            await stopBackgroundLocationRecording({
+                continueLiveSharing: false,
+            });
+
+            /*
+             * Background側の停止に成功してから
+             * UI側の共有状態も解除する。
+             */
+            setSelectedLiveShareUsers([]);
+            setDraftLiveShareUsers([]);
+            setLiveShareStatusMessage("");
+        } catch (error) {
+            console.error("Clear live sharing error:", error);
+
+            Alert.alert(
+                "現在地共有の停止エラー",
+                "現在地共有を停止できませんでした。もう一度お試しください。",
+            );
+        }
     };
 
     const toggleLiveShareUser = (user: UserProfileItem) => {

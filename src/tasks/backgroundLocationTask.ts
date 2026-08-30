@@ -553,6 +553,25 @@ async function createLocationLogWithAuthRetry(
     };
 }
 
+const BACKGROUND_QUEUE_MAINTENANCE_INTERVAL = 60;
+
+/*
+ * 起動後最初のcallbackでは、
+ * 既存の大量な処理済みSQLiteレコードをcleanupする。
+ *
+ * 以降は60 callbackごとにcleanupする。
+ */
+let backgroundQueueMaintenanceCounter =
+    BACKGROUND_QUEUE_MAINTENANCE_INTERVAL - 1;
+
+/*
+ * SQLite pendingのクラウド送信は、
+ * 毎callbackではなく一定間隔で実行する。
+ */
+let lastBackgroundQueueDrainAtMs = 0;
+
+const BACKGROUND_QUEUE_DRAIN_INTERVAL_MS = 15_000;
+
 TaskManager.defineTask(
     BACKGROUND_LOCATION_TASK_NAME,
     async ({ data, error }) => {
@@ -849,15 +868,30 @@ TaskManager.defineTask(
                     sqliteQueueLatestPendingRecordedAt =
                         queueSummary.latestPendingRecordedAt;
 
-                    const cleanupResult = await cleanupProcessedLocationQueue({
-                        retentionDays: 7,
-                    });
+                    /*
+                     * cleanupは毎callbackでは実行せず、
+                     * 60 callbackごとに1回だけ実行する。
+                     */
+                    backgroundQueueMaintenanceCounter += 1;
 
-                    if (cleanupResult.deletedCount > 0) {
-                        console.log(
-                            "Background SQLite queue cleanup completed:",
-                            cleanupResult,
-                        );
+                    if (
+                        backgroundQueueMaintenanceCounter >=
+                        BACKGROUND_QUEUE_MAINTENANCE_INTERVAL
+                    ) {
+                        backgroundQueueMaintenanceCounter = 0;
+
+                        const cleanupResult =
+                            await cleanupProcessedLocationQueue({
+                                retentionDays: 1,
+                                maxProcessedRows: 2_000,
+                            });
+
+                        if (cleanupResult.deletedCount > 0) {
+                            console.log(
+                                "Background SQLite queue cleanup completed:",
+                                cleanupResult,
+                            );
+                        }
                     }
                 } catch (queueSummaryError) {
                     sqliteQueueSummaryErrorMessage =
@@ -1022,10 +1056,23 @@ TaskManager.defineTask(
                     liveLocationResult.liveLocationId ?? null;
             }
 
-            if (
+            const nowMs = Date.now();
+
+            const shouldDrainSQLiteQueue =
                 ENABLE_LOCATION_SQLITE_QUEUE_UPLOAD &&
-                activeRecordingSessionId
-            ) {
+                Boolean(activeRecordingSessionId) &&
+                nowMs - lastBackgroundQueueDrainAtMs >=
+                    BACKGROUND_QUEUE_DRAIN_INTERVAL_MS;
+
+            if (shouldDrainSQLiteQueue && activeRecordingSessionId) {
+                /*
+                 * ここで先に時刻を更新する。
+                 *
+                 * 同時期に複数callbackが来ても、
+                 * 後続callbackから同じdrainを起動しにくくする。
+                 */
+                lastBackgroundQueueDrainAtMs = nowMs;
+
                 sqliteQueueUploadAttempted = true;
 
                 const queueUploadStartedAtMs = Date.now();
@@ -1042,10 +1089,15 @@ TaskManager.defineTask(
                         fallbackSharedOwners: state.liveShareOwnerValues,
                     });
 
+                    /*
+                     * alreadyRunningはクラウド送信エラーではない。
+                     *
+                     * 既存のdrainが動作中だったため、
+                     * 今回のcallbackでは新しいdrainを開始しなかっただけ。
+                     */
                     sqliteQueueUploadSucceeded =
                         uploadResult.failedCount === 0 &&
-                        uploadResult.timedOutCount === 0 &&
-                        uploadResult.stopReason !== "alreadyRunning";
+                        uploadResult.timedOutCount === 0;
 
                     sqliteQueueUploadPendingCount = uploadResult.pendingCount;
 
@@ -1066,7 +1118,7 @@ TaskManager.defineTask(
                     sqliteQueueUploadStopReason = uploadResult.stopReason;
 
                     console.log("SQLite location queue upload completed:", {
-                        recordingSessionId: state.recordingSessionId,
+                        recordingSessionId: activeRecordingSessionId,
                         ...uploadResult,
                     });
                 } catch (queueUploadError) {

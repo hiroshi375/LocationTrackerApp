@@ -355,21 +355,7 @@ export async function enqueueLocationBatchForAudit(
         }
     }
 
-    let queueCount: number | null = null;
-
-    try {
-        const countRow = await db.getFirstAsync<QueueCountRow>(
-            `SELECT COUNT(*) AS count FROM ${TABLE_NAME}`,
-        );
-
-        queueCount =
-            typeof countRow?.count === "number" ? countRow.count : null;
-    } catch (error) {
-        /*
-         * 件数取得失敗は、投入済みデータの成否へ影響させない。
-         */
-        console.error("SQLite location mirror count error:", error);
-    }
+    const queueCount: number | null = null;
 
     return {
         receivedCount: input.locations.length,
@@ -695,6 +681,7 @@ export async function getLocationQueueStatusSummary(input?: {
 
 export async function cleanupProcessedLocationQueue(input?: {
     retentionDays?: number;
+    maxProcessedRows?: number;
 }): Promise<CleanupProcessedLocationQueueResult> {
     const db = await getDatabase();
 
@@ -702,13 +689,27 @@ export async function cleanupProcessedLocationQueue(input?: {
         typeof input?.retentionDays === "number" &&
         Number.isFinite(input.retentionDays)
             ? Math.max(1, Math.min(Math.trunc(input.retentionDays), 90))
-            : 7;
+            : 1;
+
+    const maxProcessedRows =
+        typeof input?.maxProcessedRows === "number" &&
+        Number.isFinite(input.maxProcessedRows)
+            ? Math.max(
+                  100,
+                  Math.min(Math.trunc(input.maxProcessedRows), 10_000),
+              )
+            : 2_000;
 
     const thresholdMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
 
     const thresholdIso = new Date(thresholdMs).toISOString();
 
-    const result = await db.runAsync(
+    /*
+     * まず古い処理済みデータを削除する。
+     *
+     * pendingは絶対に削除しない。
+     */
+    const ageCleanupResult = await db.runAsync(
         `
         DELETE FROM ${TABLE_NAME}
         WHERE
@@ -725,8 +726,41 @@ export async function cleanupProcessedLocationQueue(input?: {
         },
     );
 
+    /*
+     * retention期間内でも処理済みデータが大量に増える場合があるため、
+     * 最新maxProcessedRows件だけ残す。
+     *
+     * pendingは対象外なので、
+     * 未送信位置情報を失うことはない。
+     */
+    const capCleanupResult = await db.runAsync(
+        `
+        DELETE FROM ${TABLE_NAME}
+        WHERE
+            queue_status IN (
+                'sent',
+                'duplicate',
+                'skipped'
+            )
+            AND location_log_id NOT IN (
+                SELECT location_log_id
+                FROM ${TABLE_NAME}
+                WHERE queue_status IN (
+                    'sent',
+                    'duplicate',
+                    'skipped'
+                )
+                ORDER BY processed_at DESC
+                LIMIT $maxProcessedRows
+            )
+        `,
+        {
+            $maxProcessedRows: maxProcessedRows,
+        },
+    );
+
     return {
-        deletedCount: result.changes,
+        deletedCount: ageCleanupResult.changes + capCleanupResult.changes,
         thresholdIso,
     };
 }

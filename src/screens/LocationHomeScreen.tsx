@@ -1669,8 +1669,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
                       : `${Math.floor(ageSeconds / 60)}分${ageSeconds % 60}秒`
             }`,
             `受信地点数: ${heartbeat.locationsLength}件`,
-            `記録中判定: ${heartbeat.isRecording ? "はい" : "いいえ"}`,
-            `タスクエラー: ${heartbeat.hasTaskError ? "あり" : "なし"}`,
+            `最終heartbeat時の記録中判定: ${
+                heartbeat.isRecording ? "はい" : "いいえ"
+            }`,
+            `最終heartbeat時のタスクエラー: ${heartbeat.hasTaskError ? "あり" : "なし"}`,
             `セッション一致: ${
                 activeRecordingSessionId &&
                 heartbeat.recordingSessionId === activeRecordingSessionId

@@ -34,10 +34,6 @@ export type EnqueueLocationBatchResult = {
     queueCount: number | null;
 };
 
-type QueueCountRow = {
-    count: number;
-};
-
 export type LocationQueueStatus = "pending" | "sent" | "duplicate" | "skipped";
 
 export type PendingLocationQueueRow = {

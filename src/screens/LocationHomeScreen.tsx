@@ -2365,7 +2365,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             <Text style={styles.easUpdateButtonText}>
                                 {forcingEasUpdate
                                     ? "最新EAS Updateを確認中..."
-                                    : "最新EAS Updateを適用【確認用2】"}
+                                    : "最新EAS Updateを適用【確認用3】"}
                             </Text>
                         </Pressable>
 

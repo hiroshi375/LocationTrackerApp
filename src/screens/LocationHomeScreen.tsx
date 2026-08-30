@@ -229,14 +229,85 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
             console.log("EAS Update fetch result:", fetchResult);
 
+            /*
+             * Background Location稼働中のFull JS Reloadによって、
+             * background location callbackが停止するため、
+             * 自動記録中または現在地共有中はUpdateを適用しない。
+             *
+             * UI側stateではなく、background taskと共有している
+             * 保存済みstateを参照する。
+             */
+            const backgroundStatus = await getBackgroundRecordingStatus();
+            const backgroundState = backgroundStatus.state;
+
+            const isBackgroundLocationInUse =
+                backgroundState?.isRecording === true ||
+                (backgroundState?.liveShareOwnerValues?.length ?? 0) > 0;
+
+            if (isBackgroundLocationInUse) {
+                Alert.alert(
+                    "EAS Update",
+                    "最新Updateを取得しましたが、現在位置情報をバックグラウンドで使用中のため適用できません。\n\n" +
+                        "自動記録と現在地共有を停止してから、もう一度Updateを適用してください。",
+                );
+                return;
+            }
+
             Alert.alert(
                 "EAS Update",
                 "最新Updateを取得しました。今すぐ適用します。",
                 [
                     {
+                        text: "キャンセル",
+                        style: "cancel",
+                    },
+                    {
                         text: "適用",
                         onPress: () => {
-                            void Updates.reloadAsync();
+                            void (async () => {
+                                try {
+                                    /*
+                                     * Alert表示後から「適用」押下までの間に
+                                     * Background Locationが開始される可能性があるため、
+                                     * reload直前でも必ず再確認する。
+                                     */
+                                    const latestBackgroundStatus =
+                                        await getBackgroundRecordingStatus();
+
+                                    const latestBackgroundState =
+                                        latestBackgroundStatus.state;
+
+                                    const isLatestBackgroundLocationInUse =
+                                        latestBackgroundState?.isRecording ===
+                                            true ||
+                                        (latestBackgroundState
+                                            ?.liveShareOwnerValues?.length ??
+                                            0) > 0;
+
+                                    if (isLatestBackgroundLocationInUse) {
+                                        Alert.alert(
+                                            "EAS Update",
+                                            "位置情報のバックグラウンド処理が開始されているため、Updateを適用できません。\n\n" +
+                                                "自動記録と現在地共有を停止してから、もう一度Updateを適用してください。",
+                                        );
+                                        return;
+                                    }
+
+                                    await Updates.reloadAsync();
+                                } catch (error) {
+                                    const message =
+                                        error instanceof Error
+                                            ? error.message
+                                            : String(error);
+
+                                    console.error(
+                                        "EAS Update reload error:",
+                                        error,
+                                    );
+
+                                    Alert.alert("EAS Updateエラー", message);
+                                }
+                            })();
                         },
                     },
                 ],

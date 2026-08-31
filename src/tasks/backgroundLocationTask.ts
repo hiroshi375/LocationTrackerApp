@@ -295,8 +295,6 @@ function isUnauthorizedError(error: unknown): boolean {
     );
 }
 
-const SQLITE_MIRROR_TIMEOUT_MS = 5_000;
-
 /**
  * バックグラウンドでのLiveLocation作成・更新の最大待機時間。
  *
@@ -609,6 +607,13 @@ TaskManager.defineTask(
         let sqliteMirrorInsertedCount = 0;
         let sqliteMirrorDuplicateCount = 0;
         let sqliteMirrorInvalidCount = 0;
+        /*
+         * direct LocationLog保存へ実際に流す地点。
+         *
+         * SQLite mirrorを使わない場合やSQLite処理自体が失敗した場合は、
+         * 従来どおり受信した全地点を使用する。
+         */
+        let locationsForDirectSave: Location.LocationObject[] | null = null;
         let sqliteMirrorQueueCount: number | null = null;
         let sqliteMirrorErrorMessage: string | null = null;
         let sqliteQueueUploadAttempted = false;
@@ -794,25 +799,27 @@ TaskManager.defineTask(
                     const { enqueueLocationBatchForAudit } =
                         await import("../services/locationLocationQueueService");
 
-                    const sqliteResult = await withTimeout(
-                        enqueueLocationBatchForAudit({
-                            userId: state.userId,
-                            recordingSessionId: activeRecordingSessionId,
-                            source: "background",
-                            locations,
-                            receivedAt: taskFiredAt,
-                            sharedOwners: state.liveShareOwnerValues,
-                        }),
-                        SQLITE_MIRROR_TIMEOUT_MS,
-                        "Background SQLite location mirror",
-                    );
+                    const sqliteResult = await enqueueLocationBatchForAudit({
+                        userId: state.userId,
+                        recordingSessionId: activeRecordingSessionId,
+                        source: "background",
+                        locations,
+                        receivedAt: taskFiredAt,
+                        sharedOwners: state.liveShareOwnerValues,
+                    });
 
                     sqliteMirrorSucceeded = true;
                     sqliteMirrorInsertedCount = sqliteResult.insertedCount;
                     sqliteMirrorDuplicateCount = sqliteResult.duplicateCount;
                     sqliteMirrorInvalidCount = sqliteResult.invalidCount;
                     sqliteMirrorQueueCount = sqliteResult.queueCount;
-
+                    /*
+                     * SQLiteへ今回新規投入された地点、
+                     * またはSQLite INSERT失敗でfallbackが必要な地点だけを
+                     * direct LocationLog保存へ流す。
+                     */
+                    locationsForDirectSave =
+                        sqliteResult.locationsForDirectSave;
                     console.log(
                         "Background SQLite location mirror completed:",
                         {
@@ -821,6 +828,8 @@ TaskManager.defineTask(
                             insertedCount: sqliteResult.insertedCount,
                             duplicateCount: sqliteResult.duplicateCount,
                             invalidCount: sqliteResult.invalidCount,
+                            directSaveCount:
+                                sqliteResult.locationsForDirectSave.length,
                             queueCount: sqliteResult.queueCount,
                         },
                     );
@@ -928,8 +937,8 @@ TaskManager.defineTask(
                 );
             }
             /*
-             * OSから渡された地点を時刻順に処理する。
-             * 現在の保存方式を維持するため、並列処理にはしない。
+             * callbackでOSから受信した全地点。
+             * DebugLogのfirst/latest算出用。
              */
             const sortedLocations = [...locations].sort((a, b) => {
                 return getLocationRecordedAtMs(a) - getLocationRecordedAtMs(b);
@@ -945,6 +954,38 @@ TaskManager.defineTask(
                 ),
             ).toISOString();
 
+            /*
+             * SQLite mirror成功時:
+             *   今回新しくSQLiteへ入った地点だけをdirect保存する。
+             *
+             * SQLite mirror無効時:
+             *   従来どおり全地点を処理する。
+             *
+             * SQLite mirror全体がtimeout / errorになった場合:
+             *   locationsForDirectSaveはnullのままなので、
+             *   従来どおり全地点へfallbackする。
+             *
+             * これによりSQLite障害による位置情報欠落は発生させない。
+             */
+            const directSaveLocations =
+                ENABLE_LOCATION_SQLITE_MIRROR &&
+                activeRecordingSessionId &&
+                sqliteMirrorSucceeded &&
+                locationsForDirectSave !== null
+                    ? locationsForDirectSave
+                    : locations;
+
+            /*
+             * direct LocationLog保存対象だけを時刻順に処理する。
+             */
+            const sortedDirectSaveLocations = [...directSaveLocations].sort(
+                (a, b) => {
+                    return (
+                        getLocationRecordedAtMs(a) - getLocationRecordedAtMs(b)
+                    );
+                },
+            );
+
             let currentState = state;
 
             /*
@@ -959,7 +1000,7 @@ TaskManager.defineTask(
                 currentState.isRecording &&
                 currentState.recordingSessionId
             ) {
-                for (const location of sortedLocations) {
+                for (const location of sortedDirectSaveLocations) {
                     const result = await saveBackgroundLocation(
                         location,
                         currentState,
@@ -1179,7 +1220,7 @@ TaskManager.defineTask(
                      * このBackgroundLocationDebugLog自体の保存時間は含まれない。
                      */
                     processingDurationMs: Date.now() - taskStartedAtMs,
-
+                    directSaveLocationsLength: sortedDirectSaveLocations.length,
                     sqliteMirrorEnabled: ENABLE_LOCATION_SQLITE_MIRROR,
                     sqliteMirrorAttempted,
                     sqliteMirrorSucceeded,

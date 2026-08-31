@@ -32,6 +32,22 @@ export type EnqueueLocationBatchResult = {
     duplicateCount: number;
     invalidCount: number;
     queueCount: number | null;
+
+    /**
+     * 今回のcallbackでdirect LocationLog処理へ流す地点。
+     *
+     * 含める:
+     * ・SQLiteへ新規INSERTできた地点
+     * ・SQLite INSERT自体が失敗した地点
+     * ・不正座標の地点（従来のskip集計を維持するため）
+     *
+     * 含めない:
+     * ・SQLiteですでに存在していたduplicate地点
+     *
+     * これにより、Expoから過去地点を含む累積batchが再配送されても、
+     * 同じ地点をsaveBackgroundLocation()で繰り返し再処理しない。
+     */
+    locationsForDirectSave: Location.LocationObject[];
 };
 
 export type LocationQueueStatus = "pending" | "sent" | "duplicate" | "skipped";
@@ -227,6 +243,13 @@ export async function enqueueLocationBatchForAudit(
     let invalidCount = 0;
 
     /*
+     * direct LocationLog保存へ流す必要がある地点だけを保持する。
+     *
+     * SQLiteに既に存在するduplicate地点はここへ追加しない。
+     */
+    const locationsForDirectSave: Location.LocationObject[] = [];
+
+    /*
      * 1件の不正データやINSERT失敗によって
      * バッチ内の残り地点を失わないよう、地点単位で処理する。
      */
@@ -236,6 +259,13 @@ export async function enqueueLocationBatchForAudit(
 
         if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
             invalidCount += 1;
+
+            /*
+             * 従来どおりbackgroundLocationTask側でも
+             * invalidCoordinateとして判定・集計できるようにする。
+             */
+            locationsForDirectSave.push(location);
+
             continue;
         }
 
@@ -333,14 +363,22 @@ export async function enqueueLocationBatchForAudit(
 
             if (result.changes > 0) {
                 insertedCount += 1;
+
+                /*
+                 * 今回初めてSQLiteへ入った地点だけ、
+                 * direct LocationLog保存の対象にする。
+                 */
+                locationsForDirectSave.push(location);
             } else {
+                /*
+                 * SQLite上にすでに存在する地点。
+                 *
+                 * 過去callbackで処理済み、または他callbackが先にINSERT済みなので、
+                 * direct LocationLog処理へは再度流さない。
+                 */
                 duplicateCount += 1;
             }
         } catch (error) {
-            /*
-             * 1地点のSQLite失敗で残りの地点まで止めない。
-             * 呼び出し元では、バッチ全体のエラーとしてログ出力する。
-             */
             console.error("SQLite location mirror insert error:", {
                 locationLogId,
                 recordedAt,
@@ -348,6 +386,14 @@ export async function enqueueLocationBatchForAudit(
             });
 
             invalidCount += 1;
+
+            /*
+             * SQLite保存に失敗した地点までdirect保存対象から外すと、
+             * LocationLog欠落につながる。
+             *
+             * そのためSQLite失敗時は従来のdirect保存経路へfallbackする。
+             */
+            locationsForDirectSave.push(location);
         }
     }
 
@@ -359,6 +405,7 @@ export async function enqueueLocationBatchForAudit(
         duplicateCount,
         invalidCount,
         queueCount,
+        locationsForDirectSave,
     };
 }
 

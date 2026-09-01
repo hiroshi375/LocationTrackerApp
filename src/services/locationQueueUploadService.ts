@@ -90,15 +90,6 @@ type AcceptedLocation = {
 };
 
 /**
- * この時間を超えて継続しているキュー処理は、
- * Androidバックグラウンド停止などによる古い処理とみなす。
- *
- * 古いPromise自体はキャンセルできないため、
- * 新しいキュー処理を許可するためのロック失効時間として使用する。
- */
-const SQLITE_QUEUE_DRAIN_STALE_LOCK_MS = 30_000;
-
-/**
  * 認証セッション強制更新の最大待機時間。
  */
 const SQLITE_QUEUE_AUTH_REFRESH_TIMEOUT_MS = 8_000;

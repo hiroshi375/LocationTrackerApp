@@ -625,6 +625,22 @@ let lastBackgroundQueueDrainAtMs = 0;
 
 const BACKGROUND_QUEUE_DRAIN_INTERVAL_MS = 15_000;
 
+/*
+ * Background LiveLocation のCloud更新間隔。
+ *
+ * Background callback自体は約5～7秒間隔で発生するが、
+ * LiveLocationは現在地共有用のため毎callbackで更新せず、
+ * 30秒に1回までに制限する。
+ */
+const BACKGROUND_LIVE_LOCATION_UPDATE_INTERVAL_MS = 30_000;
+
+/*
+ * このJS Runtime内で最後にLiveLocation更新を開始した時刻。
+ *
+ * single-flightは行わず、単純に更新頻度だけを抑制する。
+ */
+let lastBackgroundLiveLocationUpdateAtMs = 0;
+
 const BACKGROUND_RUNTIME_BOOT_ID = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 console.log("[BG_RUNTIME_BOOT]", {
@@ -1140,27 +1156,51 @@ TaskManager.defineTask(
                 latestLocation &&
                 currentState.liveShareOwnerValues.length > 0
             ) {
-                const liveLocationResult = await updateBackgroundLiveLocation(
-                    latestLocation,
-                    currentState,
-                    taskFiredAt,
-                );
+                const nowMs = Date.now();
 
-                currentState = liveLocationResult.nextState;
+                const elapsedSinceLastLiveLocationUpdateMs =
+                    nowMs - lastBackgroundLiveLocationUpdateAtMs;
 
-                liveLocationUpdateAttempted = liveLocationResult.attempted;
+                const shouldUpdateLiveLocation =
+                    lastBackgroundLiveLocationUpdateAtMs === 0 ||
+                    elapsedSinceLastLiveLocationUpdateMs >=
+                        BACKGROUND_LIVE_LOCATION_UPDATE_INTERVAL_MS;
 
-                liveLocationUpdateSucceeded = liveLocationResult.succeeded;
+                if (shouldUpdateLiveLocation) {
+                    /*
+                     * update完了後ではなく、開始前に時刻を更新する。
+                     *
+                     * callbackが短時間に連続して入った場合でも、
+                     * 30秒以内に次のLiveLocation.updateを開始しにくくする。
+                     *
+                     * これはsingle-flightではない。
+                     * Promiseの完了状態は管理せず、単純な時間間隔制御のみ行う。
+                     */
+                    lastBackgroundLiveLocationUpdateAtMs = nowMs;
 
-                liveLocationUpdateTimedOut = liveLocationResult.timedOut;
+                    const liveLocationResult =
+                        await updateBackgroundLiveLocation(
+                            latestLocation,
+                            currentState,
+                            taskFiredAt,
+                        );
 
-                liveLocationUpdateOperation = liveLocationResult.operation;
+                    currentState = liveLocationResult.nextState;
 
-                liveLocationUpdateErrorMessage =
-                    liveLocationResult.errorMessage ?? null;
+                    liveLocationUpdateAttempted = liveLocationResult.attempted;
 
-                liveLocationUpdatedId =
-                    liveLocationResult.liveLocationId ?? null;
+                    liveLocationUpdateSucceeded = liveLocationResult.succeeded;
+
+                    liveLocationUpdateTimedOut = liveLocationResult.timedOut;
+
+                    liveLocationUpdateOperation = liveLocationResult.operation;
+
+                    liveLocationUpdateErrorMessage =
+                        liveLocationResult.errorMessage ?? null;
+
+                    liveLocationUpdatedId =
+                        liveLocationResult.liveLocationId ?? null;
+                }
             }
 
             const nowMs = Date.now();

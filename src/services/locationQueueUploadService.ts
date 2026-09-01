@@ -150,6 +150,13 @@ type DrainQueueState = {
 let drainQueueState: DrainQueueState | null = null;
 let nextDrainExecutionId = 1;
 
+const QUEUE_RUNTIME_BOOT_ID = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+console.log("[QUEUE_RUNTIME_BOOT]", {
+    runtimeBootId: QUEUE_RUNTIME_BOOT_ID,
+    bootedAt: new Date().toISOString(),
+});
+
 /**
  * 同一JSプロセス内でSQLiteキュー送信を直列化する。
  *
@@ -159,39 +166,25 @@ let nextDrainExecutionId = 1;
 export async function drainLocationQueueSafely(
     input: DrainLocationQueueInput,
 ): Promise<DrainLocationQueueResult> {
-    const nowMs = Date.now();
-
+    /*
+     * 既存drainが実行中なら、
+     * 経過時間に関係なく2本目を開始しない。
+     *
+     * timeout後も元のPromise自体はキャンセルされないため、
+     * ロックだけを失効させると多重drainになる。
+     */
     if (drainQueueState) {
-        const runningDurationMs = nowMs - drainQueueState.startedAtMs;
-
-        if (runningDurationMs < SQLITE_QUEUE_DRAIN_STALE_LOCK_MS) {
-            return {
-                pendingCount: 0,
-                processedCount: 0,
-                sentCount: 0,
-                duplicateCount: 0,
-                skippedCount: 0,
-                failedCount: 0,
-                timedOutCount: 0,
-                durationMs: 0,
-                stopReason: "alreadyRunning",
-            };
-        }
-
-        console.warn("Expire stale SQLite queue drain lock:", {
-            runningDurationMs,
-            staleLockMs: SQLITE_QUEUE_DRAIN_STALE_LOCK_MS,
-            executionId: drainQueueState.executionId,
-            recordingSessionId: input.recordingSessionId,
-        });
-
-        /*
-         * 古いPromise自体はキャンセルできない。
-         *
-         * ロックだけを失効させて、後続のキュー処理を許可する。
-         * 決定的LocationLog.idにより重複作成は防止する。
-         */
-        drainQueueState = null;
+        return {
+            pendingCount: 0,
+            processedCount: 0,
+            sentCount: 0,
+            duplicateCount: 0,
+            skippedCount: 0,
+            failedCount: 0,
+            timedOutCount: 0,
+            durationMs: 0,
+            stopReason: "alreadyRunning",
+        };
     }
 
     const executionId = nextDrainExecutionId;
@@ -201,7 +194,7 @@ export async function drainLocationQueueSafely(
 
     drainQueueState = {
         promise: currentPromise,
-        startedAtMs: nowMs,
+        startedAtMs: Date.now(),
         executionId,
     };
 
@@ -209,8 +202,7 @@ export async function drainLocationQueueSafely(
         return await currentPromise;
     } finally {
         /*
-         * 古い処理が後から完了しても、
-         * 新しい処理のロックを解除しないようexecutionIdを比較する。
+         * 自分自身のdrainだけロック解除する。
          */
         if (drainQueueState?.executionId === executionId) {
             drainQueueState = null;
@@ -805,8 +797,36 @@ async function withTimeout<T>(
 
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
+    const scheduledAtMs = Date.now();
+    const expectedFireAtMs = scheduledAtMs + safeTimeoutMs;
+
+    console.log("[QUEUE_TIMER_SCHEDULED]", {
+        runtimeBootId: QUEUE_RUNTIME_BOOT_ID,
+        operationName,
+        timeoutMs: safeTimeoutMs,
+        scheduledAtMs,
+        scheduledAt: new Date(scheduledAtMs).toISOString(),
+        expectedFireAtMs,
+        expectedFireAt: new Date(expectedFireAtMs).toISOString(),
+    });
+
     const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
+            const actuallyFiredAtMs = Date.now();
+
+            console.log("[QUEUE_TIMER_FIRED]", {
+                runtimeBootId: QUEUE_RUNTIME_BOOT_ID,
+                operationName,
+                timeoutMs: safeTimeoutMs,
+                scheduledAtMs,
+                scheduledAt: new Date(scheduledAtMs).toISOString(),
+                expectedFireAtMs,
+                expectedFireAt: new Date(expectedFireAtMs).toISOString(),
+                actuallyFiredAtMs,
+                actuallyFiredAt: new Date(actuallyFiredAtMs).toISOString(),
+                timerDriftMs: actuallyFiredAtMs - expectedFireAtMs,
+            });
+
             reject(
                 new QueueOperationTimeoutError(operationName, safeTimeoutMs),
             );
@@ -818,6 +838,19 @@ async function withTimeout<T>(
     } finally {
         if (timeoutId !== null) {
             clearTimeout(timeoutId);
+
+            const clearedAtMs = Date.now();
+
+            console.log("[QUEUE_TIMER_CLEARED]", {
+                runtimeBootId: QUEUE_RUNTIME_BOOT_ID,
+                operationName,
+                timeoutMs: safeTimeoutMs,
+                scheduledAtMs,
+                expectedFireAtMs,
+                clearedAtMs,
+                clearedAt: new Date(clearedAtMs).toISOString(),
+                elapsedMs: clearedAtMs - scheduledAtMs,
+            });
         }
     }
 }

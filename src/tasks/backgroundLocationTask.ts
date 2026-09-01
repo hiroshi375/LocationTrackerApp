@@ -347,8 +347,50 @@ async function withTimeout<T>(
 ): Promise<T> {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
+    /*
+     * setTimeoutを登録した時刻と、
+     * 本来発火するはずの時刻を記録する。
+     *
+     * Android Background中にJS timerが停止していないかを
+     * 実測するための診断ログ。
+     */
+    const scheduledAtMs = Date.now();
+    const expectedFireAtMs = scheduledAtMs + timeoutMs;
+
+    console.log("[BG_TIMER_SCHEDULED]", {
+        runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
+        operationName,
+        timeoutMs,
+        scheduledAtMs,
+        scheduledAt: new Date(scheduledAtMs).toISOString(),
+        expectedFireAtMs,
+        expectedFireAt: new Date(expectedFireAtMs).toISOString(),
+    });
+
     const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
+            const actuallyFiredAtMs = Date.now();
+
+            console.log("[BG_TIMER_FIRED]", {
+                runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
+                operationName,
+                timeoutMs,
+                scheduledAtMs,
+                scheduledAt: new Date(scheduledAtMs).toISOString(),
+                expectedFireAtMs,
+                expectedFireAt: new Date(expectedFireAtMs).toISOString(),
+                actuallyFiredAtMs,
+                actuallyFiredAt: new Date(actuallyFiredAtMs).toISOString(),
+                /*
+                 * ここが重要。
+                 * 正常：
+                 *   0～数十ms程度
+                 * 異常：
+                 *   数秒～数分
+                 */
+                timerDriftMs: actuallyFiredAtMs - expectedFireAtMs,
+            });
+
             reject(new OperationTimeoutError(operationName, timeoutMs));
         }, timeoutMs);
     });
@@ -358,6 +400,19 @@ async function withTimeout<T>(
     } finally {
         if (timeoutId !== null) {
             clearTimeout(timeoutId);
+
+            const clearedAtMs = Date.now();
+
+            console.log("[BG_TIMER_CLEARED]", {
+                runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
+                operationName,
+                timeoutMs,
+                scheduledAtMs,
+                expectedFireAtMs,
+                clearedAtMs,
+                clearedAt: new Date(clearedAtMs).toISOString(),
+                elapsedMs: clearedAtMs - scheduledAtMs,
+            });
         }
     }
 }
@@ -570,12 +625,23 @@ let lastBackgroundQueueDrainAtMs = 0;
 
 const BACKGROUND_QUEUE_DRAIN_INTERVAL_MS = 15_000;
 
+const BACKGROUND_RUNTIME_BOOT_ID = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+console.log("[BG_RUNTIME_BOOT]", {
+    runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
+    bootedAt: new Date().toISOString(),
+});
+
 TaskManager.defineTask(
     BACKGROUND_LOCATION_TASK_NAME,
     async ({ data, error }) => {
         const taskStartedAtMs = Date.now();
         const taskFiredAt = new Date(taskStartedAtMs).toISOString();
-
+        console.log("[BG_TASK_ENTRY]", {
+            runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
+            taskStartedAtMs,
+            taskFiredAt,
+        });
         /*
          * 後続処理より前に、OSから渡された地点数を取得する。
          *

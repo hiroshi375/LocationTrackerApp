@@ -47,886 +47,11 @@ index 856c83d..8b0d25d 100644
 +
    api "androidx.core:core:1.0.0"
  }
-diff --git a/node_modules/expo-task-manager/android/build/.transforms/3f1f4ee33f99e52232e7a71ac9ffeabf/results.bin b/node_modules/expo-task-manager/android/build/.transforms/3f1f4ee33f99e52232e7a71ac9ffeabf/results.bin
-new file mode 100644
-index 0000000..0d259dd
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/.transforms/3f1f4ee33f99e52232e7a71ac9ffeabf/results.bin
-@@ -0,0 +1 @@
-+o/classes
-diff --git a/node_modules/expo-task-manager/android/build/.transforms/3f1f4ee33f99e52232e7a71ac9ffeabf/transformed/classes/classes_dex/classes.dex b/node_modules/expo-task-manager/android/build/.transforms/3f1f4ee33f99e52232e7a71ac9ffeabf/transformed/classes/classes_dex/classes.dex
-new file mode 100644
-index 0000000..b3bab1c
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/.transforms/3f1f4ee33f99e52232e7a71ac9ffeabf/transformed/classes/classes_dex/classes.dex differ
-diff --git a/node_modules/expo-task-manager/android/build/.transforms/55f9660101a94f257aae1fa570f9eab2/results.bin b/node_modules/expo-task-manager/android/build/.transforms/55f9660101a94f257aae1fa570f9eab2/results.bin
-new file mode 100644
-index 0000000..0d259dd
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/.transforms/55f9660101a94f257aae1fa570f9eab2/results.bin
-@@ -0,0 +1 @@
-+o/classes
-diff --git a/node_modules/expo-task-manager/android/build/.transforms/55f9660101a94f257aae1fa570f9eab2/transformed/classes/classes_dex/classes.dex b/node_modules/expo-task-manager/android/build/.transforms/55f9660101a94f257aae1fa570f9eab2/transformed/classes/classes_dex/classes.dex
-new file mode 100644
-index 0000000..6ba6d6d
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/.transforms/55f9660101a94f257aae1fa570f9eab2/transformed/classes/classes_dex/classes.dex differ
-diff --git a/node_modules/expo-task-manager/android/build/generated/source/buildConfig/debug/expo/modules/taskmanager/BuildConfig.java b/node_modules/expo-task-manager/android/build/generated/source/buildConfig/debug/expo/modules/taskmanager/BuildConfig.java
-new file mode 100644
-index 0000000..30e64e9
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/generated/source/buildConfig/debug/expo/modules/taskmanager/BuildConfig.java
-@@ -0,0 +1,10 @@
-+/**
-+ * Automatically generated file. DO NOT MODIFY
-+ */
-+package expo.modules.taskmanager;
-+
-+public final class BuildConfig {
-+  public static final boolean DEBUG = Boolean.parseBoolean("true");
-+  public static final String LIBRARY_PACKAGE_NAME = "expo.modules.taskmanager";
-+  public static final String BUILD_TYPE = "debug";
-+}
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/aapt_friendly_merged_manifests/debug/processDebugManifest/aapt/AndroidManifest.xml b/node_modules/expo-task-manager/android/build/intermediates/aapt_friendly_merged_manifests/debug/processDebugManifest/aapt/AndroidManifest.xml
-new file mode 100644
-index 0000000..2bc4eff
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/intermediates/aapt_friendly_merged_manifests/debug/processDebugManifest/aapt/AndroidManifest.xml
-@@ -0,0 +1,29 @@
-+<?xml version="1.0" encoding="utf-8"?>
-+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-+    package="expo.modules.taskmanager" >
-+
-+    <uses-sdk android:minSdkVersion="24" />
-+
-+    <application>
-+        <receiver
-+            android:name="expo.modules.taskManager.TaskBroadcastReceiver"
-+            android:exported="false" >
-+            <intent-filter>
-+                <action android:name="expo.modules.taskManager.TaskBroadcastReceiver.INTENT_ACTION" />
-+                <action android:name="android.intent.action.BOOT_COMPLETED" />
-+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-+            </intent-filter>
-+        </receiver>
-+
-+        <service
-+            android:name="expo.modules.taskManager.TaskJobService"
-+            android:enabled="true"
-+            android:exported="false"
-+            android:permission="android.permission.BIND_JOB_SERVICE" />
-+
-+        <meta-data
-+            android:name="expo.modules.taskManager.oneAppId"
-+            android:value="true" />
-+    </application>
-+
-+</manifest>
-\ No newline at end of file
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/aapt_friendly_merged_manifests/debug/processDebugManifest/aapt/output-metadata.json b/node_modules/expo-task-manager/android/build/intermediates/aapt_friendly_merged_manifests/debug/processDebugManifest/aapt/output-metadata.json
-new file mode 100644
-index 0000000..54e780e
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/intermediates/aapt_friendly_merged_manifests/debug/processDebugManifest/aapt/output-metadata.json
-@@ -0,0 +1,18 @@
-+{
-+  "version": 3,
-+  "artifactType": {
-+    "type": "AAPT_FRIENDLY_MERGED_MANIFESTS",
-+    "kind": "Directory"
-+  },
-+  "applicationId": "expo.modules.taskmanager",
-+  "variantName": "debug",
-+  "elements": [
-+    {
-+      "type": "SINGLE",
-+      "filters": [],
-+      "attributes": [],
-+      "outputFile": "AndroidManifest.xml"
-+    }
-+  ],
-+  "elementType": "File"
-+}
-\ No newline at end of file
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/aar_metadata/debug/writeDebugAarMetadata/aar-metadata.properties b/node_modules/expo-task-manager/android/build/intermediates/aar_metadata/debug/writeDebugAarMetadata/aar-metadata.properties
-new file mode 100644
-index 0000000..1211b1e
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/intermediates/aar_metadata/debug/writeDebugAarMetadata/aar-metadata.properties
-@@ -0,0 +1,6 @@
-+aarFormatVersion=1.0
-+aarMetadataVersion=1.0
-+minCompileSdk=1
-+minCompileSdkExtension=0
-+minAndroidGradlePluginVersion=1.0.0
-+coreLibraryDesugaringEnabled=false
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/annotation_processor_list/debug/javaPreCompileDebug/annotationProcessors.json b/node_modules/expo-task-manager/android/build/intermediates/annotation_processor_list/debug/javaPreCompileDebug/annotationProcessors.json
-new file mode 100644
-index 0000000..9e26dfe
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/intermediates/annotation_processor_list/debug/javaPreCompileDebug/annotationProcessors.json
-@@ -0,0 +1 @@
-+{}
-\ No newline at end of file
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/compile_library_classes_jar/debug/bundleLibCompileToJarDebug/classes.jar b/node_modules/expo-task-manager/android/build/intermediates/compile_library_classes_jar/debug/bundleLibCompileToJarDebug/classes.jar
-new file mode 100644
-index 0000000..1544089
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/compile_library_classes_jar/debug/bundleLibCompileToJarDebug/classes.jar differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/compile_r_class_jar/debug/generateDebugRFile/R.jar b/node_modules/expo-task-manager/android/build/intermediates/compile_r_class_jar/debug/generateDebugRFile/R.jar
-new file mode 100644
-index 0000000..7ddf00e
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/compile_r_class_jar/debug/generateDebugRFile/R.jar differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/compile_symbol_list/debug/generateDebugRFile/R.txt b/node_modules/expo-task-manager/android/build/intermediates/compile_symbol_list/debug/generateDebugRFile/R.txt
-new file mode 100644
-index 0000000..e69de29
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/incremental/debug/packageDebugResources/compile-file-map.properties b/node_modules/expo-task-manager/android/build/intermediates/incremental/debug/packageDebugResources/compile-file-map.properties
-new file mode 100644
-index 0000000..a1ea1f4
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/intermediates/incremental/debug/packageDebugResources/compile-file-map.properties
-@@ -0,0 +1 @@
-+#Sat Sep 05 11:11:29 JST 2026
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/incremental/debug/packageDebugResources/merger.xml b/node_modules/expo-task-manager/android/build/intermediates/incremental/debug/packageDebugResources/merger.xml
-new file mode 100644
-index 0000000..cbdf866
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/intermediates/incremental/debug/packageDebugResources/merger.xml
-@@ -0,0 +1,2 @@
-+<?xml version="1.0" encoding="utf-8"?>
-+<merger version="3"><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="main$Generated" generated="true" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/res"/></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="main" generated-set="main$Generated" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/res"/></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="debug$Generated" generated="true" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/debug/res"/></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="debug" generated-set="debug$Generated" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/debug/res"/></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="generated$Generated" generated="true" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/build/generated/res/resValues/debug"/></dataSet><dataSet aapt-namespace="http://schemas.android.com/apk/res-auto" config="generated" generated-set="generated$Generated" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/build/generated/res/resValues/debug"/></dataSet><mergedItems/></merger>
-\ No newline at end of file
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/incremental/mergeDebugAssets/merger.xml b/node_modules/expo-task-manager/android/build/intermediates/incremental/mergeDebugAssets/merger.xml
-new file mode 100644
-index 0000000..15923f6
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/intermediates/incremental/mergeDebugAssets/merger.xml
-@@ -0,0 +1,2 @@
-+<?xml version="1.0" encoding="utf-8"?>
-+<merger version="3"><dataSet config="main" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/assets"/></dataSet><dataSet config="debug" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/debug/assets"/></dataSet><dataSet config="generated" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/build/intermediates/shader_assets/debug/compileDebugShaders/out"/></dataSet></merger>
-\ No newline at end of file
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/incremental/mergeDebugJniLibFolders/merger.xml b/node_modules/expo-task-manager/android/build/intermediates/incremental/mergeDebugJniLibFolders/merger.xml
-new file mode 100644
-index 0000000..4d4439b
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/intermediates/incremental/mergeDebugJniLibFolders/merger.xml
-@@ -0,0 +1,2 @@
-+<?xml version="1.0" encoding="utf-8"?>
-+<merger version="3"><dataSet config="main" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/jniLibs"/></dataSet><dataSet config="debug" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/debug/jniLibs"/></dataSet></merger>
-\ No newline at end of file
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/incremental/mergeDebugShaders/merger.xml b/node_modules/expo-task-manager/android/build/intermediates/incremental/mergeDebugShaders/merger.xml
-new file mode 100644
-index 0000000..08b237a
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/intermediates/incremental/mergeDebugShaders/merger.xml
-@@ -0,0 +1,2 @@
-+<?xml version="1.0" encoding="utf-8"?>
-+<merger version="3"><dataSet config="main" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/shaders"/></dataSet><dataSet config="debug" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/debug/shaders"/></dataSet></merger>
-\ No newline at end of file
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/java_res/debug/processDebugJavaRes/out/META-INF/expo-task-manager_debug.kotlin_module b/node_modules/expo-task-manager/android/build/intermediates/java_res/debug/processDebugJavaRes/out/META-INF/expo-task-manager_debug.kotlin_module
-new file mode 100644
-index 0000000..9dbc290
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/java_res/debug/processDebugJavaRes/out/META-INF/expo-task-manager_debug.kotlin_module differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/BuildConfig.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/BuildConfig.class
-new file mode 100644
-index 0000000..ba98aa6
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/BuildConfig.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/EmitEventWrapper.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/EmitEventWrapper.class
-new file mode 100644
-index 0000000..6fb056f
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/EmitEventWrapper.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/Task.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/Task.class
-new file mode 100644
-index 0000000..22baf50
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/Task.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskBroadcastReceiver.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskBroadcastReceiver.class
-new file mode 100644
-index 0000000..05ffdc5
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskBroadcastReceiver.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskJobService.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskJobService.class
-new file mode 100644
-index 0000000..1bdf491
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskJobService.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskManagerInternalModule.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskManagerInternalModule.class
-new file mode 100644
-index 0000000..603d757
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskManagerInternalModule.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskManagerPackage.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskManagerPackage.class
-new file mode 100644
-index 0000000..35ac0e6
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskManagerPackage.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskManagerUtils$1.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskManagerUtils$1.class
-new file mode 100644
-index 0000000..8b0017f
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskManagerUtils$1.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskManagerUtils.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskManagerUtils.class
-new file mode 100644
-index 0000000..f17fb42
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskManagerUtils.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskService$1.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskService$1.class
-new file mode 100644
-index 0000000..45c2479
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskService$1.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskService$2.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskService$2.class
-new file mode 100644
-index 0000000..40fc358
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskService$2.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskService$3.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskService$3.class
-new file mode 100644
-index 0000000..f347c99
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskService$3.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskService$HeadlessTaskRecord.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskService$HeadlessTaskRecord.class
-new file mode 100644
-index 0000000..a89a9e3
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskService$HeadlessTaskRecord.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskService.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskService.class
-new file mode 100644
-index 0000000..785454c
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/TaskService.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/Utils.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/Utils.class
-new file mode 100644
-index 0000000..535ea23
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/Utils.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/exceptions/InvalidConsumerClassException.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/exceptions/InvalidConsumerClassException.class
-new file mode 100644
-index 0000000..1a51bcd
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/exceptions/InvalidConsumerClassException.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/exceptions/TaskNotFoundException.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/exceptions/TaskNotFoundException.class
-new file mode 100644
-index 0000000..67bc036
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/exceptions/TaskNotFoundException.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/exceptions/TaskRegisteringFailedException.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/exceptions/TaskRegisteringFailedException.class
-new file mode 100644
-index 0000000..91ea1f4
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/exceptions/TaskRegisteringFailedException.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/repository/BareTasksAndEventsRepository.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/repository/BareTasksAndEventsRepository.class
-new file mode 100644
-index 0000000..10aac5f
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/repository/BareTasksAndEventsRepository.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/repository/ManagedTasksAndEventsRepository.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/repository/ManagedTasksAndEventsRepository.class
-new file mode 100644
-index 0000000..afa6d8e
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/repository/ManagedTasksAndEventsRepository.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/repository/TasksAndEventsRepository$AppConfig.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/repository/TasksAndEventsRepository$AppConfig.class
-new file mode 100644
-index 0000000..311f41c
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/repository/TasksAndEventsRepository$AppConfig.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/repository/TasksAndEventsRepository.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/repository/TasksAndEventsRepository.class
-new file mode 100644
-index 0000000..1d12852
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/repository/TasksAndEventsRepository.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/repository/TasksPersistence.class b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/repository/TasksPersistence.class
-new file mode 100644
-index 0000000..f72f9ce
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/expo/modules/taskManager/repository/TasksPersistence.class differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/local_only_symbol_list/debug/parseDebugLocalResources/R-def.txt b/node_modules/expo-task-manager/android/build/intermediates/local_only_symbol_list/debug/parseDebugLocalResources/R-def.txt
-new file mode 100644
-index 0000000..78ac5b8
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/intermediates/local_only_symbol_list/debug/parseDebugLocalResources/R-def.txt
-@@ -0,0 +1,2 @@
-+R_DEF: Internal format may change without notice
-+local
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/manifest_merge_blame_file/debug/processDebugManifest/manifest-merger-blame-debug-report.txt b/node_modules/expo-task-manager/android/build/intermediates/manifest_merge_blame_file/debug/processDebugManifest/manifest-merger-blame-debug-report.txt
-new file mode 100644
-index 0000000..62dd660
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/intermediates/manifest_merge_blame_file/debug/processDebugManifest/manifest-merger-blame-debug-report.txt
-@@ -0,0 +1,48 @@
-+1<?xml version="1.0" encoding="utf-8"?>
-+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-+3    package="expo.modules.taskmanager" >
-+4
-+5    <uses-sdk android:minSdkVersion="24" />
-+6
-+7    <application>
-+7-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:2:5-19:19
-+8        <receiver
-+8-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:3:9-11:20
-+9            android:name="expo.modules.taskManager.TaskBroadcastReceiver"
-+9-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:4:13-74
-+10            android:exported="false" >
-+10-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:5:13-37
-+11            <intent-filter>
-+11-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:6:13-10:29
-+12                <action android:name="expo.modules.taskManager.TaskBroadcastReceiver.INTENT_ACTION" />
-+12-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:7:17-103
-+12-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:7:25-100
-+13                <action android:name="android.intent.action.BOOT_COMPLETED" />
-+13-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:8:17-79
-+13-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:8:25-76
-+14                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-+14-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:9:17-84
-+14-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:9:25-81
-+15            </intent-filter>
-+16        </receiver>
-+17
-+18        <service
-+18-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:12:9-16:72
-+19            android:name="expo.modules.taskManager.TaskJobService"
-+19-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:13:13-67
-+20            android:enabled="true"
-+20-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:14:13-35
-+21            android:exported="false"
-+21-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:15:13-37
-+22            android:permission="android.permission.BIND_JOB_SERVICE" />
-+22-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:16:13-69
-+23
-+24        <meta-data
-+24-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:18:7-89
-+25            android:name="expo.modules.taskManager.oneAppId"
-+25-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:18:18-66
-+26            android:value="true" />
-+26-->/Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:18:67-87
-+27    </application>
-+28
-+29</manifest>
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/merged_manifest/debug/processDebugManifest/AndroidManifest.xml b/node_modules/expo-task-manager/android/build/intermediates/merged_manifest/debug/processDebugManifest/AndroidManifest.xml
-new file mode 100644
-index 0000000..2bc4eff
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/intermediates/merged_manifest/debug/processDebugManifest/AndroidManifest.xml
-@@ -0,0 +1,29 @@
-+<?xml version="1.0" encoding="utf-8"?>
-+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-+    package="expo.modules.taskmanager" >
-+
-+    <uses-sdk android:minSdkVersion="24" />
-+
-+    <application>
-+        <receiver
-+            android:name="expo.modules.taskManager.TaskBroadcastReceiver"
-+            android:exported="false" >
-+            <intent-filter>
-+                <action android:name="expo.modules.taskManager.TaskBroadcastReceiver.INTENT_ACTION" />
-+                <action android:name="android.intent.action.BOOT_COMPLETED" />
-+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-+            </intent-filter>
-+        </receiver>
-+
-+        <service
-+            android:name="expo.modules.taskManager.TaskJobService"
-+            android:enabled="true"
-+            android:exported="false"
-+            android:permission="android.permission.BIND_JOB_SERVICE" />
-+
-+        <meta-data
-+            android:name="expo.modules.taskManager.oneAppId"
-+            android:value="true" />
-+    </application>
-+
-+</manifest>
-\ No newline at end of file
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/navigation_json/debug/extractDeepLinksDebug/navigation.json b/node_modules/expo-task-manager/android/build/intermediates/navigation_json/debug/extractDeepLinksDebug/navigation.json
-new file mode 100644
-index 0000000..0637a08
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/intermediates/navigation_json/debug/extractDeepLinksDebug/navigation.json
-@@ -0,0 +1 @@
-+[]
-\ No newline at end of file
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/nested_resources_validation_report/debug/generateDebugResources/nestedResourcesValidationReport.txt b/node_modules/expo-task-manager/android/build/intermediates/nested_resources_validation_report/debug/generateDebugResources/nestedResourcesValidationReport.txt
-new file mode 100644
-index 0000000..08f4ebe
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/intermediates/nested_resources_validation_report/debug/generateDebugResources/nestedResourcesValidationReport.txt
-@@ -0,0 +1 @@
-+0 Warning/Error
-\ No newline at end of file
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/runtime_library_classes_jar/debug/bundleLibRuntimeToJarDebug/classes.jar b/node_modules/expo-task-manager/android/build/intermediates/runtime_library_classes_jar/debug/bundleLibRuntimeToJarDebug/classes.jar
-new file mode 100644
-index 0000000..6237d1f
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/intermediates/runtime_library_classes_jar/debug/bundleLibRuntimeToJarDebug/classes.jar differ
-diff --git a/node_modules/expo-task-manager/android/build/intermediates/symbol_list_with_package_name/debug/generateDebugRFile/package-aware-r.txt b/node_modules/expo-task-manager/android/build/intermediates/symbol_list_with_package_name/debug/generateDebugRFile/package-aware-r.txt
-new file mode 100644
-index 0000000..5e549d6
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/intermediates/symbol_list_with_package_name/debug/generateDebugRFile/package-aware-r.txt
-@@ -0,0 +1 @@
-+expo.modules.taskmanager
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab
-new file mode 100644
-index 0000000..bdf584a
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab.keystream b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab.keystream
-new file mode 100644
-index 0000000..99e3bfe
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab.keystream differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab.keystream.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab.keystream.len
-new file mode 100644
-index 0000000..2a7cfc5
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab.keystream.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab.len
-new file mode 100644
-index 0000000..2a17e6e
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab.values.at b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab.values.at
-new file mode 100644
-index 0000000..9ae373a
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab.values.at differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab_i b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab_i
-new file mode 100644
-index 0000000..698a6f2
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab_i differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab_i.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab_i.len
-new file mode 100644
-index 0000000..131e265
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/inputs/source-to-output.tab_i.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab
-new file mode 100644
-index 0000000..bdf584a
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab.keystream b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab.keystream
-new file mode 100644
-index 0000000..69af812
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab.keystream differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab.keystream.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab.keystream.len
-new file mode 100644
-index 0000000..798082e
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab.keystream.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab.len
-new file mode 100644
-index 0000000..2a17e6e
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab.values.at b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab.values.at
-new file mode 100644
-index 0000000..53b2d29
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab.values.at differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab_i b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab_i
-new file mode 100644
-index 0000000..7942e14
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab_i differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab_i.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab_i.len
-new file mode 100644
-index 0000000..131e265
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-attributes.tab_i.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab
-new file mode 100644
-index 0000000..bdf584a
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab.keystream b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab.keystream
-new file mode 100644
-index 0000000..69af812
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab.keystream differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab.keystream.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab.keystream.len
-new file mode 100644
-index 0000000..798082e
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab.keystream.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab.len
-new file mode 100644
-index 0000000..2a17e6e
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab.values.at b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab.values.at
-new file mode 100644
-index 0000000..cc9514c
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab.values.at differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab_i b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab_i
-new file mode 100644
-index 0000000..7942e14
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab_i differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab_i.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab_i.len
-new file mode 100644
-index 0000000..131e265
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/class-fq-name-to-source.tab_i.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab
-new file mode 100644
-index 0000000..cd1513f
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab.keystream b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab.keystream
-new file mode 100644
-index 0000000..97ca721
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab.keystream differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab.keystream.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab.keystream.len
-new file mode 100644
-index 0000000..d6f286c
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab.keystream.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab.len
-new file mode 100644
-index 0000000..b31f54b
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab.values.at b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab.values.at
-new file mode 100644
-index 0000000..2742a09
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab.values.at differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab_i b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab_i
-new file mode 100644
-index 0000000..6038ac9
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab_i differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab_i.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab_i.len
-new file mode 100644
-index 0000000..131e265
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/internal-name-to-source.tab_i.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab
-new file mode 100644
-index 0000000..2db9f8b
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab.keystream b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab.keystream
-new file mode 100644
-index 0000000..e274bc3
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab.keystream differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab.keystream.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab.keystream.len
-new file mode 100644
-index 0000000..e5009a4
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab.keystream.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab.len
-new file mode 100644
-index 0000000..01bdaa1
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab.values.at b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab.values.at
-new file mode 100644
-index 0000000..806bc1a
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab.values.at differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab_i b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab_i
-new file mode 100644
-index 0000000..a6594a0
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab_i differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab_i.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab_i.len
-new file mode 100644
-index 0000000..131e265
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/proto.tab_i.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab
-new file mode 100644
-index 0000000..bdf584a
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab.keystream b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab.keystream
-new file mode 100644
-index 0000000..99e3bfe
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab.keystream differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab.keystream.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab.keystream.len
-new file mode 100644
-index 0000000..2a7cfc5
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab.keystream.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab.len
-new file mode 100644
-index 0000000..2a17e6e
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab.values.at b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab.values.at
-new file mode 100644
-index 0000000..384c0ef
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab.values.at differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab_i b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab_i
-new file mode 100644
-index 0000000..698a6f2
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab_i differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab_i.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab_i.len
-new file mode 100644
-index 0000000..131e265
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/source-to-classes.tab_i.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab
-new file mode 100644
-index 0000000..bdf584a
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab.keystream b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab.keystream
-new file mode 100644
-index 0000000..093092c
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab.keystream differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab.keystream.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab.keystream.len
-new file mode 100644
-index 0000000..68d7fbd
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab.keystream.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab.len
-new file mode 100644
-index 0000000..2a17e6e
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab.values.at b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab.values.at
-new file mode 100644
-index 0000000..f886983
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab.values.at differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab_i b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab_i
-new file mode 100644
-index 0000000..006451f
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab_i differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab_i.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab_i.len
-new file mode 100644
-index 0000000..131e265
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/subtypes.tab_i.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab
-new file mode 100644
-index 0000000..bdf584a
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab.keystream b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab.keystream
-new file mode 100644
-index 0000000..3b2a29d
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab.keystream differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab.keystream.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab.keystream.len
-new file mode 100644
-index 0000000..5b8e1ac
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab.keystream.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab.len
-new file mode 100644
-index 0000000..2a17e6e
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab.values.at b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab.values.at
-new file mode 100644
-index 0000000..875403e
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab.values.at differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab_i b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab_i
-new file mode 100644
-index 0000000..7942e14
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab_i differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab_i.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab_i.len
-new file mode 100644
-index 0000000..131e265
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/jvm/kotlin/supertypes.tab_i.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/counters.tab b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/counters.tab
-new file mode 100644
-index 0000000..166c057
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/counters.tab
-@@ -0,0 +1,2 @@
-+1
-+0
-\ No newline at end of file
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab
-new file mode 100644
-index 0000000..bdf584a
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab.keystream b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab.keystream
-new file mode 100644
-index 0000000..99e3bfe
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab.keystream differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab.keystream.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab.keystream.len
-new file mode 100644
-index 0000000..2a7cfc5
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab.keystream.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab.len
-new file mode 100644
-index 0000000..2a17e6e
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab.values.at b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab.values.at
-new file mode 100644
-index 0000000..5875372
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab.values.at differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab_i b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab_i
-new file mode 100644
-index 0000000..698a6f2
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab_i differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab_i.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab_i.len
-new file mode 100644
-index 0000000..131e265
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/file-to-id.tab_i.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab
-new file mode 100644
-index 0000000..8aad32b
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab.keystream b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab.keystream
-new file mode 100644
-index 0000000..08e7df1
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab.keystream differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab.keystream.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab.keystream.len
-new file mode 100644
-index 0000000..b7da01d
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab.keystream.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab.len
-new file mode 100644
-index 0000000..2a17e6e
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab.values.at b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab.values.at
-new file mode 100644
-index 0000000..c0e3e44
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab.values.at differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab_i.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab_i.len
-new file mode 100644
-index 0000000..1b1cb4d
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/id-to-file.tab_i.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab
-new file mode 100644
-index 0000000..fcf8c03
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab.keystream b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab.keystream
-new file mode 100644
-index 0000000..0316797
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab.keystream differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab.keystream.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab.keystream.len
-new file mode 100644
-index 0000000..ffb5714
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab.keystream.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab.len
-new file mode 100644
-index 0000000..cf0fb1d
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab.values.at b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab.values.at
-new file mode 100644
-index 0000000..3d6561a
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab.values.at differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab_i b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab_i
-new file mode 100644
-index 0000000..139ef73
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab_i differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab_i.len b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab_i.len
-new file mode 100644
-index 0000000..131e265
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/caches-jvm/lookups/lookups.tab_i.len differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/last-build.bin b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/last-build.bin
-new file mode 100644
-index 0000000..d783cba
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/cacheable/last-build.bin differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/classpath-snapshot/shrunk-classpath-snapshot.bin b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/classpath-snapshot/shrunk-classpath-snapshot.bin
-new file mode 100644
-index 0000000..e68440c
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/classpath-snapshot/shrunk-classpath-snapshot.bin differ
-diff --git a/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/local-state/build-history.bin b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/local-state/build-history.bin
-new file mode 100644
-index 0000000..c844b97
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/kotlin/compileDebugKotlin/local-state/build-history.bin differ
-diff --git a/node_modules/expo-task-manager/android/build/outputs/logs/manifest-merger-debug-report.txt b/node_modules/expo-task-manager/android/build/outputs/logs/manifest-merger-debug-report.txt
-new file mode 100644
-index 0000000..5c71024
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/build/outputs/logs/manifest-merger-debug-report.txt
-@@ -0,0 +1,54 @@
-+-- Merging decision tree log ---
-+manifest
-+ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:1:1-20:12
-+INJECTED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:1:1-20:12
-+	package
-+		INJECTED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml
-+	xmlns:android
-+		ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:1:11-69
-+application
-+ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:2:5-19:19
-+receiver#expo.modules.taskManager.TaskBroadcastReceiver
-+ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:3:9-11:20
-+	android:exported
-+		ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:5:13-37
-+	android:name
-+		ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:4:13-74
-+intent-filter#action:name:android.intent.action.BOOT_COMPLETED+action:name:android.intent.action.MY_PACKAGE_REPLACED+action:name:expo.modules.taskManager.TaskBroadcastReceiver.INTENT_ACTION
-+ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:6:13-10:29
-+action#expo.modules.taskManager.TaskBroadcastReceiver.INTENT_ACTION
-+ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:7:17-103
-+	android:name
-+		ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:7:25-100
-+action#android.intent.action.BOOT_COMPLETED
-+ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:8:17-79
-+	android:name
-+		ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:8:25-76
-+action#android.intent.action.MY_PACKAGE_REPLACED
-+ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:9:17-84
-+	android:name
-+		ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:9:25-81
-+service#expo.modules.taskManager.TaskJobService
-+ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:12:9-16:72
-+	android:enabled
-+		ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:14:13-35
-+	android:exported
-+		ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:15:13-37
-+	android:permission
-+		ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:16:13-69
-+	android:name
-+		ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:13:13-67
-+meta-data#expo.modules.taskManager.oneAppId
-+ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:18:7-89
-+	android:value
-+		ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:18:67-87
-+	android:name
-+		ADDED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml:18:18-66
-+uses-sdk
-+INJECTED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml reason: use-sdk injection requested
-+INJECTED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml
-+INJECTED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml
-+	android:targetSdkVersion
-+		INJECTED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml
-+	android:minSdkVersion
-+		INJECTED from /Users/satouhiroshi/Desktop/LocationTrackerApp/node_modules/expo-task-manager/android/src/main/AndroidManifest.xml
-diff --git a/node_modules/expo-task-manager/android/build/tmp/compileDebugJavaWithJavac/previous-compilation-data.bin b/node_modules/expo-task-manager/android/build/tmp/compileDebugJavaWithJavac/previous-compilation-data.bin
-new file mode 100644
-index 0000000..dafd0b5
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/compileDebugJavaWithJavac/previous-compilation-data.bin differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/META-INF/expo-task-manager_debug.kotlin_module b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/META-INF/expo-task-manager_debug.kotlin_module
-new file mode 100644
-index 0000000..9dbc290
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/META-INF/expo-task-manager_debug.kotlin_module differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$1$10$1.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$1$10$1.class
-new file mode 100644
-index 0000000..50f101a
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$1$10$1.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$1$10.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$1$10.class
-new file mode 100644
-index 0000000..7cd96a6
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$1$10.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$1$2$emitEvent$1.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$1$2$emitEvent$1.class
-new file mode 100644
-index 0000000..1de7b48
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$1$2$emitEvent$1.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$1.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$1.class
-new file mode 100644
-index 0000000..a3ffa1d
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$1.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$10.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$10.class
-new file mode 100644
-index 0000000..60b5ea9
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$10.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$11.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$11.class
-new file mode 100644
-index 0000000..005455c
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$11.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$12.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$12.class
-new file mode 100644
-index 0000000..3abb003
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$12.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$13.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$13.class
-new file mode 100644
-index 0000000..15c90af
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$13.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$14.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$14.class
-new file mode 100644
-index 0000000..76b7215
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$14.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$15.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$15.class
-new file mode 100644
-index 0000000..0fa2d73
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$15.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$2.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$2.class
-new file mode 100644
-index 0000000..c48cc57
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$2.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$3.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$3.class
-new file mode 100644
-index 0000000..59c1721
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$3.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$4.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$4.class
-new file mode 100644
-index 0000000..e53813a
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$4.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$5.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$5.class
-new file mode 100644
-index 0000000..9f52e79
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$5.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$6.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$6.class
-new file mode 100644
-index 0000000..267053d
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$6.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$7.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$7.class
-new file mode 100644
-index 0000000..33414c8
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$7.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$8.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$8.class
-new file mode 100644
-index 0000000..3c57b6f
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$8.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$9.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$9.class
-new file mode 100644
-index 0000000..68b7fde
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$AsyncFunction$9.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$Constant$1.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$Constant$1.class
-new file mode 100644
-index 0000000..22c11d6
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$Constant$1.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$OnCreate$1.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$OnCreate$1.class
-new file mode 100644
-index 0000000..3f83975
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$definition$lambda$11$$inlined$OnCreate$1.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$sam$expo_modules_taskManager_EmitEventWrapper$0.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$sam$expo_modules_taskManager_EmitEventWrapper$0.class
-new file mode 100644
-index 0000000..e9cf4f5
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule$sam$expo_modules_taskManager_EmitEventWrapper$0.class differ
-diff --git a/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule.class b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule.class
-new file mode 100644
-index 0000000..2898266
-Binary files /dev/null and b/node_modules/expo-task-manager/android/build/tmp/kotlin-classes/debug/expo/modules/taskManager/TaskManagerModule.class differ
 diff --git a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
-index 2b6c2fa..b9f76af 100644
+index 2b6c2fa..ebd5dca 100644
 --- a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
 +++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
-@@ -1,31 +1,46 @@
+@@ -1,31 +1,44 @@
  package expo.modules.taskManager;
  
 +import static expo.modules.taskManager.Utils.getConsumerVersion;
@@ -951,7 +76,6 @@ index 2b6c2fa..b9f76af 100644
 +import com.facebook.react.jstasks.HeadlessJsTaskConfig;
 +import com.facebook.react.jstasks.HeadlessJsTaskContext;
 +import com.facebook.react.ReactInstanceEventListener;
-+import com.facebook.react.modules.core.DeviceEventManagerModule;
 +
  import android.app.job.JobParameters;
  import android.app.job.JobService;
@@ -965,7 +89,6 @@ index 2b6c2fa..b9f76af 100644
  import android.util.Log;
 +import android.content.Context;
 +import android.os.Handler;
-+import android.os.Looper;
  
 -import org.json.JSONObject;
 +import androidx.annotation.NonNull;
@@ -987,7 +110,7 @@ index 2b6c2fa..b9f76af 100644
  import expo.modules.interfaces.taskManager.TaskConsumerInterface;
  import expo.modules.interfaces.taskManager.TaskExecutionCallback;
  import expo.modules.interfaces.taskManager.TaskInterface;
-@@ -37,23 +52,34 @@ import expo.modules.taskManager.exceptions.TaskNotFoundException;
+@@ -37,23 +50,17 @@ import expo.modules.taskManager.exceptions.TaskNotFoundException;
  import expo.modules.taskManager.exceptions.TaskRegisteringFailedException;
  import expo.modules.taskManager.repository.TasksAndEventsRepository;
  
@@ -1001,24 +124,7 @@ index 2b6c2fa..b9f76af 100644
  // Thanks to that, we can instantiate new TaskService in those classes, that has just its own context and all other resources are shared.
  
  public class TaskService implements SingletonModule, TaskServiceInterface {
-+  /**
-+ * Headless JS keep-alive task の情報。
-+ *
-+ * appScopeKeyだけでは、前回taskと次回taskのfinish通知が
-+ * raceした場合に区別できないため、UUID tokenを持たせる。
-+ */
-+private static final class HeadlessTaskRecord {
-+  final int taskId;
-+  final String keepAliveToken;
 +
-+  HeadlessTaskRecord(
-+    int taskId,
-+    String keepAliveToken
-+  ) {
-+    this.taskId = taskId;
-+    this.keepAliveToken = keepAliveToken;
-+  }
-+}
    private static final String TAG = "TaskService";
    private static final String SHARED_PREFERENCES_NAME = "TaskManagerModule";
 -  private static final int MAX_TASK_EXECUTION_TIME_MS = 15000; // 15 seconds
@@ -1030,7 +136,7 @@ index 2b6c2fa..b9f76af 100644
    // Map with task managers of running (foregrounded) apps. { "<appScopeKey>": WeakReference(TaskManagerInterface) }
    private static final Map<String, WeakReference<TaskManagerInterface>> sTaskManagers = new HashMap<>();
  
-@@ -63,11 +89,23 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -63,11 +70,19 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
    // { "<appScopeKey>": List(eventIds...) }
    private static final Map<String, List<String>> sEvents = new HashMap<>();
  
@@ -1039,13 +145,9 @@ index 2b6c2fa..b9f76af 100644
    // Map of callbacks for task execution events. Schema: { "<eventId>": TaskExecutionCallback }
    private static final Map<String, TaskExecutionCallback> sTaskCallbacks = new HashMap<>();
  
-+// Background task 実行中に JS timer を維持するために開始した
-+  // React Native Headless JS task の ID を appScopeKey ごとに保持する。
-+private static final String HEADLESS_KEEP_ALIVE_FINISH_EVENT =
-+  "expo-task-manager-headless-keepalive-finish";
-+
-+private static final Map<String, HeadlessTaskRecord>
-+  sHeadlessTasks = new HashMap<>();
++  // Background task実行中にJS timerを維持するために開始した
++  // React Native Headless JS task IDをappScopeKeyごとに保持する。
++  private static final Map<String, Integer> sHeadlessTaskIds = new HashMap<>();
 +
 +  private WeakReference<Context> mContextRef;
 +
@@ -1056,7 +158,7 @@ index 2b6c2fa..b9f76af 100644
    public TaskService(Context context) {
      super();
      mContextRef = new WeakReference<>(context);
-@@ -203,9 +241,13 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -203,9 +218,13 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
      if (appEvents != null) {
        appEvents.remove(eventId);
  
@@ -1071,7 +173,7 @@ index 2b6c2fa..b9f76af 100644
          // Invalidate app record but after 2 seconds delay so we can still take batched events.
          Handler handler = new Handler();
          handler.postDelayed(new Runnable() {
-@@ -220,7 +262,7 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -220,7 +239,7 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
      }
  
      // Invoke task callback
@@ -1080,7 +182,7 @@ index 2b6c2fa..b9f76af 100644
  
      if (taskCallback != null) {
        taskCallback.onFinished(response);
-@@ -232,6 +274,7 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -232,6 +251,7 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
      // It may be called with null when the host activity is destroyed.
      if (taskManager == null) {
        sTaskManagers.remove(appScopeKey);
@@ -1088,7 +190,7 @@ index 2b6c2fa..b9f76af 100644
        return;
      }
  
-@@ -386,16 +429,36 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -386,16 +406,36 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
        sTaskCallbacks.put(eventId, callback);
      }
  
@@ -1127,7 +229,7 @@ index 2b6c2fa..b9f76af 100644
      if (taskManager != null) {
        taskManager.executeTaskWithBody(body);
        return;
-@@ -619,4 +682,468 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -619,4 +659,363 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
      }, timeout);
    }
  
@@ -1206,31 +308,35 @@ index 2b6c2fa..b9f76af 100644
 +
 +  UiThreadUtil.runOnUiThread(() -> {
 +    try {
-+      /**
-+       * 同一appScopeKeyについてすでにkeep-alive taskが存在するなら、
-+       * 二重起動しない。
++      /*
++       * 同一appScopeKeyで既にHeadless taskが存在する場合は
++       * 新しいtaskを作成しない。
 +       */
-+      HeadlessTaskRecord existing =
-+        sHeadlessTasks.get(appScopeKey);
++      Integer existingTaskId =
++        sHeadlessTaskIds.get(appScopeKey);
 +
-+      if (existing != null) {
++      if (existingTaskId != null) {
++        boolean isRunning =
++          headlessContext.isTaskRunning(existingTaskId);
++
 +        Log.i(
 +          TAG,
 +          "[HEADLESS_TIMER] keep-alive task already exists" +
 +            ", appScopeKey=" + appScopeKey +
-+            ", taskId=" + existing.taskId +
-+            ", isRunning=" +
-+            headlessContext.isTaskRunning(existing.taskId)
++            ", taskId=" + existingTaskId +
++            ", isRunning=" + isRunning
 +        );
 +
-+        return;
-+      }
++        /*
++         * Mapには残っているがReact Native上では終了済みだった場合、
++         * stale entryとして削除し、新しいtaskを開始する。
++         */
++        if (isRunning) {
++          return;
++        }
 +
-+      /**
-+       * taskごとに一意なtokenを発行する。
-+       */
-+      String keepAliveToken =
-+        UUID.randomUUID().toString();
++        sHeadlessTaskIds.remove(appScopeKey);
++      }
 +
 +      WritableNativeMap taskData =
 +        new WritableNativeMap();
@@ -1240,16 +346,12 @@ index 2b6c2fa..b9f76af 100644
 +        appScopeKey
 +      );
 +
-+      taskData.putString(
-+        "keepAliveToken",
-+        keepAliveToken
-+      );
-+
-+      /**
++      /*
 +       * timeout=0:
 +       *
 +       * Headless JS task自身のtimeoutでは終了させず、
-+       * Expo background event終了時に明示的に終了させる。
++       * Expo background eventがすべて終了した時点で
++       * Native側からfinishTask()を直接呼ぶ。
 +       */
 +      HeadlessJsTaskConfig taskConfig =
 +        new HeadlessJsTaskConfig(
@@ -1262,12 +364,9 @@ index 2b6c2fa..b9f76af 100644
 +      int taskId =
 +        headlessContext.startTask(taskConfig);
 +
-+      sHeadlessTasks.put(
++      sHeadlessTaskIds.put(
 +        appScopeKey,
-+        new HeadlessTaskRecord(
-+          taskId,
-+          keepAliveToken
-+        )
++        taskId
 +      );
 +
 +      Log.i(
@@ -1275,7 +374,6 @@ index 2b6c2fa..b9f76af 100644
 +        "[HEADLESS_TIMER] Started keep-alive headless task" +
 +          ", appScopeKey=" + appScopeKey +
 +          ", taskId=" + taskId +
-+          ", keepAliveToken=" + keepAliveToken +
 +          ", isRunning=" +
 +          headlessContext.isTaskRunning(taskId) +
 +          ", hasActiveTasks=" +
@@ -1384,16 +482,16 @@ index 2b6c2fa..b9f76af 100644
 +
 +/**
 + * そのappScopeKeyに属するBackground eventがすべて終了したら、
-+ * timer維持用Headless JS taskを終了する。
++ * timer維持用Headless JS taskをNative側から直接終了する。
 + */
 +private void maybeFinishHeadlessTask(
 +  String appScopeKey
 +) {
 +  UiThreadUtil.runOnUiThread(() -> {
-+    HeadlessTaskRecord record =
-+      sHeadlessTasks.remove(appScopeKey);
++    Integer taskId =
++      sHeadlessTaskIds.remove(appScopeKey);
 +
-+    if (record == null) {
++    if (taskId == null) {
 +      Log.i(
 +        TAG,
 +        "[HEADLESS_TIMER] no keep-alive task to finish" +
@@ -1410,7 +508,8 @@ index 2b6c2fa..b9f76af 100644
 +        Log.w(
 +          TAG,
 +          "[HEADLESS_TIMER] context unavailable while finishing" +
-+            ", appScopeKey=" + appScopeKey
++            ", appScopeKey=" + appScopeKey +
++            ", taskId=" + taskId
 +        );
 +
 +        return;
@@ -1423,7 +522,8 @@ index 2b6c2fa..b9f76af 100644
 +        Log.w(
 +          TAG,
 +          "[HEADLESS_TIMER] ReactContext unavailable while finishing" +
-+            ", appScopeKey=" + appScopeKey
++            ", appScopeKey=" + appScopeKey +
++            ", taskId=" + taskId
 +        );
 +
 +        return;
@@ -1434,146 +534,43 @@ index 2b6c2fa..b9f76af 100644
 +          reactContext
 +        );
 +
-+      /**
-+       * ★最重要診断
-+       *
-+       * Expo background eventが終了する時点まで
-+       * keep-alive taskが本当にactiveだったか確認する。
-+       *
-+       * 正常:
-+       *   true
-+       *
-+       * false:
-+       *   途中でHeadless taskが終了している。
-+       */
 +      boolean runningBeforeFinish =
-+        headlessContext.isTaskRunning(
-+          record.taskId
-+        );
++        headlessContext.isTaskRunning(taskId);
 +
 +      Log.i(
 +        TAG,
-+        "[HEADLESS_TIMER_STATE] before finish signal" +
++        "[HEADLESS_TIMER_STATE] before direct finish" +
 +          ", appScopeKey=" + appScopeKey +
-+          ", taskId=" + record.taskId +
-+          ", keepAliveToken=" +
-+          record.keepAliveToken +
-+          ", isRunning=" +
-+          runningBeforeFinish +
++          ", taskId=" + taskId +
++          ", isRunning=" + runningBeforeFinish +
 +          ", hasActiveTasks=" +
 +          headlessContext.hasActiveTasks()
 +      );
 +
-+      /**
-+       * JS側へPromise終了通知を送る。
-+       */
-+      WritableNativeMap payload =
-+        new WritableNativeMap();
++      if (runningBeforeFinish) {
++        headlessContext.finishTask(taskId);
++      }
 +
-+      payload.putString(
-+        "appScopeKey",
-+        appScopeKey
-+      );
-+
-+      payload.putString(
-+        "keepAliveToken",
-+        record.keepAliveToken
-+      );
-+
-+      reactContext
-+        .getJSModule(
-+          DeviceEventManagerModule.RCTDeviceEventEmitter.class
-+        )
-+        .emit(
-+          HEADLESS_KEEP_ALIVE_FINISH_EVENT,
-+          payload
-+        );
++      boolean runningAfterFinish =
++        headlessContext.isTaskRunning(taskId);
 +
 +      Log.i(
 +        TAG,
-+        "[HEADLESS_TIMER] finish signal emitted" +
++        "[HEADLESS_TIMER] Finished keep-alive headless task directly" +
 +          ", appScopeKey=" + appScopeKey +
-+          ", taskId=" + record.taskId +
-+          ", keepAliveToken=" +
-+          record.keepAliveToken
++          ", taskId=" + taskId +
++          ", wasRunning=" + runningBeforeFinish +
++          ", isRunning=" + runningAfterFinish +
++          ", hasActiveTasks=" +
++          headlessContext.hasActiveTasks()
 +      );
-+
-+      /**
-+       * JS Promiseがresolveすると、React Native自身が
-+       * HeadlessJsTaskContext.finishTask(taskId) を呼ぶ。
-+       *
-+       * 100ms後にそれを確認する。
-+       */
-+      new Handler(
-+        Looper.getMainLooper()
-+      ).postDelayed(() -> {
-+        try {
-+          boolean stillRunning =
-+            headlessContext.isTaskRunning(
-+              record.taskId
-+            );
-+
-+          Log.i(
-+            TAG,
-+            "[HEADLESS_TIMER_STATE] 100ms after finish signal" +
-+              ", appScopeKey=" + appScopeKey +
-+              ", taskId=" + record.taskId +
-+              ", isRunning=" +
-+              stillRunning +
-+              ", hasActiveTasks=" +
-+              headlessContext.hasActiveTasks()
-+          );
-+
-+        } catch (Exception e) {
-+          Log.w(
-+            TAG,
-+            "[HEADLESS_TIMER] failed to check task state after 100ms",
-+            e
-+          );
-+        }
-+      }, 100);
-+
-+      /**
-+       * 万一JS側のfinish eventが届かなかった場合、
-+       * Headless taskが永久に残ることを防ぐためのNative fallback。
-+       *
-+       * 5秒後にもまだactiveなら強制finishする。
-+       */
-+      new Handler(
-+        Looper.getMainLooper()
-+      ).postDelayed(() -> {
-+        try {
-+          if (
-+            headlessContext.isTaskRunning(
-+              record.taskId
-+            )
-+          ) {
-+            Log.w(
-+              TAG,
-+              "[HEADLESS_TIMER] keep-alive task still running after 5s;" +
-+                " forcing native finish" +
-+                ", appScopeKey=" + appScopeKey +
-+                ", taskId=" + record.taskId
-+            );
-+
-+            headlessContext.finishTask(
-+              record.taskId
-+            );
-+          }
-+
-+        } catch (Exception e) {
-+          Log.w(
-+            TAG,
-+            "[HEADLESS_TIMER] fallback finish failed",
-+            e
-+          );
-+        }
-+      }, 5_000);
 +
 +    } catch (Exception e) {
 +      Log.e(
 +        TAG,
-+        "[HEADLESS_TIMER] failed to finish keep-alive headless task",
++        "[HEADLESS_TIMER] Failed to finish keep-alive headless task directly" +
++          ", appScopeKey=" + appScopeKey +
++          ", taskId=" + taskId,
 +        e
 +      );
 +    }
@@ -1597,156 +594,24 @@ index 2b6c2fa..b9f76af 100644
 +
  }
 diff --git a/node_modules/expo-task-manager/src/TaskManager.ts b/node_modules/expo-task-manager/src/TaskManager.ts
-index 88aa2d9..e3ed2e2 100644
+index 88aa2d9..9e32ffa 100644
 --- a/node_modules/expo-task-manager/src/TaskManager.ts
 +++ b/node_modules/expo-task-manager/src/TaskManager.ts
-@@ -1,7 +1,151 @@
+@@ -1,7 +1,19 @@
 -import { LegacyEventEmitter, UnavailabilityError } from 'expo-modules-core';
 +import { LegacyEventEmitter, Platform, UnavailabilityError } from 'expo-modules-core';
-+import { AppRegistry, DeviceEventEmitter } from 'react-native';
++import { AppRegistry } from 'react-native';
  
  import ExpoTaskManager from './ExpoTaskManager';
  
-+/**
-+ * Native TaskService から、
-+ * timer keep-alive 用 Headless JS task を終了させるためのイベント名。
-+ *
-+ * TaskService.java 側と完全に同じ文字列にすること。
-+ */
-+const HEADLESS_KEEP_ALIVE_FINISH_EVENT =
-+  'expo-task-manager-headless-keepalive-finish';
-+
-+type HeadlessKeepAliveTaskData = {
-+  appScopeKey?: string;
-+  keepAliveToken?: string;
-+};
-+
-+/**
-+ * keepAliveToken ごとに Promise の resolve を保持する。
-+ *
-+ * 重要:
-+ * 従来の
-+ *
-+ *   async () => {}
-+ *
-+ * は即resolveしてしまうため、
-+ * React Native側ではHeadless JS taskがすぐ終了する可能性がある。
-+ *
-+ * 今回はNative側からfinish通知を受けるまで
-+ * Promiseをpendingのまま維持する。
-+ */
-+const headlessKeepAliveResolvers = new Map<string, () => void>();
-+
-+/**
-+ * ごく短いrace対策。
-+ *
-+ * Nativeからfinish通知が先に届き、
-+ * Headless JS task側がまだPromiseを登録していない場合、
-+ * tokenだけここへ保持する。
-+ */
-+const pendingHeadlessKeepAliveFinishes = new Set<string>();
-+
 +if (Platform.OS === 'android') {
-+  /**
-+   * Native側の maybeFinishHeadlessTask() から送信される。
-+   */
-+  DeviceEventEmitter.addListener(
-+    HEADLESS_KEEP_ALIVE_FINISH_EVENT,
-+    (payload?: HeadlessKeepAliveTaskData) => {
-+      const keepAliveToken = payload?.keepAliveToken;
-+
-+      if (!keepAliveToken) {
-+        console.warn(
-+          '[HEADLESS_TIMER_JS] finish event received without keepAliveToken',
-+          payload,
-+        );
-+        return;
-+      }
-+
-+      const resolver = headlessKeepAliveResolvers.get(keepAliveToken);
-+
-+      if (resolver) {
-+        console.log('[HEADLESS_TIMER_JS] resolving keep-alive task', {
-+          appScopeKey: payload?.appScopeKey ?? null,
-+          keepAliveToken,
-+        });
-+
-+        headlessKeepAliveResolvers.delete(keepAliveToken);
-+
-+        resolver();
-+        return;
-+      }
-+
-+      /**
-+       * Native finishがPromise登録より先に届いた場合。
-+       */
-+      console.log('[HEADLESS_TIMER_JS] finish arrived before resolver', {
-+        appScopeKey: payload?.appScopeKey ?? null,
-+        keepAliveToken,
-+      });
-+
-+      pendingHeadlessKeepAliveFinishes.add(keepAliveToken);
-+    },
-+  );
 +
 +  /**
 +   * Native HeadlessJsTaskContext.startTask() から起動される。
 +   */
 +  AppRegistry.registerHeadlessTask(
 +    'expo-task-manager',
-+    () =>
-+      async (data?: HeadlessKeepAliveTaskData) => {
-+        const appScopeKey = data?.appScopeKey ?? null;
-+        const keepAliveToken = data?.keepAliveToken;
-+
-+        console.log('[HEADLESS_TIMER_JS] keep-alive task entered', {
-+          appScopeKey,
-+          keepAliveToken: keepAliveToken ?? null,
-+        });
-+
-+        if (!keepAliveToken) {
-+          /**
-+           * 旧Nativeコード等から呼ばれた場合。
-+           *
-+           * tokenなしでは安全に終了通知と対応付けできないため、
-+           * このケースだけ従来通り終了する。
-+           */
-+          console.warn(
-+            '[HEADLESS_TIMER_JS] keep-alive task has no keepAliveToken',
-+          );
-+          return;
-+        }
-+
-+        /**
-+         * Native finishが先に到着していた場合は、
-+         * ここで即終了してよい。
-+         */
-+        if (pendingHeadlessKeepAliveFinishes.delete(keepAliveToken)) {
-+          console.log(
-+            '[HEADLESS_TIMER_JS] finish was already pending',
-+            {
-+              appScopeKey,
-+              keepAliveToken,
-+            },
-+          );
-+
-+          return;
-+        }
-+
-+        /**
-+         * ここが今回の本質。
-+         *
-+         * Nativeからfinish通知が来るまでresolveしない。
-+         */
-+        await new Promise<void>((resolve) => {
-+          headlessKeepAliveResolvers.set(keepAliveToken, resolve);
-+        });
-+
-+        console.log('[HEADLESS_TIMER_JS] keep-alive task finished', {
-+          appScopeKey,
-+          keepAliveToken,
-+        });
-+      },
++    () => async () => {},
 +  );
 +}
 +

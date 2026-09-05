@@ -27,6 +27,7 @@ import MapView, {
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import { upsertRecordingSessionSummary } from "../services/recordingSessionService";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationMap">;
 
@@ -182,6 +183,7 @@ const mapTilerPixelTileUrl =
         : undefined;
 
 export default function LocationMapScreen({ route }: Props) {
+    const insets = useSafeAreaInsets();
     const mapRef = useRef<MapView | null>(null);
     const hasFittedInitialRouteRef = useRef(false);
 
@@ -2127,7 +2129,14 @@ export default function LocationMapScreen({ route }: Props) {
                 </View>
             )}
             {showLocationLogList && isActivityHistoryMap && (
-                <View style={styles.locationLogListPanel}>
+                <View
+                    style={[
+                        styles.locationLogListPanel,
+                        {
+                            bottom: Math.max(insets.bottom + 8, 16),
+                        },
+                    ]}
+                >
                     <View style={styles.locationLogListHeader}>
                         <View>
                             <Text style={styles.locationLogListTitle}>
@@ -3080,8 +3089,7 @@ const styles = StyleSheet.create({
         position: "absolute",
         left: 8,
         right: 8,
-        bottom: 8,
-        height: "43%",
+        height: "40%",
         backgroundColor: "rgba(255,255,255,0.98)",
         borderRadius: 12,
         borderWidth: 1,

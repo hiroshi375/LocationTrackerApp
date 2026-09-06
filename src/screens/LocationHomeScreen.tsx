@@ -24,6 +24,13 @@ import { getUrl } from "aws-amplify/storage";
 import * as Location from "expo-location";
 import * as Updates from "expo-updates";
 import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRecorder";
+import {
+    isRecordingDistanceAllowed,
+    isRecordingIntervalAllowed,
+    sanitizeRecordingDistance,
+    sanitizeRecordingInterval,
+} from "../config/subscriptionPlan";
+import { useSubscription } from "../hooks/useSubscription";
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import {
@@ -140,6 +147,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
         null,
     );
     const [isAdmin, setIsAdmin] = useState(false);
+
+    const {
+        tier: subscriptionTier,
+        isPremium,
+        loading: subscriptionLoading,
+    } = useSubscription();
 
     const RECORD_INTERVAL_OPTIONS = [
         { label: "10秒", value: 10 * 1000 },
@@ -353,6 +366,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
     }, []);
 
     useEffect(() => {
+        if (subscriptionLoading) {
+            return;
+        }
+
         const loadSavedHomeSettings = async () => {
             try {
                 const raw = await AsyncStorage.getItem(
@@ -373,7 +390,25 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         savedSettings.recordIntervalMs,
                     )
                 ) {
-                    setRecordIntervalMs(savedSettings.recordIntervalMs);
+                    const sanitizedIntervalMs = sanitizeRecordingInterval(
+                        subscriptionTier,
+                        savedSettings.recordIntervalMs,
+                    );
+
+                    setRecordIntervalMs(sanitizedIntervalMs);
+
+                    if (
+                        sanitizedIntervalMs !== savedSettings.recordIntervalMs
+                    ) {
+                        console.log(
+                            "[Subscription] Recording interval sanitized:",
+                            {
+                                subscriptionTier,
+                                savedValue: savedSettings.recordIntervalMs,
+                                sanitizedValue: sanitizedIntervalMs,
+                            },
+                        );
+                    }
                 }
 
                 if (savedSettings.version === LOCATION_HOME_SETTINGS_VERSION) {
@@ -384,12 +419,36 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             savedSettings.recordDistanceMeters,
                         )
                     ) {
-                        setRecordDistanceMeters(
-                            savedSettings.recordDistanceMeters,
-                        );
+                        const sanitizedDistanceMeters =
+                            sanitizeRecordingDistance(
+                                subscriptionTier,
+                                savedSettings.recordDistanceMeters,
+                            );
+
+                        setRecordDistanceMeters(sanitizedDistanceMeters);
+
+                        if (
+                            sanitizedDistanceMeters !==
+                            savedSettings.recordDistanceMeters
+                        ) {
+                            console.log(
+                                "[Subscription] Recording distance sanitized:",
+                                {
+                                    subscriptionTier,
+                                    savedValue:
+                                        savedSettings.recordDistanceMeters,
+                                    sanitizedValue: sanitizedDistanceMeters,
+                                },
+                            );
+                        }
                     }
                 } else {
-                    setRecordDistanceMeters(DEFAULT_RECORD_DISTANCE_METERS);
+                    setRecordDistanceMeters(
+                        sanitizeRecordingDistance(
+                            subscriptionTier,
+                            DEFAULT_RECORD_DISTANCE_METERS,
+                        ),
+                    );
                 }
 
                 if (Array.isArray(savedSettings.selectedLiveShareUsers)) {
@@ -419,7 +478,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
         };
 
         void loadSavedHomeSettings();
-    }, []);
+    }, [subscriptionLoading, subscriptionTier]);
 
     useEffect(() => {
         if (!hasLoadedSavedHomeSettings) {
@@ -842,6 +901,25 @@ export default function LocationHomeScreen({ navigation }: Props) {
         try {
             setStartingRecording(true);
             setLiveShareStatusMessage("");
+
+            const intervalAllowed = isRecordingIntervalAllowed(
+                subscriptionTier,
+                recordIntervalMs,
+            );
+
+            const distanceAllowed = isRecordingDistanceAllowed(
+                subscriptionTier,
+                recordDistanceMeters,
+            );
+
+            if (!intervalAllowed || !distanceAllowed) {
+                Alert.alert(
+                    "記録設定を確認してください",
+                    "現在のプランでは利用できない記録設定が選択されています。\n\n無料プランでは記録頻度30秒以上、移動距離50m以上を選択してください。",
+                );
+
+                return;
+            }
 
             await startRecording();
         } catch (error) {
@@ -2229,6 +2307,13 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 const selected =
                                     recordIntervalMs === option.value;
 
+                                const allowed = isRecordingIntervalAllowed(
+                                    subscriptionTier,
+                                    option.value,
+                                );
+
+                                const premiumLocked = !allowed;
+
                                 return (
                                     <Pressable
                                         key={option.value}
@@ -2237,21 +2322,35 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                             styles.optionButton,
                                             selected &&
                                                 styles.optionButtonSelected,
+                                            premiumLocked &&
+                                                styles.optionButtonPremiumLocked,
                                             recordingControlsLocked &&
                                                 styles.optionButtonDisabled,
                                         ]}
-                                        onPress={() =>
-                                            setRecordIntervalMs(option.value)
-                                        }
+                                        onPress={() => {
+                                            if (!allowed) {
+                                                Alert.alert(
+                                                    "Premium機能",
+                                                    `${option.label}間隔の記録はPremiumプランで利用できます。\n\n無料プランでは30秒以上の記録間隔を選択できます。`,
+                                                );
+
+                                                return;
+                                            }
+
+                                            setRecordIntervalMs(option.value);
+                                        }}
                                     >
                                         <Text
                                             style={[
                                                 styles.optionButtonText,
                                                 selected &&
                                                     styles.optionButtonTextSelected,
+                                                premiumLocked &&
+                                                    styles.optionButtonTextPremiumLocked,
                                             ]}
                                         >
                                             {option.label}
+                                            {premiumLocked ? " ★" : ""}
                                         </Text>
                                     </Pressable>
                                 );
@@ -2268,6 +2367,13 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 const selected =
                                     recordDistanceMeters === option.value;
 
+                                const allowed = isRecordingDistanceAllowed(
+                                    subscriptionTier,
+                                    option.value,
+                                );
+
+                                const premiumLocked = !allowed;
+
                                 return (
                                     <Pressable
                                         key={option.value}
@@ -2276,23 +2382,37 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                             styles.optionButton,
                                             selected &&
                                                 styles.optionButtonSelected,
+                                            premiumLocked &&
+                                                styles.optionButtonPremiumLocked,
                                             recordingControlsLocked &&
                                                 styles.optionButtonDisabled,
                                         ]}
-                                        onPress={() =>
+                                        onPress={() => {
+                                            if (!allowed) {
+                                                Alert.alert(
+                                                    "Premium機能",
+                                                    `${option.label}の高密度記録はPremiumプランで利用できます。\n\n無料プランでは50m以上の移動距離を選択できます。`,
+                                                );
+
+                                                return;
+                                            }
+
                                             setRecordDistanceMeters(
                                                 option.value,
-                                            )
-                                        }
+                                            );
+                                        }}
                                     >
                                         <Text
                                             style={[
                                                 styles.optionButtonText,
                                                 selected &&
                                                     styles.optionButtonTextSelected,
+                                                premiumLocked &&
+                                                    styles.optionButtonTextPremiumLocked,
                                             ]}
                                         >
                                             {option.label}
+                                            {premiumLocked ? " ★" : ""}
                                         </Text>
                                     </Pressable>
                                 );
@@ -3131,6 +3251,14 @@ const styles = StyleSheet.create({
     },
     optionButtonDisabled: {
         opacity: 0.5,
+    },
+    optionButtonPremiumLocked: {
+        opacity: 0.55,
+        borderStyle: "dashed",
+    },
+
+    optionButtonTextPremiumLocked: {
+        opacity: 0.75,
     },
     optionButtonText: {
         color: "#4b6f8f",

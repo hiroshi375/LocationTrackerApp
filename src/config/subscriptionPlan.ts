@@ -47,9 +47,9 @@ export const FREE_PLAN_LIMITS: SubscriptionPlanLimits = {
     maxMonthlyActivities: 30,
 
     // 2時間
-    //maxActivityDurationMs: 2 * 60 * 60 * 1000,
+    maxActivityDurationMs: 2 * 60 * 60 * 1000,
     // 2分(短縮版)
-    maxActivityDurationMs: 2 * 60 * 1000,
+    //maxActivityDurationMs: 2 * 60 * 1000,
 
     // 1000件
     maxPointsPerActivity: 1000,

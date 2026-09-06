@@ -202,6 +202,29 @@ export default function LocationHomeScreen({ navigation }: Props) {
         try {
             setForcingEasUpdate(true);
 
+            /*
+             * UI側ではボタンをdisabledにしているが、
+             * 状態変化との競合や別経路からの呼び出しに備えて、
+             * 処理開始時にもBackground Locationの保存済みstateを確認する。
+             */
+            const initialBackgroundStatus =
+                await getBackgroundRecordingStatus();
+
+            const initialBackgroundState = initialBackgroundStatus.state;
+
+            const isBackgroundLocationAlreadyInUse =
+                initialBackgroundState?.isRecording === true ||
+                (initialBackgroundState?.liveShareOwnerValues?.length ?? 0) > 0;
+
+            if (isBackgroundLocationAlreadyInUse) {
+                Alert.alert(
+                    "EAS Update",
+                    "自動記録中または現在地共有中はUpdateを適用できません。\n\n" +
+                        "自動記録と現在地共有を停止してから実行してください。",
+                );
+                return;
+            }
+
             if (!Updates.isEnabled) {
                 Alert.alert(
                     "EAS Update",
@@ -511,6 +534,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [startingRecording, setStartingRecording] = useState(false);
     const [stoppingRecording, setStoppingRecording] = useState(false);
     const recordingControlsLocked = isRecording || startingRecording;
+    const easUpdateApplyDisabled =
+        forcingEasUpdate ||
+        isRecording ||
+        startingRecording ||
+        stoppingRecording ||
+        selectedLiveShareUsers.length > 0;
     const [checkingBackgroundHeartbeat, setCheckingBackgroundHeartbeat] =
         useState(false);
 
@@ -2357,19 +2386,20 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             style={({ pressed }) => [
                                 styles.easUpdateButton,
                                 pressed &&
-                                    !forcingEasUpdate &&
+                                    !easUpdateApplyDisabled &&
                                     styles.buttonPressed,
-                                forcingEasUpdate && styles.appButtonDisabled,
+                                easUpdateApplyDisabled &&
+                                    styles.appButtonDisabled,
                             ]}
                             onPress={() => {
                                 void handleForceEasUpdate();
                             }}
-                            disabled={forcingEasUpdate}
+                            disabled={easUpdateApplyDisabled}
                         >
                             <Text style={styles.easUpdateButtonText}>
                                 {forcingEasUpdate
                                     ? "最新EAS Updateを確認中..."
-                                    : "最新EAS Updateを適用【確認用3】"}
+                                    : "最新EAS Updateを適用【20260906】"}
                             </Text>
                         </Pressable>
 

@@ -49,3 +49,6 @@ amplifyconfiguration*
 
 # env
 .env
+
+# VSCode
+.vscode/

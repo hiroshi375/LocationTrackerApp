@@ -14,6 +14,11 @@ import {
 
 import { client } from "../lib/client";
 
+import {
+    FREE_PLAN_LIMITS,
+    canCreateShareGroup,
+} from "../config/subscriptionPlan";
+
 type ShareGroupSummaryItem = {
     groupId: string;
     name: string;
@@ -77,6 +82,17 @@ export default function ShareGroupManagementScreen() {
         string | null
     >(null);
 
+    const ownedGroupCount = groups.filter(
+        (group) => group.role === "OWNER",
+    ).length;
+
+    const canCreateFreeShareGroup = canCreateShareGroup(
+        "FREE",
+        ownedGroupCount,
+    );
+
+    const maxOwnedShareGroups = FREE_PLAN_LIMITS.maxOwnedShareGroups;
+
     const loadGroups = useCallback(async () => {
         try {
             setLoadingGroups(true);
@@ -116,6 +132,14 @@ export default function ShareGroupManagementScreen() {
 
     const handleCreateGroup = useCallback(async () => {
         if (creatingGroup) {
+            return;
+        }
+
+        if (!canCreateFreeShareGroup) {
+            Alert.alert(
+                "作成上限",
+                `Freeプランでは共有グループを${maxOwnedShareGroups}件まで作成できます。`,
+            );
             return;
         }
 
@@ -171,7 +195,13 @@ export default function ShareGroupManagementScreen() {
         } finally {
             setCreatingGroup(false);
         }
-    }, [creatingGroup, groupName, loadGroups]);
+    }, [
+        canCreateFreeShareGroup,
+        creatingGroup,
+        groupName,
+        loadGroups,
+        maxOwnedShareGroups,
+    ]);
 
     const handleJoinGroup = useCallback(async () => {
         if (joiningGroup) {
@@ -366,29 +396,49 @@ export default function ShareGroupManagementScreen() {
                 <Text style={styles.description}>
                     位置情報を共有したい相手とのグループを作成します。
                 </Text>
+                <Text style={styles.groupLimitText}>
+                    作成済み: {ownedGroupCount} / {maxOwnedShareGroups}グループ
+                </Text>
 
+                {!canCreateFreeShareGroup && (
+                    <Text style={styles.limitWarningText}>
+                        Freeプランでは共有グループを
+                        {maxOwnedShareGroups}件まで作成できます。
+                    </Text>
+                )}
                 <TextInput
-                    style={styles.input}
+                    style={[
+                        styles.input,
+                        !canCreateFreeShareGroup && styles.disabledInput,
+                    ]}
                     value={groupName}
                     onChangeText={setGroupName}
                     placeholder="例：家族、ランニング仲間"
                     maxLength={50}
-                    editable={!creatingGroup}
+                    editable={!creatingGroup && canCreateFreeShareGroup}
                 />
 
                 <Pressable
                     style={({ pressed }) => [
                         styles.primaryButton,
-                        pressed && !creatingGroup && styles.buttonPressed,
-                        creatingGroup && styles.disabledButton,
+                        pressed &&
+                            !creatingGroup &&
+                            canCreateFreeShareGroup &&
+                            styles.buttonPressed,
+                        (creatingGroup || !canCreateFreeShareGroup) &&
+                            styles.disabledButton,
                     ]}
                     onPress={() => {
                         void handleCreateGroup();
                     }}
-                    disabled={creatingGroup}
+                    disabled={creatingGroup || !canCreateFreeShareGroup}
                 >
                     <Text style={styles.primaryButtonText}>
-                        {creatingGroup ? "作成中..." : "グループを作成"}
+                        {creatingGroup
+                            ? "作成中..."
+                            : !canCreateFreeShareGroup
+                              ? "作成上限に達しています"
+                              : "グループを作成"}
                     </Text>
                 </Pressable>
 
@@ -725,5 +775,21 @@ const styles = StyleSheet.create({
         color: "#4b6f8f",
         fontSize: 14,
         fontWeight: "bold",
+    },
+
+    groupLimitText: {
+        fontSize: 13,
+        color: "#666",
+    },
+
+    limitWarningText: {
+        fontSize: 13,
+        color: "#b45309",
+        lineHeight: 19,
+    },
+
+    disabledInput: {
+        backgroundColor: "#f1f3f5",
+        color: "#999",
     },
 });

@@ -37,6 +37,19 @@ const INVITE_CODE_LENGTH = 8;
 const INVITE_CODE_GENERATION_MAX_ATTEMPTS = 10;
 
 /*
+ * Freeプランの共有グループ制限。
+ *
+ * Phase 5以降でPremium判定を追加したら、
+ * ユーザーのプランに応じてこの制限を適用する。
+ */
+const FREE_MAX_OWNED_SHARE_GROUPS = 2;
+
+/*
+ * OWNERを含む1グループあたりの最大人数。
+ */
+const FREE_MAX_USERS_PER_SHARE_GROUP = 5;
+
+/*
  * 招待コードを生成する。
  *
  * 例:
@@ -154,6 +167,75 @@ async function loadUserProfile(userId: string) {
 }
 
 /*
+ * Freeプランの所有グループ数上限を確認する。
+ *
+ * 新しいテーブルやGSIは作らず、
+ * 既存のownerUserId GSIを利用する。
+ */
+async function assertCanCreateShareGroup(userId: string): Promise<void> {
+    let nextToken: string | null = null;
+    let activeOwnedGroupCount = 0;
+
+    do {
+        const result = (await (
+            client.models.ShareGroup as any
+        ).listShareGroupsByOwner(
+            {
+                ownerUserId: userId,
+            },
+            {
+                limit: 100,
+                nextToken: nextToken ?? undefined,
+            },
+        )) as {
+            data?:
+                | {
+                      groupId: string;
+                      isActive?: boolean | null;
+                  }[]
+                | null;
+            errors?: unknown;
+            nextToken?: string | null;
+        };
+
+        if (result.errors) {
+            console.error(
+                "[ShareGroup] Owned group limit check errors:",
+                result.errors,
+                {
+                    userId,
+                },
+            );
+
+            throw new Error("共有グループの作成上限を確認できませんでした。");
+        }
+
+        for (const group of result.data ?? []) {
+            /*
+             * 無効化済みグループは上限数に含めない。
+             */
+            if (group.isActive !== true) {
+                continue;
+            }
+
+            activeOwnedGroupCount += 1;
+
+            /*
+             * 上限に到達した時点で、
+             * それ以上Queryする必要はない。
+             */
+            if (activeOwnedGroupCount >= FREE_MAX_OWNED_SHARE_GROUPS) {
+                throw new Error(
+                    `Freeプランでは共有グループを${FREE_MAX_OWNED_SHARE_GROUPS}件まで作成できます。`,
+                );
+            }
+        }
+
+        nextToken = result.nextToken ?? null;
+    } while (nextToken);
+}
+
+/*
  * 重複していない招待コードを生成する。
  */
 async function createUniqueInviteCode(): Promise<{
@@ -213,6 +295,14 @@ async function createShareGroup(
     if (!name) {
         throw new Error("グループ名を入力してください。");
     }
+
+    /*
+     * Freeプランの所有グループ数上限を確認する。
+     *
+     * 制限超過の場合は、
+     * ShareGroupやShareGroupMemberを作成する前に終了する。
+     */
+    await assertCanCreateShareGroup(userId);
 
     /*
      * グループオーナーのプロフィールを取得する。
@@ -401,6 +491,14 @@ async function joinShareGroupByInviteCode(
             groupName: group.name,
         };
     }
+
+    /*
+     * Freeプランのグループ人数上限を確認する。
+     *
+     * OWNERを含めて5人以上なら、
+     * 新しいMEMBERは追加しない。
+     */
+    await assertCanJoinShareGroup(group.groupId);
 
     /*
      * 参加ユーザーのプロフィール取得。
@@ -831,4 +929,48 @@ async function regenerateShareGroupInviteCode(
         groupName: group.name,
         inviteCode,
     };
+}
+
+/*
+ * Freeプランのグループ人数上限を確認する。
+ *
+ * OWNERも1人として数える。
+ *
+ * 既存のgroupId GSIのみ使用するため、
+ * DynamoDB schema変更は不要。
+ */
+async function assertCanJoinShareGroup(groupId: string): Promise<void> {
+    const result =
+        await client.models.ShareGroupMember.listShareGroupMembersByGroup(
+            {
+                groupId,
+            },
+            {
+                /*
+                 * 5件取れれば上限到達を判定できるため、
+                 * 全メンバー取得は不要。
+                 */
+                limit: FREE_MAX_USERS_PER_SHARE_GROUP,
+            },
+        );
+
+    if (result.errors) {
+        console.error(
+            "[ShareGroup] Group member limit check errors:",
+            result.errors,
+            {
+                groupId,
+            },
+        );
+
+        throw new Error("共有グループの参加人数を確認できませんでした。");
+    }
+
+    const memberCount = (result.data ?? []).length;
+
+    if (memberCount >= FREE_MAX_USERS_PER_SHARE_GROUP) {
+        throw new Error(
+            `この共有グループはFreeプランの上限${FREE_MAX_USERS_PER_SHARE_GROUP}人に達しています。`,
+        );
+    }
 }

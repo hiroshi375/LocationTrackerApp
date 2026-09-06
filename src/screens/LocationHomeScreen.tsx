@@ -471,9 +471,9 @@ export default function LocationHomeScreen({ navigation }: Props) {
     useEffect(() => {
         let cancelled = false;
 
-        const loadSelectedLiveShareUserIcons = async () => {
+        const loadLiveShareUserIcons = async () => {
             const iconEntries = await Promise.all(
-                selectedLiveShareUsers.map(async (user) => {
+                liveShareUsers.map(async (user) => {
                     if (!user.iconImagePath) {
                         return [user.id, null] as const;
                     }
@@ -506,12 +506,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
             setLiveShareUserIconUrls(Object.fromEntries(iconEntries));
         };
 
-        void loadSelectedLiveShareUserIcons();
+        void loadLiveShareUserIcons();
 
         return () => {
             cancelled = true;
         };
-    }, [selectedLiveShareUsers]);
+    }, [liveShareUsers]);
 
     const {
         isRecording,
@@ -2814,6 +2814,9 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                                     selectedUser.id === user.id,
                                             );
 
+                                        const iconUrl =
+                                            liveShareUserIconUrls[user.id];
+
                                         return (
                                             <Pressable
                                                 key={user.id}
@@ -2826,22 +2829,63 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                                     toggleLiveShareUser(user)
                                                 }
                                             >
-                                                <Text
+                                                <View
                                                     style={
-                                                        styles.liveShareUserName
+                                                        styles.liveShareUserItemContent
                                                     }
                                                 >
-                                                    {user.displayName ||
-                                                        "名前未設定"}
-                                                </Text>
+                                                    {iconUrl ? (
+                                                        <Image
+                                                            source={{
+                                                                uri: iconUrl,
+                                                            }}
+                                                            style={
+                                                                styles.liveShareUserListIcon
+                                                            }
+                                                            resizeMode="cover"
+                                                        />
+                                                    ) : (
+                                                        <View
+                                                            style={
+                                                                styles.liveShareUserListIconPlaceholder
+                                                            }
+                                                        >
+                                                            <Text
+                                                                style={
+                                                                    styles.liveShareUserListIconPlaceholderText
+                                                                }
+                                                            >
+                                                                {getLiveShareUserInitial(
+                                                                    user,
+                                                                )}
+                                                            </Text>
+                                                        </View>
+                                                    )}
 
-                                                <Text
-                                                    style={
-                                                        styles.liveShareUserEmail
-                                                    }
-                                                >
-                                                    {user.email || "メールなし"}
-                                                </Text>
+                                                    <View
+                                                        style={
+                                                            styles.liveShareUserTextContainer
+                                                        }
+                                                    >
+                                                        <Text
+                                                            style={
+                                                                styles.liveShareUserName
+                                                            }
+                                                        >
+                                                            {user.displayName ||
+                                                                "名前未設定"}
+                                                        </Text>
+
+                                                        <Text
+                                                            style={
+                                                                styles.liveShareUserEmail
+                                                            }
+                                                        >
+                                                            {user.email ||
+                                                                "メールなし"}
+                                                        </Text>
+                                                    </View>
+                                                </View>
                                             </Pressable>
                                         );
                                     })
@@ -2898,6 +2942,12 @@ function formatDateTime(value: string) {
     const mi = String(date.getMinutes()).padStart(2, "0");
 
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+function getLiveShareUserInitial(user: UserProfileItem): string {
+    const source = user.displayName?.trim() || user.email?.trim() || "?";
+
+    return source.slice(0, 1).toUpperCase();
 }
 
 /*
@@ -3611,5 +3661,40 @@ const styles = StyleSheet.create({
         color: "#4b6f8f",
         fontSize: 14,
         fontWeight: "bold",
+    },
+
+    liveShareUserItemContent: {
+        flexDirection: "row",
+        alignItems: "center",
+    },
+
+    liveShareUserListIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        marginRight: 12,
+        backgroundColor: "#e6edf3",
+    },
+
+    liveShareUserListIconPlaceholder: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        marginRight: 12,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#e6edf3",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+    },
+
+    liveShareUserListIconPlaceholderText: {
+        fontSize: 16,
+        fontWeight: "bold",
+        color: "#4b6f8f",
+    },
+
+    liveShareUserTextContainer: {
+        flex: 1,
     },
 });

@@ -88,10 +88,75 @@ export default function ProfileScreen({ navigation }: Props) {
             return;
         }
 
+        if (!profileId) {
+            Alert.alert(
+                "プロフィール未読込",
+                "プロフィール情報を読み込んでから再度お試しください。",
+            );
+            return;
+        }
+
         try {
             setSaving(true);
 
+            let nextIconImagePath: string | null = null;
+
+            /*
+             * 新しい画像が選択されている場合だけ、
+             * S3へアップロードする。
+             */
+            if (selectedIconUri) {
+                setUploadingIcon(true);
+
+                const response = await fetch(selectedIconUri);
+                const blob = await response.blob();
+
+                const uploadResult = await uploadData({
+                    path: ({ identityId }) =>
+                        `profile-icons/${identityId}/profile-icon-${Date.now()}.jpg`,
+                    data: blob,
+                    options: {
+                        contentType: "image/jpeg",
+                    },
+                }).result;
+
+                nextIconImagePath = uploadResult.path;
+            }
+
+            /*
+             * displayNameは既存serviceで更新する。
+             */
             await updateUserProfileDisplayName(trimmedDisplayName);
+
+            /*
+             * 新しいアイコンが選択されていた場合だけ、
+             * 同じUserProfileへiconImagePathを保存する。
+             */
+            if (nextIconImagePath) {
+                const updateResult = await client.models.UserProfile.update({
+                    id: profileId,
+                    iconImagePath: nextIconImagePath,
+                });
+
+                if (updateResult.errors) {
+                    console.error(
+                        "UserProfile icon update errors:",
+                        updateResult.errors,
+                    );
+
+                    throw new Error("アイコン情報を保存できませんでした。");
+                }
+
+                const urlResult = await getUrl({
+                    path: nextIconImagePath,
+                    options: {
+                        expiresIn: 3600,
+                    },
+                });
+
+                setIconImageUrl(urlResult.url.toString());
+                setSelectedIconUri(null);
+            }
 
             setDisplayName(trimmedDisplayName);
 
@@ -99,9 +164,11 @@ export default function ProfileScreen({ navigation }: Props) {
             navigation.goBack();
         } catch (error) {
             console.error("Save profile error:", error);
+
             Alert.alert("保存エラー", "プロフィールの保存に失敗しました。");
         } finally {
             setSaving(false);
+            setUploadingIcon(false);
         }
     };
 
@@ -129,76 +196,6 @@ export default function ProfileScreen({ navigation }: Props) {
         } catch (error) {
             console.error("Pick profile icon error:", error);
             Alert.alert("選択エラー", "画像の選択に失敗しました。");
-        }
-    };
-
-    const saveSelectedProfileIcon = async () => {
-        if (!profileId) {
-            Alert.alert(
-                "プロフィール未読込",
-                "プロフィール情報を読み込んでから再度お試しください。",
-            );
-            return;
-        }
-
-        if (!selectedIconUri) {
-            Alert.alert("画像未選択", "先に画像を選択してください。");
-            return;
-        }
-
-        try {
-            setUploadingIcon(true);
-
-            const response = await fetch(selectedIconUri);
-            const blob = await response.blob();
-
-            const uploadResult = await uploadData({
-                path: ({ identityId }) =>
-                    `profile-icons/${identityId}/profile-icon-${Date.now()}.jpg`,
-                data: blob,
-                options: {
-                    contentType: "image/jpeg",
-                },
-            }).result;
-
-            const nextIconImagePath = uploadResult.path;
-
-            const updateResult = await client.models.UserProfile.update({
-                id: profileId,
-                iconImagePath: nextIconImagePath,
-            });
-
-            if (updateResult.errors) {
-                console.error(
-                    "UserProfile icon update errors:",
-                    updateResult.errors,
-                );
-                Alert.alert(
-                    "保存エラー",
-                    "アイコン情報を保存できませんでした。",
-                );
-                return;
-            }
-
-            const urlResult = await getUrl({
-                path: nextIconImagePath,
-                options: {
-                    expiresIn: 3600,
-                },
-            });
-
-            setIconImageUrl(urlResult.url.toString());
-            setSelectedIconUri(null);
-
-            Alert.alert("保存完了", "プロフィールアイコンを更新しました。");
-        } catch (error) {
-            console.error("Profile icon upload error:", error);
-            Alert.alert(
-                "保存エラー",
-                "プロフィールアイコンの保存に失敗しました。",
-            );
-        } finally {
-            setUploadingIcon(false);
         }
     };
 
@@ -347,35 +344,18 @@ export default function ProfileScreen({ navigation }: Props) {
                         </Pressable>
 
                         {selectedIconUri && (
-                            <>
-                                <Pressable
-                                    style={[
-                                        styles.iconSaveButton,
-                                        isProcessing && styles.disabledButton,
-                                    ]}
-                                    onPress={saveSelectedProfileIcon}
-                                    disabled={isProcessing}
-                                >
-                                    <Text style={styles.iconButtonText}>
-                                        {uploadingIcon
-                                            ? "アップロード中..."
-                                            : "このアイコンを保存"}
-                                    </Text>
-                                </Pressable>
-
-                                <Pressable
-                                    style={[
-                                        styles.iconCancelButton,
-                                        isProcessing && styles.disabledButton,
-                                    ]}
-                                    onPress={() => setSelectedIconUri(null)}
-                                    disabled={isProcessing}
-                                >
-                                    <Text style={styles.iconCancelButtonText}>
-                                        選択を取り消す
-                                    </Text>
-                                </Pressable>
-                            </>
+                            <Pressable
+                                style={[
+                                    styles.iconCancelButton,
+                                    isProcessing && styles.disabledButton,
+                                ]}
+                                onPress={() => setSelectedIconUri(null)}
+                                disabled={isProcessing}
+                            >
+                                <Text style={styles.iconCancelButtonText}>
+                                    選択を取り消す
+                                </Text>
+                            </Pressable>
                         )}
                     </View>
 
@@ -408,7 +388,7 @@ export default function ProfileScreen({ navigation }: Props) {
                         disabled={isProcessing}
                     >
                         <Text style={styles.saveButtonText}>
-                            {saving ? "保存中..." : "保存"}
+                            {saving || uploadingIcon ? "保存中..." : "保存"}
                         </Text>
                     </Pressable>
 
@@ -627,14 +607,6 @@ const styles = StyleSheet.create({
         color: "#fff",
         fontSize: 14,
         fontWeight: "bold",
-    },
-    iconSaveButton: {
-        marginTop: 10,
-        backgroundColor: "#4b6f8f",
-        borderRadius: 8,
-        paddingVertical: 10,
-        paddingHorizontal: 16,
-        alignItems: "center",
     },
     iconCancelButton: {
         marginTop: 8,

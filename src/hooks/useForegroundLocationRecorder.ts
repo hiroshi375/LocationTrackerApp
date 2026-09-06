@@ -18,15 +18,19 @@ import {
     verifyAndRecoverBackgroundLocationRecording,
 } from "../services/backgroundLocationService";
 import {
+    acquireLocationSaveLock,
     createLocationLogId,
+    createLocationSaveLockScopeKey,
     createLocationUniqueKey,
     isDuplicateLocationCreateError,
+    releaseLocationSaveLock,
 } from "../services/locationLogDeduplicationService";
 import {
     confirmRecordingContinuation,
     evaluateRecordingContinuation,
     initializeRecordingContinuationState,
     markRecordingContinuationAutoStopped,
+    pauseRecordingContinuationConfirmation,
     type RecordingContinuationState,
 } from "../services/recordingContinuationService";
 import {
@@ -34,6 +38,16 @@ import {
     isExactDuplicateLocation,
     isNearDuplicateLocation,
 } from "../utils/locationDuplicate";
+import type { SubscriptionTier } from "../config/subscriptionPlan";
+import {
+    clearRecordingPlanLimitState,
+    evaluateRecordingPlanDurationLimit,
+    getRecordingPlanLimitState,
+    initializeRecordingPlanLimitState,
+    releaseRecordingPlanPointReservation,
+    reserveRecordingPlanPoint,
+    type RecordingPlanLimitReason,
+} from "../services/recordingPlanLimitService";
 
 type SavedLocation = {
     latitude: number;
@@ -45,10 +59,20 @@ type RecorderOptions = {
     intervalMs: number;
     distanceMeters: number;
     liveShareOwnerValues?: string[];
+    subscriptionTier: SubscriptionTier;
 };
 
 type StopRecordingOptions = {
     skipFinalLocationSave?: boolean;
+};
+
+export type RecordingPlanLimitAutoStopReason =
+    | "FREE_PLAN_DURATION_LIMIT"
+    | "FREE_PLAN_POINT_LIMIT";
+
+export type RecordingPlanLimitAutoStop = {
+    recordingSessionId: string;
+    reason: RecordingPlanLimitAutoStopReason;
 };
 
 type LiveLocationMutationResult = {
@@ -72,6 +96,7 @@ export function useForegroundLocationRecorder({
     intervalMs,
     distanceMeters,
     liveShareOwnerValues = [],
+    subscriptionTier,
 }: RecorderOptions) {
     const [isRecording, setIsRecording] = useState(false);
     const [recordingStartedAt, setRecordingStartedAt] = useState<string | null>(
@@ -102,6 +127,13 @@ export function useForegroundLocationRecorder({
     const [activeRecordingSessionId, setActiveRecordingSessionId] = useState<
         string | null
     >(null);
+    const [planLimitAutoStop, setPlanLimitAutoStop] =
+        useState<RecordingPlanLimitAutoStop | null>(null);
+
+    const [pendingPlanLimitStop, setPendingPlanLimitStop] = useState<{
+        recordingSessionId: string;
+        reason: RecordingPlanLimitReason;
+    } | null>(null);
 
     const startLocationRef = useRef<{
         latitude: number;
@@ -469,34 +501,220 @@ export function useForegroundLocationRecorder({
 
                 const locationLogId = createLocationLogId(locationUniqueKey);
 
-                const result = await client.models.LocationLog.create({
-                    id: locationLogId,
-
-                    userId: currentUser.userId,
-                    latitude,
-                    longitude,
-                    accuracy,
-                    recordedAt,
-                    memo: "自動記録",
+                /*
+                 * Foreground / Background / SQLite再送の
+                 * LocationLog保存とポイント上限判定を
+                 * 同じセッション単位で排他する。
+                 *
+                 * これにより、999ポイントの状態から
+                 * FGとBGが同時に1000件目を確保することを防ぐ。
+                 */
+                const lockScopeKey = createLocationSaveLockScopeKey(
+                    currentUser.userId,
                     recordingSessionId,
-                    source: "foreground",
+                );
 
-                    sharedOwners,
-                    locationUniqueKey,
+                const lock = await acquireLocationSaveLock(lockScopeKey);
 
-                    batteryLevel: batterySnapshot.batteryLevel ?? undefined,
-                    batteryState: batterySnapshot.batteryState ?? undefined,
-                    lowPowerMode: batterySnapshot.lowPowerMode ?? undefined,
-                });
+                if (!lock) {
+                    console.log(
+                        "[SubscriptionPlanLimit] Skip foreground save because location save lock is busy:",
+                        {
+                            recordingSessionId,
+                            locationLogId,
+                            recordedAt,
+                        },
+                    );
 
-                if (result.errors) {
+                    return;
+                }
+
+                /*
+                 * 今回のLocationLog IDを新しくポイント枠として予約したか。
+                 *
+                 * 明示的なcreate失敗時だけreservationを戻すために保持する。
+                 */
+                let reservationCreated = false;
+
+                /*
+                 * 今回の地点を予約したことで1000ポイントへ到達したか。
+                 *
+                 * trueの場合でも1000件目そのものは保存する。
+                 * 保存成功後に自動停止を要求する。
+                 */
+                let reservationReachedLimit = false;
+
+                try {
+                    const reservation = await reserveRecordingPlanPoint(
+                        recordingSessionId,
+                        locationLogId,
+                        recordedAtMs,
+                    );
+
                     /*
-                     * 同じIDがすでに存在する場合は、
-                     * foreground/background間の重複を正常に防止できたと判断する。
+                     * 2時間上限、または既に1000ポイント到達済みの場合。
+                     *
+                     * この地点はLocationLog.create()へ進めない。
                      */
-                    if (isDuplicateLocationCreateError(result.errors)) {
+                    if (!reservation.allowed) {
                         console.log(
-                            "Skip duplicate foreground LocationLog by deterministic id:",
+                            "[SubscriptionPlanLimit] Foreground save blocked:",
+                            {
+                                recordingSessionId,
+                                locationLogId,
+                                recordedAt,
+                                reason: reservation.reason,
+                                reservedPointCount:
+                                    reservation.state?.reservedLocationLogIds
+                                        .length ?? null,
+                            },
+                        );
+
+                        setPendingPlanLimitStop({
+                            recordingSessionId,
+                            reason: reservation.reason ?? "POINTS",
+                        });
+
+                        return;
+                    }
+
+                    reservationCreated = !reservation.alreadyReserved;
+
+                    reservationReachedLimit =
+                        reservation.reachedByThisReservation;
+
+                    const result = await client.models.LocationLog.create({
+                        id: locationLogId,
+
+                        userId: currentUser.userId,
+                        latitude,
+                        longitude,
+                        accuracy,
+                        recordedAt,
+                        memo: "自動記録",
+                        recordingSessionId,
+                        source: "foreground",
+
+                        sharedOwners,
+                        locationUniqueKey,
+
+                        batteryLevel: batterySnapshot.batteryLevel ?? undefined,
+                        batteryState: batterySnapshot.batteryState ?? undefined,
+                        lowPowerMode: batterySnapshot.lowPowerMode ?? undefined,
+                    });
+
+                    if (result.errors) {
+                        /*
+                         * 同じ決定的IDが既に存在する場合。
+                         *
+                         * Cloud上では既に1ポイントとして存在しているので、
+                         * reservationは解除しない。
+                         */
+                        if (isDuplicateLocationCreateError(result.errors)) {
+                            console.log(
+                                "Skip duplicate foreground LocationLog by deterministic id:",
+                                {
+                                    locationLogId,
+                                    recordingSessionId,
+                                    recordedAt,
+                                    latitude,
+                                    longitude,
+                                },
+                            );
+
+                            /*
+                             * この予約によって1000ポイントへ到達している場合、
+                             * duplicateであってもCloud上には地点が存在するため
+                             * 上限到達として停止する。
+                             */
+                            if (reservationReachedLimit) {
+                                setPendingPlanLimitStop({
+                                    recordingSessionId,
+                                    reason: "POINTS",
+                                });
+                            }
+
+                            return;
+                        }
+
+                        /*
+                         * result.errorsとして明示的にcreate失敗した場合は、
+                         * Cloudへ保存されなかったと判断できるため、
+                         * 今回新規取得したポイント枠を戻す。
+                         */
+                        if (reservationCreated) {
+                            try {
+                                await releaseRecordingPlanPointReservation(
+                                    recordingSessionId,
+                                    locationLogId,
+                                );
+                            } catch (reservationReleaseError) {
+                                console.error(
+                                    "[SubscriptionPlanLimit] Release foreground reservation error:",
+                                    reservationReleaseError,
+                                );
+                            }
+                        }
+
+                        console.error(
+                            "Auto LocationLog create errors:",
+                            result.errors,
+                        );
+
+                        return;
+                    }
+
+                    const nextSavedLocation = {
+                        latitude,
+                        longitude,
+                        recordedAt: recordedAtMs,
+                    };
+
+                    lastSavedLocationRef.current = nextSavedLocation;
+
+                    await updateForegroundLastSavedLocation(nextSavedLocation);
+
+                    console.log("Auto location saved:", {
+                        latitude,
+                        longitude,
+                        recordedAt,
+                    });
+
+                    /*
+                     * 1000件目そのものは保存済み。
+                     *
+                     * この地点の保存によってポイント上限へ到達した場合、
+                     * これ以降のLocationLogを保存させないため、
+                     * 記録停止処理を要求する。
+                     */
+                    if (reservationReachedLimit) {
+                        console.log(
+                            "[SubscriptionPlanLimit] Foreground point limit reached:",
+                            {
+                                recordingSessionId,
+                                locationLogId,
+                                recordedAt,
+                                reason: "POINTS",
+                            },
+                        );
+
+                        setPendingPlanLimitStop({
+                            recordingSessionId,
+                            reason: "POINTS",
+                        });
+                    }
+                } catch (error) {
+                    /*
+                     * throwされた例外の場合、
+                     * 通信結果が不明なケースがあり得る。
+                     *
+                     * 例えばtimeout後にCloud側ではcreate成功している可能性がある。
+                     * ここでreservationを戻すと1001件目を許してしまう可能性があるため、
+                     * reservationは維持する。
+                     */
+                    if (isDuplicateLocationCreateError(error)) {
+                        console.log(
+                            "Skip duplicate foreground LocationLog exception by deterministic id:",
                             {
                                 locationLogId,
                                 recordingSessionId,
@@ -506,32 +724,33 @@ export function useForegroundLocationRecorder({
                             },
                         );
 
+                        if (reservationReachedLimit) {
+                            setPendingPlanLimitStop({
+                                recordingSessionId,
+                                reason: "POINTS",
+                            });
+                        }
+
                         return;
                     }
 
-                    console.error(
-                        "Auto LocationLog create errors:",
-                        result.errors,
-                    );
-
-                    return;
+                    console.error("Auto LocationLog create error:", error);
+                } finally {
+                    /*
+                     * Phase 3用reservationとは別物。
+                     *
+                     * LocationLog保存処理そのものの排他ロックは
+                     * 成功・失敗・returnのどの経路でも必ず解除する。
+                     */
+                    try {
+                        await releaseLocationSaveLock(lock);
+                    } catch (releaseError) {
+                        console.error(
+                            "Release foreground location save lock error:",
+                            releaseError,
+                        );
+                    }
                 }
-
-                const nextSavedLocation = {
-                    latitude,
-                    longitude,
-                    recordedAt: recordedAtMs,
-                };
-
-                lastSavedLocationRef.current = nextSavedLocation;
-
-                await updateForegroundLastSavedLocation(nextSavedLocation);
-
-                console.log("Auto location saved:", {
-                    latitude,
-                    longitude,
-                    recordedAt,
-                });
             } catch (error) {
                 if (isDuplicateLocationCreateError(error)) {
                     console.log(
@@ -760,13 +979,47 @@ export function useForegroundLocationRecorder({
 
             setContinuationPrompt(null);
             setAutoStoppedSessionId(null);
+            setPlanLimitAutoStop(null);
 
             setActiveRecordingSessionId(newSessionId);
             lastSavedLocationRef.current = null;
 
             const startedAt = new Date().toISOString();
 
-            await initializeRecordingContinuationState(newSessionId, startedAt);
+            try {
+                await initializeRecordingContinuationState(
+                    newSessionId,
+                    startedAt,
+                );
+
+                await initializeRecordingPlanLimitState(
+                    newSessionId,
+                    startedAt,
+                    subscriptionTier,
+                );
+            } catch (error) {
+                /*
+                 * Plan Limit stateの初期化途中で失敗した場合でも、
+                 * 部分的にAsyncStorageへ残っている可能性を考慮して削除する。
+                 */
+                try {
+                    await clearRecordingPlanLimitState(newSessionId);
+                } catch (planLimitCleanupError) {
+                    console.error(
+                        "[SubscriptionPlanLimit] Clear plan limit state after initialization failure error:",
+                        planLimitCleanupError,
+                    );
+                }
+
+                resetRecordingState();
+
+                console.error(
+                    "[SubscriptionPlanLimit] Initialize recording state error:",
+                    error,
+                );
+
+                throw error;
+            }
 
             setRecordingStartedAt(startedAt);
 
@@ -777,6 +1030,19 @@ export function useForegroundLocationRecorder({
                     accuracy: Location.Accuracy.Balanced,
                 });
             } catch (error) {
+                /*
+                 * recordingPlanLimitStateはすでに初期化済みなので、
+                 * 記録開始に失敗した場合は残さない。
+                 */
+                try {
+                    await clearRecordingPlanLimitState(newSessionId);
+                } catch (planLimitCleanupError) {
+                    console.error(
+                        "[SubscriptionPlanLimit] Clear plan limit state after current location failure error:",
+                        planLimitCleanupError,
+                    );
+                }
+
                 resetRecordingState();
 
                 console.error("Get current location error:", error);
@@ -785,6 +1051,7 @@ export function useForegroundLocationRecorder({
                     "現在地を取得できませんでした",
                     "位置情報サービスが有効になっているか確認してください。",
                 );
+
                 return;
             }
 
@@ -821,12 +1088,29 @@ export function useForegroundLocationRecorder({
                     },
                 });
             } catch (error) {
+                /*
+                 * Background開始が途中まで成功している可能性があるため、
+                 * まずBackground側を停止する。
+                 */
                 try {
                     await stopBackgroundLocationRecording();
                 } catch (stopError) {
                     console.error(
                         "Stop background after start error:",
                         stopError,
+                    );
+                }
+
+                /*
+                 * startRecording開始時に作成した
+                 * Phase 3のPlan Limit stateも削除する。
+                 */
+                try {
+                    await clearRecordingPlanLimitState(newSessionId);
+                } catch (planLimitCleanupError) {
+                    console.error(
+                        "[SubscriptionPlanLimit] Clear plan limit state after background start failure error:",
+                        planLimitCleanupError,
                     );
                 }
 
@@ -838,10 +1122,6 @@ export function useForegroundLocationRecorder({
                     isBackgroundLocationPermissionError(error);
 
                 if (isExpectedPermissionResult) {
-                    /*
-                     * 想定された権限関連の結果は、
-                     * LocationHomeScreen側へ返す。
-                     */
                     throw error;
                 }
 
@@ -850,10 +1130,6 @@ export function useForegroundLocationRecorder({
                     error,
                 );
 
-                /*
-                 * 画面側でエラーを表示するため、
-                 * このフック内ではAlertを表示しない。
-                 */
                 throw error;
             }
 
@@ -886,6 +1162,7 @@ export function useForegroundLocationRecorder({
         normalizedLiveShareOwnerValues,
         resetRecordingState,
         ensureForegroundRecordingWatcher,
+        subscriptionTier,
     ]);
 
     const locationHealthCheckRunningRef = useRef(false);
@@ -988,6 +1265,56 @@ export function useForegroundLocationRecorder({
                     recordingSessionId,
                     ...result,
                 });
+
+                /*
+                 * SQLite再送によってFreeプラン上限へ到達した場合。
+                 *
+                 * ここではstopRecording()を直接呼ばず、
+                 * 既存のpendingPlanLimitStopへ停止要求を渡す。
+                 */
+                if (result.stopReason === "planLimitReached") {
+                    try {
+                        const planLimitState =
+                            await getRecordingPlanLimitState();
+
+                        const reason: RecordingPlanLimitReason =
+                            planLimitState?.limitReachedReason ?? "POINTS";
+
+                        console.log(
+                            "[SubscriptionPlanLimit] Foreground SQLite drain requested stop:",
+                            {
+                                recordingSessionId,
+                                reason,
+                                reservedPointCount:
+                                    planLimitState?.reservedLocationLogIds
+                                        .length ?? null,
+                            },
+                        );
+
+                        setPendingPlanLimitStop({
+                            recordingSessionId,
+                            reason,
+                        });
+                    } catch (planLimitError) {
+                        /*
+                         * plan state取得に失敗しても、
+                         * stopReason自体がplanLimitReachedなので停止は行う。
+                         *
+                         * reasonを特定できない場合はPOINTSをfallbackとする。
+                         */
+                        console.error(
+                            "[SubscriptionPlanLimit] Read plan limit state after SQLite drain error:",
+                            planLimitError,
+                        );
+
+                        setPendingPlanLimitStop({
+                            recordingSessionId,
+                            reason: "POINTS",
+                        });
+                    }
+
+                    return;
+                }
 
                 const {
                     cleanupProcessedLocationQueue,
@@ -1207,6 +1534,27 @@ export function useForegroundLocationRecorder({
             if (normalizedLiveShareOwnerValues.length === 0) {
                 liveLocationIdRef.current = null;
             }
+
+            /*
+             * Phase 3の記録単位プラン制限stateを、
+             * 停止処理の最後に解除する。
+             *
+             * SQLite pending drainより前に消してしまうと、
+             * 停止時のSQLite再送が
+             * 2時間 / 1000ポイント制限を認識できなくなるため、
+             * 必ずdrain・Background停止・LiveLocation更新の後で実行する。
+             */
+            if (finishedSessionId) {
+                try {
+                    await clearRecordingPlanLimitState(finishedSessionId);
+                } catch (error) {
+                    console.error(
+                        "[SubscriptionPlanLimit] Clear recording plan limit state error:",
+                        error,
+                    );
+                }
+            }
+
             recordingSessionIdRef.current = null;
             recordingUserIdRef.current = null;
             isRecordingRef.current = false;
@@ -1229,6 +1577,193 @@ export function useForegroundLocationRecorder({
         ],
     );
 
+    useEffect(() => {
+        if (!pendingPlanLimitStop) {
+            return;
+        }
+
+        /*
+         * 古いセッションの停止要求なら無視する。
+         */
+        if (
+            recordingSessionIdRef.current !==
+            pendingPlanLimitStop.recordingSessionId
+        ) {
+            setPendingPlanLimitStop(null);
+            return;
+        }
+
+        let cancelled = false;
+
+        const stopByPlanLimit = async (): Promise<void> => {
+            const { recordingSessionId, reason } = pendingPlanLimitStop;
+
+            /*
+             * 同じ停止要求を再処理しないよう先にクリアする。
+             */
+            setPendingPlanLimitStop(null);
+
+            console.log(
+                "[SubscriptionPlanLimit] Stop recording by plan limit:",
+                {
+                    recordingSessionId,
+                    reason,
+                },
+            );
+
+            /*
+             * 上限到達後に最終地点を追加保存すると
+             * 1001件目になる可能性があるため、
+             * final LocationLogは保存しない。
+             */
+            const finishedSessionId = await stopRecording({
+                skipFinalLocationSave: true,
+            });
+
+            if (cancelled) {
+                return;
+            }
+
+            if (!finishedSessionId) {
+                return;
+            }
+
+            const autoStopReason: RecordingPlanLimitAutoStopReason =
+                reason === "DURATION"
+                    ? "FREE_PLAN_DURATION_LIMIT"
+                    : "FREE_PLAN_POINT_LIMIT";
+
+            setPlanLimitAutoStop({
+                recordingSessionId: finishedSessionId,
+                reason: autoStopReason,
+            });
+
+            console.log("[SubscriptionPlanLimit] Recording stopped:", {
+                recordingSessionId: finishedSessionId,
+                reason,
+            });
+        };
+
+        void stopByPlanLimit();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [pendingPlanLimitStop, stopRecording]);
+
+    /*
+     * Phase 3:
+     * 現在の記録セッションがFree/Premiumプランの
+     * 1アクティビティ上限へ到達していないか確認する。
+     *
+     * true:
+     *   上限到達を検知し、停止要求をpendingPlanLimitStopへ渡した。
+     *
+     * false:
+     *   上限未到達、または確認できなかった。
+     */
+    const checkRecordingPlanLimit = useCallback(async (): Promise<boolean> => {
+        const recordingSessionId = recordingSessionIdRef.current;
+
+        if (!recordingSessionId) {
+            return false;
+        }
+
+        /*
+         * React state更新直後などに古いcallbackが動いても、
+         * 記録終了済みなら何もしない。
+         */
+        if (!isRecordingRef.current) {
+            return false;
+        }
+
+        /*
+         * Foreground側から実際の停止処理へつなぐため、
+         * このチェックはForegroundでのみ行う。
+         *
+         * Background中の上限判定そのものは
+         * backgroundLocationTask / SQLite側で行う。
+         */
+        if (AppState.currentState !== "active") {
+            return false;
+        }
+
+        try {
+            /*
+             * LocationLogが1件も保存されていなくても、
+             * 経過時間だけで2時間上限を検知できるようにする。
+             */
+            const durationLimitReason =
+                await evaluateRecordingPlanDurationLimit(
+                    recordingSessionId,
+                    Date.now(),
+                );
+
+            if (durationLimitReason === "DURATION") {
+                console.log(
+                    "[SubscriptionPlanLimit] Foreground duration limit reached:",
+                    {
+                        recordingSessionId,
+                        reason: "DURATION",
+                    },
+                );
+
+                setPendingPlanLimitStop({
+                    recordingSessionId,
+                    reason: "DURATION",
+                });
+
+                return true;
+            }
+
+            /*
+             * Background / SQLite側ですでに上限到達していた場合を確認する。
+             *
+             * Foreground復帰時にはReact側のisRecordingが
+             * trueのまま残っている可能性があるため、
+             * 永続化されたPlan Limit stateを確認する。
+             */
+            const planLimitState = await getRecordingPlanLimitState();
+
+            if (
+                !planLimitState ||
+                planLimitState.recordingSessionId !== recordingSessionId
+            ) {
+                return false;
+            }
+
+            const limitReachedReason = planLimitState.limitReachedReason;
+
+            if (!limitReachedReason) {
+                return false;
+            }
+
+            console.log(
+                "[SubscriptionPlanLimit] Persisted plan limit reached:",
+                {
+                    recordingSessionId,
+                    reason: limitReachedReason,
+                    reservedPointCount:
+                        planLimitState.reservedLocationLogIds.length,
+                },
+            );
+
+            setPendingPlanLimitStop({
+                recordingSessionId,
+                reason: limitReachedReason,
+            });
+
+            return true;
+        } catch (error) {
+            console.error(
+                "[SubscriptionPlanLimit] Check recording plan limit error:",
+                error,
+            );
+
+            return false;
+        }
+    }, []);
+
     // ここに追加
     const checkRecordingContinuation = useCallback(async (): Promise<void> => {
         const recordingSessionId = recordingSessionIdRef.current;
@@ -1237,14 +1772,25 @@ export function useForegroundLocationRecorder({
             return;
         }
 
+        /*
+         * 継続確認の3分タイムアウトは、
+         * ユーザーが確認UIを見られるforegroundでのみ開始する。
+         */
+        if (AppState.currentState !== "active") {
+            return;
+        }
+
         try {
-            const evaluation =
-                await evaluateRecordingContinuation(recordingSessionId);
+            const evaluation = await evaluateRecordingContinuation(
+                recordingSessionId,
+                Date.now(),
+                {
+                    startConfirmationTimeout: true,
+                },
+            );
 
             /*
              * 期限切れを先に判定する。
-             * shouldShowConfirmationもtrueになる可能性があるため、
-             * ダイアログ表示より前に処理する。
              */
             if (evaluation.isDeadlineExpired) {
                 const stoppedAt = new Date().toISOString();
@@ -1275,10 +1821,6 @@ export function useForegroundLocationRecorder({
 
             setContinuationPrompt(null);
         } catch (error) {
-            /*
-             * 継続確認処理でエラーが発生しても、
-             * 位置情報の記録は停止しない。
-             */
             console.error("Check recording continuation error:", error);
         }
     }, [stopRecording]);
@@ -1304,6 +1846,10 @@ export function useForegroundLocationRecorder({
          * 自動停止通知の表示状態だけをクリアする。
          */
         setAutoStoppedSessionId(null);
+    }, []);
+
+    const clearPlanLimitAutoStop = useCallback(async (): Promise<void> => {
+        setPlanLimitAutoStop(null);
     }, []);
 
     useEffect(() => {
@@ -1390,6 +1936,36 @@ export function useForegroundLocationRecorder({
 
                 appStateRef.current = nextState;
 
+                /*
+                 * ForegroundからBackgroundへ移行した場合。
+                 *
+                 * 継続確認の3分タイムアウトは、
+                 * ユーザーがダイアログを確認できないBackground中には
+                 * 進めない。
+                 *
+                 * そのため、Foregroundを離れた時点で
+                 * confirmation期限を解除する。
+                 */
+                const leftForeground =
+                    previousState === "active" && nextState !== "active";
+
+                if (leftForeground) {
+                    const recordingSessionId = recordingSessionIdRef.current;
+
+                    if (recordingSessionId) {
+                        void pauseRecordingContinuationConfirmation(
+                            recordingSessionId,
+                        );
+
+                        setContinuationPrompt(null);
+                    }
+
+                    return;
+                }
+
+                /*
+                 * Background等からForegroundへ戻った場合。
+                 */
                 const returnedToForeground =
                     previousState !== "active" && nextState === "active";
 
@@ -1402,27 +1978,54 @@ export function useForegroundLocationRecorder({
                 }
 
                 /*
-                 * まず位置取得系をhealth checkする。
+                 * Foregroundへ戻った時点で、
+                 * Free/Premiumプランの記録上限を最優先で確認する。
                  *
-                 * BG heartbeatがstaleならBG taskを再登録し、
-                 * FG watcherも再登録する。
-                 *
-                 * heartbeat正常でもforeground復帰時には
-                 * FG watcherだけ再登録する。
+                 * Background中に2時間 / 1000ポイント上限へ
+                 * 到達していた場合は、
+                 * 通常のhealth checkや継続確認より先に停止要求へ進める。
                  */
-                void verifyAndRecoverLocationRecording("returnedToForeground");
+                void (async () => {
+                    const planLimitReached = await checkRecordingPlanLimit();
 
-                /*
-                 * SQLite pending回収は従来通り維持。
-                 */
-                void drainSQLiteQueueOnForeground();
+                    if (planLimitReached) {
+                        return;
+                    }
+
+                    /*
+                     * プラン上限未到達の場合のみ、
+                     * 従来の位置取得health checkを実行する。
+                     */
+                    void verifyAndRecoverLocationRecording(
+                        "returnedToForeground",
+                    );
+
+                    /*
+                     * SQLite pending回収を実行する。
+                     *
+                     * SQLite再送中に上限へ到達した場合は、
+                     * drainSQLiteQueueOnForeground()自身が
+                     * pendingPlanLimitStopを設定する。
+                     */
+                    void drainSQLiteQueueOnForeground();
+
+                    /*
+                     * 1時間継続確認はPlan上限より後に評価する。
+                     */
+                    void checkRecordingContinuation();
+                })();
             },
         );
 
         return () => {
             subscription.remove();
         };
-    }, [drainSQLiteQueueOnForeground, verifyAndRecoverLocationRecording]);
+    }, [
+        drainSQLiteQueueOnForeground,
+        verifyAndRecoverLocationRecording,
+        checkRecordingContinuation,
+        checkRecordingPlanLimit,
+    ]);
 
     useEffect(() => {
         if (!isRecording) {
@@ -1481,22 +2084,46 @@ export function useForegroundLocationRecorder({
         }
 
         /*
-         * 記録開始・復元直後にも一度確認する。
+         * Plan Limitを先に確認し、
+         * 上限未到達の場合だけ1時間継続確認へ進む。
+         *
+         * この順序にすることで、
+         * Freeプランの2時間 / 1000ポイント制限を
+         * 継続確認より優先する。
          */
-        void checkRecordingContinuation();
+        const runRecordingLimitChecks = async (): Promise<void> => {
+            if (AppState.currentState !== "active") {
+                return;
+            }
+
+            const planLimitReached = await checkRecordingPlanLimit();
+
+            if (planLimitReached) {
+                return;
+            }
+
+            await checkRecordingContinuation();
+        };
 
         /*
-         * アプリがforegroundで動作している間だけ、
-         * 30秒ごとに継続確認条件と期限切れを確認する。
+         * 記録開始・復元直後にも一度確認する。
+         */
+        void runRecordingLimitChecks();
+
+        /*
+         * Foreground中は30秒ごとに確認する。
+         *
+         * LocationLogが保存されていなくても、
+         * このタイマーによって2時間上限を検知できる。
          */
         const timerId = setInterval(() => {
-            void checkRecordingContinuation();
+            void runRecordingLimitChecks();
         }, 30_000);
 
         return () => {
             clearInterval(timerId);
         };
-    }, [isRecording, checkRecordingContinuation]);
+    }, [isRecording, checkRecordingPlanLimit, checkRecordingContinuation]);
 
     useEffect(() => {
         if (!isRecording) {
@@ -1534,11 +2161,17 @@ export function useForegroundLocationRecorder({
         continuationPrompt,
         autoStoppedSessionId,
 
+        /*
+         * Freeプラン上限による自動停止情報。
+         */
+        planLimitAutoStop,
+
         startRecording,
         stopRecording,
 
         confirmContinuation,
         clearAutoStoppedSession,
+        clearPlanLimitAutoStop,
     };
 }
 

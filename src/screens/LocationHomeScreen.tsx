@@ -579,14 +579,21 @@ export default function LocationHomeScreen({ navigation }: Props) {
         activeRecordingSessionId,
         continuationPrompt,
         autoStoppedSessionId,
+
+        planLimitAutoStop,
+
         startRecording,
         stopRecording,
         confirmContinuation,
         clearAutoStoppedSession,
+        clearPlanLimitAutoStop,
     } = useForegroundLocationRecorder({
         intervalMs: recordIntervalMs,
         distanceMeters: recordDistanceMeters,
         liveShareOwnerValues,
+
+        // 現在のコードで既に指定している場合はそのまま維持
+        subscriptionTier,
     });
 
     const recordingBlinkAnim = useRef(new Animated.Value(1)).current;
@@ -614,6 +621,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
     );
     const continuationAlertKeyRef = useRef<string | null>(null);
     const handledAutoStoppedSessionIdRef = useRef<string | null>(null);
+    const handledPlanLimitAutoStopKeyRef = useRef<string | null>(null);
     /*
      * Foreground高速queue回収の多重実行を防止する。
      */
@@ -1821,6 +1829,114 @@ export default function LocationHomeScreen({ navigation }: Props) {
     }, [
         autoStoppedSessionId,
         clearAutoStoppedSession,
+        recordDistanceMeters,
+        recordIntervalMs,
+        selectedLiveShareUsers,
+    ]);
+
+    useEffect(() => {
+        if (!planLimitAutoStop) {
+            handledPlanLimitAutoStopKeyRef.current = null;
+            return;
+        }
+
+        const autoStopKey = `${planLimitAutoStop.recordingSessionId}:${planLimitAutoStop.reason}`;
+
+        /*
+         * Reactの再レンダー等で同じ通知を
+         * 複数回処理しない。
+         */
+        if (handledPlanLimitAutoStopKeyRef.current === autoStopKey) {
+            return;
+        }
+
+        handledPlanLimitAutoStopKeyRef.current = autoStopKey;
+
+        const finalizePlanLimitAutoStoppedSession = async (): Promise<void> => {
+            const { recordingSessionId, reason } = planLimitAutoStop;
+
+            const stoppedShareOwnerValues = selectedLiveShareUsers
+                .map((user) => user.ownerValue)
+                .filter((ownerValue): ownerValue is string => !!ownerValue);
+
+            const autoStoppedAt = new Date().toISOString();
+
+            /*
+             * RecordingSessionへ
+             * Plan上限による停止理由を保存する。
+             */
+            try {
+                await upsertRecordingSessionSummary(
+                    recordingSessionId,
+                    null,
+                    stoppedShareOwnerValues,
+                    recordIntervalMs,
+                    recordDistanceMeters,
+                    {
+                        autoStoppedAt,
+                        autoStopReason: reason,
+                    },
+                );
+            } catch (error) {
+                console.error(
+                    "[SubscriptionPlanLimit] Finalize plan-limit auto-stopped RecordingSession error:",
+                    error,
+                );
+
+                /*
+                 * DB更新に失敗しても、
+                 * セッション名入力と停止通知は行う。
+                 */
+            }
+
+            /*
+             * 通常停止や継続確認タイムアウトと同じように、
+             * 停止したアクティビティの名称を入力できるようにする。
+             */
+            setPendingSessionId(recordingSessionId);
+            setPendingSessionShareOwnerValues(stoppedShareOwnerValues);
+            setPendingRecordingIntervalMs(recordIntervalMs);
+            setPendingRecordingDistanceMeters(recordDistanceMeters);
+            setSessionNameInput("");
+            setSessionNameModalVisible(true);
+
+            const isSharing = selectedLiveShareUsers.length > 0;
+
+            if (reason === "FREE_PLAN_DURATION_LIMIT") {
+                setLiveShareStatusMessage(
+                    isSharing
+                        ? "無料プランの1アクティビティあたり2時間の上限に達したため、自動記録を停止しました。現在地共有は継続中です。"
+                        : "無料プランの1アクティビティあたり2時間の上限に達したため、自動記録を停止しました。",
+                );
+
+                Alert.alert(
+                    "自動記録を停止しました",
+                    "無料プランの1アクティビティあたり2時間の上限に達したため、自動記録を停止しました。",
+                );
+            } else {
+                setLiveShareStatusMessage(
+                    isSharing
+                        ? "無料プランの1アクティビティあたり1,000ポイントの上限に達したため、自動記録を停止しました。現在地共有は継続中です。"
+                        : "無料プランの1アクティビティあたり1,000ポイントの上限に達したため、自動記録を停止しました。",
+                );
+
+                Alert.alert(
+                    "自動記録を停止しました",
+                    "無料プランの1アクティビティあたり1,000ポイントの上限に達したため、自動記録を停止しました。",
+                );
+            }
+
+            /*
+             * Home側で通知処理済みなので、
+             * Hook側の一時通知stateを解除する。
+             */
+            await clearPlanLimitAutoStop();
+        };
+
+        void finalizePlanLimitAutoStoppedSession();
+    }, [
+        planLimitAutoStop,
+        clearPlanLimitAutoStop,
         recordDistanceMeters,
         recordIntervalMs,
         selectedLiveShareUsers,

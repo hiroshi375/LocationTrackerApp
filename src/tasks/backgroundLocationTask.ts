@@ -26,6 +26,11 @@ import {
 } from "../services/locationLogDeduplicationService";
 import { incrementRecordingContinuationPointCount } from "../services/recordingContinuationService";
 import {
+    evaluateRecordingPlanDurationLimit,
+    releaseRecordingPlanPointReservation,
+    reserveRecordingPlanPoint,
+} from "../services/recordingPlanLimitService";
+import {
     calculateDistanceMeters,
     calculateSpeedMetersPerSecond,
     isAbnormalSpeedLocation,
@@ -134,7 +139,8 @@ type BackgroundLocationSkipReason =
     | "inProgressDuplicate"
     | "exactDuplicate"
     | "nearDuplicate"
-    | "saveConditionNotMet";
+    | "saveConditionNotMet"
+    | "planLimitReached";
 
 type SaveBackgroundLocationResult = {
     saved: boolean;
@@ -1209,6 +1215,15 @@ TaskManager.defineTask(
                             saveConditionSkippedCount += 1;
                             break;
 
+                        case "planLimitReached":
+                            /*
+                             * Freeプラン上限による停止。
+                             *
+                             * 既存のskip集計には専用フィールドがないため、
+                             * ここではsaveConditionSkippedCount等へ混ぜない。
+                             */
+                            break;
+
                         case undefined:
                             break;
 
@@ -1223,6 +1238,24 @@ TaskManager.defineTask(
                     }
 
                     currentState = result.nextState;
+
+                    /*
+                     * Freeプラン上限によって記録終了状態になった場合は、
+                     * 同じOSバッチ内の後続地点を処理しない。
+                     *
+                     * 1000件目保存後に1001件目へ進まないための防御。
+                     */
+                    if (!currentState.isRecording) {
+                        console.log(
+                            "[SubscriptionPlanLimit] Stop processing remaining background locations:",
+                            {
+                                recordingSessionId:
+                                    currentState.recordingSessionId ?? null,
+                            },
+                        );
+
+                        break;
+                    }
                 }
             }
 
@@ -1284,6 +1317,7 @@ TaskManager.defineTask(
             const shouldDrainSQLiteQueue =
                 ENABLE_LOCATION_SQLITE_QUEUE_UPLOAD &&
                 Boolean(activeRecordingSessionId) &&
+                currentState.isRecording &&
                 nowMs - lastBackgroundQueueDrainAtMs >=
                     BACKGROUND_QUEUE_DRAIN_INTERVAL_MS;
 
@@ -2102,6 +2136,53 @@ async function saveBackgroundLocation(
         };
     }
 
+    /*
+     * Freeプランの1アクティビティ最大時間を確認する。
+     *
+     * accuracyや保存間隔の判定より前に実行することで、
+     * 「移動していないためLocationLog保存条件を満たさない」
+     * 場合でも2時間到達を検知できるようにする。
+     */
+    const durationLimitReason = await evaluateRecordingPlanDurationLimit(
+        recordingSessionId,
+        recordedAtMs,
+    );
+
+    if (durationLimitReason === "DURATION") {
+        const stoppedState: BackgroundRecordingState = {
+            ...state,
+            isRecording: false,
+        };
+
+        await setBackgroundRecordingState(stoppedState);
+
+        console.log(
+            "[SubscriptionPlanLimit] Background duration limit reached:",
+            {
+                recordingSessionId,
+                recordedAt,
+                reason: "DURATION",
+            },
+        );
+
+        await safeSaveBackgroundLocationDebugLog({
+            userId: state.userId,
+            recordingSessionId,
+            eventName: "backgroundRecordingPlanLimitReached",
+            taskFiredAt,
+            details: {
+                reason: "DURATION",
+                recordedAt,
+            },
+        });
+
+        return {
+            saved: false,
+            nextState: stoppedState,
+            skippedReason: "planLimitReached",
+        };
+    }
+
     if (isLowAccuracyLocation(accuracy)) {
         return {
             saved: false,
@@ -2141,11 +2222,13 @@ async function saveBackgroundLocation(
         };
     }
 
+    /*
+     * catch側でもPhase 3の予約結果を参照できるようにする。
+     */
+    let planLimitReservationReached = false;
+    let planLimitLocationLogId: string | null = null;
+
     try {
-        /*
-         * ロック取得後にAsyncStorageを再読込する。
-         * foreground側が直前に保存したlastSavedLocationもここで反映する。
-         */
         const latestState = await getBackgroundRecordingState();
 
         if (
@@ -2297,7 +2380,68 @@ async function saveBackgroundLocation(
             accuracy,
         });
         const locationLogId = createLocationLogId(locationUniqueKey);
+        planLimitLocationLogId = locationLogId;
+        /*
+         * Freeプランのポイント上限を予約する。
+         *
+         * この処理はLocationSaveLock取得後に実行しているため、
+         * Foreground / Backgroundが同時に1000件目を
+         * 取得することを防止できる。
+         */
+        const reservation = await reserveRecordingPlanPoint(
+            recordingSessionId,
+            locationLogId,
+            recordedAtMs,
+        );
 
+        if (!reservation.allowed) {
+            const stoppedState: BackgroundRecordingState = {
+                ...latestState,
+                isRecording: false,
+            };
+
+            await setBackgroundRecordingState(stoppedState);
+
+            console.log(
+                "[SubscriptionPlanLimit] Background point save blocked:",
+                {
+                    recordingSessionId,
+                    locationLogId,
+                    recordedAt,
+                    reason: reservation.reason,
+                    reservedPointCount:
+                        reservation.state?.reservedLocationLogIds.length ??
+                        null,
+                },
+            );
+
+            await safeSaveBackgroundLocationDebugLog({
+                userId: latestState.userId,
+                recordingSessionId,
+                eventName: "backgroundRecordingPlanLimitReached",
+                taskFiredAt,
+                details: {
+                    reason: reservation.reason ?? "POINTS",
+                    locationLogId,
+                    recordedAt,
+                    reservedPointCount:
+                        reservation.state?.reservedLocationLogIds.length ??
+                        null,
+                },
+            });
+
+            return {
+                saved: false,
+                nextState: stoppedState,
+                skippedReason: "planLimitReached",
+            };
+        }
+
+        const reservationCreated = !reservation.alreadyReserved;
+
+        const reservationReachedLimit = reservation.reachedByThisReservation;
+
+        planLimitReservationReached = reservationReachedLimit;
         /*
          * create前のLocationLog.getは実行しない。
          *
@@ -2360,11 +2504,61 @@ async function saveBackgroundLocation(
              * 重複扱いにせず、従来どおり保存失敗として記録する。
              */
             if (isDuplicateLocationCreateError(result.errors)) {
+                /*
+                 * Cloud上にはすでにこのLocationLogが存在するので、
+                 * reservationは解除しない。
+                 *
+                 * 今回の予約によって1000件へ到達していた場合は、
+                 * duplicateでもFree上限到達として記録を終了する。
+                 */
+                if (reservationReachedLimit) {
+                    const stoppedState: BackgroundRecordingState = {
+                        ...latestState,
+                        isRecording: false,
+                    };
+
+                    await setBackgroundRecordingState(stoppedState);
+
+                    console.log(
+                        "[SubscriptionPlanLimit] Background point limit reached by duplicate:",
+                        {
+                            recordingSessionId,
+                            locationLogId,
+                            recordedAt,
+                        },
+                    );
+
+                    return {
+                        saved: false,
+                        nextState: stoppedState,
+                        skippedReason: "exactDuplicate",
+                    };
+                }
+
                 return {
                     saved: false,
                     nextState: latestState,
                     skippedReason: "exactDuplicate",
                 };
+            }
+
+            /*
+             * result.errorsとして明示的にcreate失敗した場合は、
+             * Cloudへ保存されなかったと判断できるため
+             * 今回新しく確保したreservationを戻す。
+             */
+            if (reservationCreated) {
+                try {
+                    await releaseRecordingPlanPointReservation(
+                        recordingSessionId,
+                        locationLogId,
+                    );
+                } catch (reservationReleaseError) {
+                    console.error(
+                        "[SubscriptionPlanLimit] Release background reservation error:",
+                        reservationReleaseError,
+                    );
+                }
             }
 
             const errorMessage = getErrorMessage(result.errors);
@@ -2400,6 +2594,18 @@ async function saveBackgroundLocation(
 
         const nextState: BackgroundRecordingState = {
             ...latestState,
+
+            /*
+             * 1000件目そのものは保存する。
+             * その保存成功後は自動記録を終了状態にする。
+             *
+             * liveShareOwnerValuesやliveLocationIdは維持するため、
+             * 現在地共有は継続できる。
+             */
+            isRecording: reservationReachedLimit
+                ? false
+                : latestState.isRecording,
+
             lastSavedLocation: {
                 latitude,
                 longitude,
@@ -2414,6 +2620,32 @@ async function saveBackgroundLocation(
 
         try {
             await setBackgroundRecordingState(nextState);
+            if (reservationReachedLimit) {
+                console.log(
+                    "[SubscriptionPlanLimit] Background point limit reached:",
+                    {
+                        recordingSessionId,
+                        locationLogId,
+                        recordedAt,
+                        reason: "POINTS",
+                    },
+                );
+
+                await safeSaveBackgroundLocationDebugLog({
+                    userId: latestState.userId,
+                    recordingSessionId,
+                    eventName: "backgroundRecordingPlanLimitReached",
+                    taskFiredAt,
+                    details: {
+                        reason: "POINTS",
+                        locationLogId,
+                        recordedAt,
+                        reservedPointCount:
+                            reservation.state?.reservedLocationLogIds.length ??
+                            null,
+                    },
+                });
+            }
         } finally {
             const durationMs = Date.now() - stateUpdateStartedAtMs;
 
@@ -2430,7 +2662,13 @@ async function saveBackgroundLocation(
         const continuationUpdateStartedAtMs = Date.now();
 
         try {
-            await incrementRecordingContinuationPointCount(recordingSessionId);
+            await incrementRecordingContinuationPointCount(
+                recordingSessionId,
+                Date.now(),
+                {
+                    startConfirmationTimeout: false,
+                },
+            );
         } finally {
             const durationMs = Date.now() - continuationUpdateStartedAtMs;
 
@@ -2526,11 +2764,46 @@ async function saveBackgroundLocation(
                 "Skip duplicate background LocationLog exception by deterministic id:",
                 {
                     recordingSessionId,
+                    locationLogId: planLimitLocationLogId,
                     recordedAt,
                     latitude,
                     longitude,
                 },
             );
+
+            /*
+             * 1000件目としてreservation済みで、
+             * createがduplicateをthrowした場合。
+             *
+             * Cloudには既に同じLocationLogが存在するため、
+             * reservationは維持し、記録を終了状態にする。
+             */
+            if (planLimitReservationReached) {
+                const latestState = await getBackgroundRecordingState();
+
+                const stoppedState: BackgroundRecordingState = {
+                    ...(latestState ?? state),
+                    isRecording: false,
+                };
+
+                await setBackgroundRecordingState(stoppedState);
+
+                console.log(
+                    "[SubscriptionPlanLimit] Background point limit reached by duplicate exception:",
+                    {
+                        recordingSessionId,
+                        locationLogId: planLimitLocationLogId,
+                        recordedAt,
+                        reason: "POINTS",
+                    },
+                );
+
+                return {
+                    saved: false,
+                    nextState: stoppedState,
+                    skippedReason: "exactDuplicate",
+                };
+            }
 
             return {
                 saved: false,

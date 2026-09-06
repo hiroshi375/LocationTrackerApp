@@ -25,10 +25,19 @@ import {
     type PendingLocationQueueRow,
 } from "./locationLocationQueueService";
 import {
+    acquireLocationSaveLock,
     createLocationLogId,
+    createLocationSaveLockScopeKey,
     isDuplicateLocationCreateError,
+    releaseLocationSaveLock,
 } from "./locationLogDeduplicationService";
+
 import { incrementRecordingContinuationPointCount } from "./recordingContinuationService";
+
+import {
+    releaseRecordingPlanPointReservation,
+    reserveRecordingPlanPoint,
+} from "./recordingPlanLimitService";
 
 type DrainLocationQueueInput = {
     userId: string;
@@ -61,7 +70,9 @@ export type DrainLocationQueueResult = {
         | "alreadyRunning"
         | "timeBudgetExceeded"
         | "createTimedOut"
-        | "createFailed";
+        | "createFailed"
+        | "locationSaveLockBusy"
+        | "planLimitReached";
 };
 
 export type DrainLocationQueueRepeatedResult = {
@@ -80,6 +91,8 @@ export type DrainLocationQueueRepeatedResult = {
         | "timeBudgetExceeded"
         | "createTimedOut"
         | "createFailed"
+        | "locationSaveLockBusy"
+        | "planLimitReached"
         | "maxIterationsReached";
 };
 
@@ -219,6 +232,13 @@ export async function drainLocationQueueRepeatedly(
     let skippedCount = 0;
     let failedCount = 0;
     let timedOutCount = 0;
+    /*
+     * どこかのiterationでFreeプラン上限へ到達したか。
+     *
+     * 上限到達後も残っているSQLite pendingを
+     * planLimitReachedとして処理し切るために保持する。
+     */
+    let sawPlanLimitReached = false;
 
     let stopReason: DrainLocationQueueRepeatedResult["stopReason"] =
         "completed";
@@ -237,7 +257,8 @@ export async function drainLocationQueueRepeatedly(
         timedOutCount += result.timedOutCount;
 
         if (result.stopReason === "empty") {
-            stopReason = "empty";
+            stopReason = sawPlanLimitReached ? "planLimitReached" : "empty";
+
             break;
         }
 
@@ -247,6 +268,51 @@ export async function drainLocationQueueRepeatedly(
         ) {
             stopReason = result.stopReason;
             break;
+        }
+
+        /*
+         * FG/BGのLocationLog保存とロックが競合した場合。
+         *
+         * SQLite rowはpendingのままなので、
+         * 少し待って次iterationで再試行する。
+         */
+        if (result.stopReason === "locationSaveLockBusy") {
+            stopReason = "locationSaveLockBusy";
+
+            if (index === maxIterations - 1) {
+                break;
+            }
+
+            await delay(100);
+            continue;
+        }
+
+        /*
+         * Freeプラン上限へ到達した場合。
+         *
+         * Cloudへのcreateはこれ以上行わないが、
+         * SQLite内に残っている上限超過rowを
+         * skippedへ移すため、pendingが残る可能性がある間は
+         * 次iterationへ進む。
+         */
+        if (result.stopReason === "planLimitReached") {
+            sawPlanLimitReached = true;
+            stopReason = "planLimitReached";
+
+            /*
+             * 今回取得した件数がmaxItems未満なら、
+             * 現在対象となるpendingは処理し切ったと判断する。
+             */
+            if (result.pendingCount < maxItems) {
+                break;
+            }
+
+            if (index === maxIterations - 1) {
+                break;
+            }
+
+            await delay(100);
+            continue;
         }
 
         /*
@@ -347,6 +413,13 @@ async function drainLocationQueue(
     let skippedCount = 0;
     let failedCount = 0;
     let timedOutCount = 0;
+    /*
+     * このdrain中にFreeプラン上限へ到達したか。
+     *
+     * 1000件目そのものは保存し、
+     * それ以降のSQLite rowはCloudへ送らずskippedにする。
+     */
+    let planLimitReached = false;
 
     let stopReason: DrainLocationQueueResult["stopReason"] = "completed";
 
@@ -413,10 +486,144 @@ async function drainLocationQueue(
             input.fallbackSharedOwners,
         );
 
+        /*
+         * SQLite rowでもForeground / Backgroundと同じ
+         * deterministic LocationLog IDを使用する。
+         */
+        const locationLogId =
+            row.location_log_id || createLocationLogId(row.location_unique_key);
+
+        /*
+         * Foreground / Background / SQLite queueの
+         * ポイント予約とLocationLog.createを
+         * 同じセッション単位のロックで排他する。
+         */
+        const lockScopeKey = createLocationSaveLockScopeKey(
+            row.user_id,
+            row.recording_session_id,
+        );
+
+        const lock = await acquireLocationSaveLock(lockScopeKey);
+
+        if (!lock) {
+            console.log(
+                "[SubscriptionPlanLimit] SQLite queue location save lock busy:",
+                {
+                    recordingSessionId: row.recording_session_id,
+                    locationLogId,
+                    recordedAt: row.recorded_at,
+                },
+            );
+
+            /*
+             * rowはpendingのまま残す。
+             * 次iteration / 次callbackで再試行する。
+             */
+            stopReason = "locationSaveLockBusy";
+            break;
+        }
+
+        let reservationCreated = false;
+        let reservationReachedLimit = false;
+
         try {
+            /*
+             * LocationLog.createより先にポイント枠を確保する。
+             *
+             * reserveRecordingPlanPoint()内では、
+             * ・Free 2時間制限
+             * ・Free 1000ポイント制限
+             * の両方が評価される。
+             *
+             * recorded_at_msを渡すことで、
+             * SQLiteへの保存時刻ではなく
+             * 実際の位置取得時刻を基準に2時間制限を判定する。
+             */
+            const reservation = await reserveRecordingPlanPoint(
+                row.recording_session_id,
+                locationLogId,
+                row.recorded_at_ms,
+            );
+
+            if (!reservation.allowed) {
+                /*
+                 * 上限を超えたSQLite rowは、
+                 * 後日plan stateが消えた後に再送されないよう
+                 * pendingのまま残さずskippedへ移す。
+                 */
+                await markLocationQueueRowSkipped(
+                    row.location_log_id,
+                    `subscriptionPlanLimitReached:${reservation.reason ?? "POINTS"}`,
+                );
+
+                skippedCount += 1;
+                planLimitReached = true;
+
+                console.log(
+                    "[SubscriptionPlanLimit] SQLite queue save blocked:",
+                    {
+                        recordingSessionId: row.recording_session_id,
+                        locationLogId,
+                        recordedAt: row.recorded_at,
+                        reason: reservation.reason ?? "POINTS",
+                        reservedPointCount:
+                            reservation.state?.reservedLocationLogIds.length ??
+                            null,
+                    },
+                );
+
+                /*
+                 * continueして同じbatch内の後続rowも処理する。
+                 *
+                 * reservation側がlimitReached状態なので、
+                 * 後続rowがCloudへcreateされることはない。
+                 */
+                continue;
+            }
+
+            reservationCreated = !reservation.alreadyReserved;
+
+            reservationReachedLimit = reservation.reachedByThisReservation;
+
+            /*
+             * 今回のreservationで1000ポイントへ到達した場合でも、
+             * 1000件目そのものは保存する。
+             */
+            if (reservationReachedLimit) {
+                planLimitReached = true;
+            }
+
             const remainingBudgetMs = deadlineAtMs - Date.now();
 
             if (remainingBudgetMs <= SQLITE_QUEUE_MIN_CREATE_TIMEOUT_MS) {
+                /*
+                 * createを開始していないので、
+                 * 今回新規に確保したreservationは戻してよい。
+                 */
+                if (reservationCreated) {
+                    try {
+                        await releaseRecordingPlanPointReservation(
+                            row.recording_session_id,
+                            locationLogId,
+                        );
+
+                        /*
+                         * 今回のreservationで上限へ到達していたが、
+                         * create開始前にreservationを戻した場合は、
+                         * 実際にはまだ上限へ到達していない。
+                         */
+                        if (reservationReachedLimit) {
+                            planLimitReached = false;
+                            reservationReachedLimit = false;
+                        }
+                    } catch (reservationReleaseError) {
+                        console.error(
+                            "[SubscriptionPlanLimit] Release SQLite reservation before create error:",
+                            reservationReleaseError,
+                        );
+                    }
+                }
+
                 stopReason = "timeBudgetExceeded";
                 break;
             }
@@ -428,9 +635,7 @@ async function drainLocationQueue(
 
             const createResult = await createLocationLogWithAuthRetry(
                 {
-                    id:
-                        row.location_log_id ||
-                        createLocationLogId(row.location_unique_key),
+                    id: locationLogId,
                     userId: row.user_id,
                     latitude: row.latitude,
                     longitude: row.longitude,
@@ -447,13 +652,66 @@ async function drainLocationQueue(
             );
 
             if (createResult.errors) {
+                /*
+                 * deterministic IDが既にCloudに存在する場合。
+                 *
+                 * Cloud上には既に1ポイント存在するため、
+                 * reservationは解除しない。
+                 */
                 if (isDuplicateLocationCreateError(createResult.errors)) {
                     await markLocationQueueRowDuplicate(row.location_log_id);
 
                     duplicateCount += 1;
-
                     lastAcceptedLocation = toAcceptedLocation(row);
+
+                    /*
+                     * このreservationで1000件へ到達した場合も、
+                     * duplicateでCloud上にポイントが存在するため
+                     * 上限到達状態を維持する。
+                     */
+                    if (reservationReachedLimit) {
+                        planLimitReached = true;
+
+                        console.log(
+                            "[SubscriptionPlanLimit] SQLite queue point limit reached by duplicate:",
+                            {
+                                recordingSessionId: row.recording_session_id,
+                                locationLogId,
+                                recordedAt: row.recorded_at,
+                            },
+                        );
+                    }
+
                     continue;
+                }
+
+                /*
+                 * result.errorsとして明示的にcreate失敗した場合は、
+                 * Cloudへ保存されなかったことが確定しているので
+                 * 今回新規確保したreservationを戻す。
+                 */
+                if (reservationCreated) {
+                    try {
+                        await releaseRecordingPlanPointReservation(
+                            row.recording_session_id,
+                            locationLogId,
+                        );
+
+                        /*
+                         * createが明示的に失敗し、
+                         * reservationも正常に解除できたので、
+                         * 今回の地点による上限到達は取り消す。
+                         */
+                        if (reservationReachedLimit) {
+                            planLimitReached = false;
+                            reservationReachedLimit = false;
+                        }
+                    } catch (reservationReleaseError) {
+                        console.error(
+                            "[SubscriptionPlanLimit] Release SQLite reservation error:",
+                            reservationReleaseError,
+                        );
+                    }
                 }
 
                 const errorMessage = stringifyError(createResult.errors);
@@ -476,13 +734,32 @@ async function drainLocationQueue(
             sentCount += 1;
             lastAcceptedLocation = toAcceptedLocation(row);
 
+            if (reservationReachedLimit) {
+                console.log(
+                    "[SubscriptionPlanLimit] SQLite queue point limit reached:",
+                    {
+                        recordingSessionId: row.recording_session_id,
+                        locationLogId,
+                        recordedAt: row.recorded_at,
+                        reason: "POINTS",
+                    },
+                );
+            }
+
             /*
              * LocationLogは既に作成済みなので、
              * 継続件数更新に失敗してもキューをpendingへ戻さない。
+             *
+             * SQLite queue自体から3分継続確認タイムアウトは
+             * 開始しない。
              */
             try {
                 await incrementRecordingContinuationPointCount(
                     row.recording_session_id,
+                    Date.now(),
+                    {
+                        startConfirmationTimeout: false,
+                    },
                 );
             } catch (continuationError) {
                 console.error(
@@ -491,11 +768,31 @@ async function drainLocationQueue(
                 );
             }
         } catch (error) {
+            /*
+             * throwされた場合は通信結果が不明な可能性がある。
+             *
+             * timeout後にCloud側でcreate成功しているケースを考慮し、
+             * reservationは解除しない。
+             */
             if (isDuplicateLocationCreateError(error)) {
                 await markLocationQueueRowDuplicate(row.location_log_id);
 
                 duplicateCount += 1;
                 lastAcceptedLocation = toAcceptedLocation(row);
+
+                if (reservationReachedLimit) {
+                    planLimitReached = true;
+
+                    console.log(
+                        "[SubscriptionPlanLimit] SQLite queue point limit reached by duplicate exception:",
+                        {
+                            recordingSessionId: row.recording_session_id,
+                            locationLogId,
+                            recordedAt: row.recorded_at,
+                        },
+                    );
+                }
+
                 continue;
             }
 
@@ -510,7 +807,7 @@ async function drainLocationQueue(
                 stopReason = "createTimedOut";
 
                 console.warn("SQLite queue LocationLog create timed out:", {
-                    locationLogId: row.location_log_id,
+                    locationLogId,
                     locationUniqueKey: row.location_unique_key,
                     recordingSessionId: row.recording_session_id,
                     recordedAt: row.recorded_at,
@@ -522,7 +819,7 @@ async function drainLocationQueue(
                 stopReason = "createFailed";
 
                 console.error("SQLite queue LocationLog create failed:", {
-                    locationLogId: row.location_log_id,
+                    locationLogId,
                     locationUniqueKey: row.location_unique_key,
                     recordingSessionId: row.recording_session_id,
                     recordedAt: row.recorded_at,
@@ -535,7 +832,25 @@ async function drainLocationQueue(
              * 通信障害時に続けてcreateを連打しない。
              */
             break;
+        } finally {
+            /*
+             * FG/BG/SQLite共通のLocationSaveLockは、
+             * success / duplicate / error / continue / break
+             * のすべてで必ず解除する。
+             */
+            try {
+                await releaseLocationSaveLock(lock);
+            } catch (releaseError) {
+                console.error(
+                    "Release SQLite queue location save lock error:",
+                    releaseError,
+                );
+            }
         }
+    }
+
+    if (planLimitReached && stopReason === "completed") {
+        stopReason = "planLimitReached";
     }
 
     return {

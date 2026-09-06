@@ -9,7 +9,9 @@ import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
+    Alert,
     Animated,
+    FlatList,
     Image,
     Pressable,
     StyleSheet,
@@ -24,6 +26,8 @@ import MapView, {
 } from "react-native-maps";
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
+import { upsertRecordingSessionSummary } from "../services/recordingSessionService";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationMap">;
 
@@ -179,12 +183,16 @@ const mapTilerPixelTileUrl =
         : undefined;
 
 export default function LocationMapScreen({ route }: Props) {
+    const insets = useSafeAreaInsets();
     const mapRef = useRef<MapView | null>(null);
     const hasFittedInitialRouteRef = useRef(false);
 
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
     const [recordingSessionSummary, setRecordingSessionSummary] =
         useState<RecordingSessionItem | null>(null);
+    const [showLocationLogList, setShowLocationLogList] = useState(false);
+    const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
+    const [deletingLogId, setDeletingLogId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [hasLoaded, setHasLoaded] = useState(false);
     const [showPoints, setShowPoints] = useState(false);
@@ -517,6 +525,143 @@ export default function LocationMapScreen({ route }: Props) {
             }
         },
         [],
+    );
+
+    const handleSelectLocationLog = useCallback((log: LocationLogItem) => {
+        setSelectedLogId(log.id);
+
+        setShowPoints(true);
+
+        mapRef.current?.animateToRegion(
+            {
+                latitude: log.latitude,
+                longitude: log.longitude,
+                latitudeDelta: 0.003,
+                longitudeDelta: 0.003,
+            },
+            300,
+        );
+    }, []);
+
+    const deleteLocationLog = useCallback(
+        async (log: LocationLogItem) => {
+            if (!activeSessionId) {
+                return;
+            }
+
+            try {
+                setDeletingLogId(log.id);
+
+                const deleteResult = await client.models.LocationLog.delete({
+                    id: log.id,
+                });
+
+                if (deleteResult.errors) {
+                    console.error(
+                        "[LocationMapScreen] LocationLog delete errors:",
+                        deleteResult.errors,
+                    );
+
+                    Alert.alert(
+                        "削除エラー",
+                        "位置記録を削除できませんでした。",
+                    );
+                    return;
+                }
+
+                if (selectedLogId === log.id) {
+                    setSelectedLogId(null);
+                }
+
+                /*
+                 * 削除後のLocationLogを再取得する。
+                 * これにより地図・Polyline・ポイント件数も更新される。
+                 */
+                await loadLogs(false);
+
+                /*
+                 * RecordingSessionの
+                 * ・開始時刻
+                 * ・終了時刻
+                 * ・距離
+                 * ・ポイント数
+                 * ・アクティビティ判定
+                 * なども再計算する。
+                 */
+                await upsertRecordingSessionSummary(
+                    activeSessionId,
+                    recordingSessionSummary?.recordingSessionName ?? null,
+                    recordingSessionSummary?.sharedOwners ?? [],
+                );
+
+                await loadRecordingSessionSummary(activeSessionId);
+
+                Alert.alert("削除完了", "位置記録を削除しました。");
+            } catch (error) {
+                console.error(
+                    "[LocationMapScreen] LocationLog delete error:",
+                    error,
+                );
+
+                Alert.alert("削除エラー", "位置記録の削除に失敗しました。");
+            } finally {
+                setDeletingLogId(null);
+            }
+        },
+        [
+            activeSessionId,
+            loadLogs,
+            loadRecordingSessionSummary,
+            recordingSessionSummary,
+            selectedLogId,
+        ],
+    );
+
+    const handleDeleteLocationLog = useCallback(
+        (log: LocationLogItem) => {
+            const sessionLogCount = logs.filter(
+                (item) => item.recordingSessionId === activeSessionId,
+            ).length;
+
+            if (sessionLogCount <= 1) {
+                Alert.alert(
+                    "削除できません",
+                    "アクティビティには最低1件の位置記録を残す必要があります。",
+                );
+                return;
+            }
+            const accuracyText =
+                log.accuracy !== null && log.accuracy !== undefined
+                    ? `${Number(log.accuracy).toFixed(1)}m`
+                    : "不明";
+
+            const sourceText =
+                log.source === "background" ? "background" : "foreground";
+
+            Alert.alert(
+                "位置記録を削除",
+                [
+                    `${formatTimeWithSeconds(log.recordedAt)} の位置記録を削除しますか？`,
+                    "",
+                    `取得元: ${sourceText}`,
+                    `精度: ${accuracyText}`,
+                ].join("\n"),
+                [
+                    {
+                        text: "キャンセル",
+                        style: "cancel",
+                    },
+                    {
+                        text: "削除",
+                        style: "destructive",
+                        onPress: () => {
+                            void deleteLocationLog(log);
+                        },
+                    },
+                ],
+            );
+        },
+        [activeSessionId, deleteLocationLog, logs],
     );
 
     const loadCurrentUserProfileIcon = useCallback(async () => {
@@ -1227,6 +1372,22 @@ export default function LocationMapScreen({ route }: Props) {
 
     const routeLogs = buildRouteLogs(visibleLogs);
 
+    /*
+     * 編集一覧ではbuildRouteLogs()を使わない。
+     *
+     * buildRouteLogs()ではGPS飛び値が除外されるため、
+     * 削除したい異常地点まで一覧から消えてしまう。
+     *
+     * visibleLogsをそのまま時刻昇順に並べる。
+     */
+    const editableLocationLogs = [...visibleLogs].sort(
+        (a, b) =>
+            new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime(),
+    );
+
+    const selectedEditableLog =
+        editableLocationLogs.find((log) => log.id === selectedLogId) ?? null;
+
     const latest =
         routeLogs.length > 0
             ? routeLogs[routeLogs.length - 1]
@@ -1630,6 +1791,36 @@ export default function LocationMapScreen({ route }: Props) {
                             />
                         </Marker>
                     )}
+                {isActivityHistoryMap && selectedEditableLog && (
+                    <Marker
+                        coordinate={{
+                            latitude: selectedEditableLog.latitude,
+                            longitude: selectedEditableLog.longitude,
+                        }}
+                        title="選択中の記録地点"
+                        description={buildMarkerDescription(
+                            selectedEditableLog,
+                        )}
+                        anchor={{ x: 0.5, y: 0.5 }}
+                        centerOffset={{ x: 0, y: 0 }}
+                        zIndex={300}
+                        tracksViewChanges
+                    >
+                        <View
+                            collapsable={false}
+                            style={styles.selectedLocationMarkerContainer}
+                        >
+                            <View
+                                collapsable={false}
+                                style={styles.selectedLocationMarker}
+                            >
+                                <View
+                                    style={styles.selectedLocationMarkerCenter}
+                                />
+                            </View>
+                        </View>
+                    </Marker>
+                )}
             </MapView>
 
             {shouldShowLiveCurrentLocation && currentLocationScreenPoint && (
@@ -1695,101 +1886,112 @@ export default function LocationMapScreen({ route }: Props) {
                 </View>
             )}
 
-            <View style={styles.infoBox}>
-                <Text style={styles.infoTitle}>
-                    {isSharedCurrentLocationOnlyMap
-                        ? "共有中の現在地"
-                        : recordingSessionSummary?.recordingSessionName?.trim()
-                          ? recordingSessionSummary.recordingSessionName.trim()
-                          : "アクティビティ記録"}
-                </Text>
+            {!showLocationLogList && (
+                <View style={styles.infoBox}>
+                    <Text style={styles.infoTitle}>
+                        {isSharedCurrentLocationOnlyMap
+                            ? "共有中の現在地"
+                            : recordingSessionSummary?.recordingSessionName?.trim()
+                              ? recordingSessionSummary.recordingSessionName.trim()
+                              : "アクティビティ記録"}
+                    </Text>
 
-                {isSharedCurrentLocationOnlyMap ? (
-                    <>
-                        <Text style={styles.infoText}>
-                            日時: {displayDateTimeText}
-                        </Text>
-                        <Text style={styles.infoText}>ルート記録: なし</Text>
-                    </>
-                ) : (
-                    <>
-                        {recordingSessionSummary ? (
-                            <>
-                                <Text style={styles.infoText}>
-                                    期間:{" "}
-                                    {formatPeriod(
-                                        recordingSessionSummary.startedAt,
-                                        recordingSessionSummary.endedAt,
-                                    )}
-                                </Text>
-                                <Text style={styles.infoText}>
-                                    距離: {displayDistanceText}
-                                </Text>
-                            </>
-                        ) : isSelectedMode ? (
-                            <>
-                                <Text style={styles.infoText}>
-                                    {shouldShowSessionPeriod
-                                        ? "期間: "
-                                        : "日時: "}
-                                    {displayDateTimeText}
-                                </Text>
-                                <Text style={styles.infoText}>
-                                    距離: {displayDistanceText}
-                                </Text>
-                            </>
-                        ) : (
-                            <View
-                                style={[
-                                    styles.latestInfoRow,
-                                    isLiveRecordingMap &&
-                                        styles.liveRecordingInfoColumn,
-                                ]}
-                            >
+                    {isSharedCurrentLocationOnlyMap ? (
+                        <>
+                            <Text style={styles.infoText}>
+                                日時: {displayDateTimeText}
+                            </Text>
+                            <Text style={styles.infoText}>
+                                ルート記録: なし
+                            </Text>
+                        </>
+                    ) : (
+                        <>
+                            {recordingSessionSummary ? (
+                                <>
+                                    <Text style={styles.infoText}>
+                                        期間:{" "}
+                                        {formatPeriod(
+                                            recordingSessionSummary.startedAt,
+                                            recordingSessionSummary.endedAt,
+                                        )}
+                                    </Text>
+                                    <Text style={styles.infoText}>
+                                        距離: {displayDistanceText}
+                                    </Text>
+                                </>
+                            ) : isSelectedMode ? (
+                                <>
+                                    <Text style={styles.infoText}>
+                                        {shouldShowSessionPeriod
+                                            ? "期間: "
+                                            : "日時: "}
+                                        {displayDateTimeText}
+                                    </Text>
+                                    <Text style={styles.infoText}>
+                                        距離: {displayDistanceText}
+                                    </Text>
+                                </>
+                            ) : (
+                                <View
+                                    style={[
+                                        styles.latestInfoRow,
+                                        isLiveRecordingMap &&
+                                            styles.liveRecordingInfoColumn,
+                                    ]}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.infoText,
+                                            !isLiveRecordingMap &&
+                                                styles.latestInfoText,
+                                        ]}
+                                    >
+                                        {isLiveRecordingMap
+                                            ? "期間: "
+                                            : "日時: "}
+                                        {isLiveRecordingMap &&
+                                        liveRecordingPeriodText
+                                            ? liveRecordingPeriodText
+                                            : displayDateTimeText}
+                                    </Text>
+
+                                    <Text
+                                        style={[
+                                            styles.infoText,
+                                            !isLiveRecordingMap &&
+                                                styles.latestInfoText,
+                                        ]}
+                                    >
+                                        距離: {displayDistanceText}
+                                    </Text>
+                                </View>
+                            )}
+
+                            <View style={styles.pointCountColumn}>
                                 <Text
                                     style={[
                                         styles.infoText,
-                                        !isLiveRecordingMap &&
-                                            styles.latestInfoText,
+                                        styles.pointCountText,
                                     ]}
                                 >
-                                    {isLiveRecordingMap ? "期間: " : "日時: "}
-                                    {isLiveRecordingMap &&
-                                    liveRecordingPeriodText
-                                        ? liveRecordingPeriodText
-                                        : displayDateTimeText}
+                                    記録ポイント: {recordPointCount}件（F:{" "}
+                                    {foregroundPointCount}
+                                    件、B: {backgroundPointCount}件）
                                 </Text>
 
                                 <Text
                                     style={[
                                         styles.infoText,
-                                        !isLiveRecordingMap &&
-                                            styles.latestInfoText,
+                                        styles.pointCountText,
                                     ]}
                                 >
-                                    距離: {displayDistanceText}
+                                    表示ポイント: {displayedPointCount}件
                                 </Text>
                             </View>
-                        )}
-
-                        <View style={styles.pointCountColumn}>
-                            <Text
-                                style={[styles.infoText, styles.pointCountText]}
-                            >
-                                記録ポイント: {recordPointCount}件（F:{" "}
-                                {foregroundPointCount}
-                                件、B: {backgroundPointCount}件）
-                            </Text>
-
-                            <Text
-                                style={[styles.infoText, styles.pointCountText]}
-                            >
-                                表示ポイント: {displayedPointCount}件
-                            </Text>
-                        </View>
-                    </>
-                )}
-                {/*
+                        </>
+                    )}
+                    {/*
                 <Text style={styles.infoText}>
                     緯度: {displayLocation.latitude.toFixed(6)}
                 </Text>
@@ -1806,101 +2008,280 @@ export default function LocationMapScreen({ route }: Props) {
                         : "不明"}
                 </Text>
                 */}
-                {!isSharedCurrentLocationOnlyMap &&
-                    !isSelectedMode &&
-                    shouldShowRecordingSettings && (
-                        <View style={styles.recordingSettingRow}>
-                            <View style={styles.recordingSettingBadge}>
-                                <Text style={styles.recordingSettingBadgeText}>
-                                    頻度: {recordingIntervalSeconds}秒 / 距離:{" "}
-                                    {recordingDistanceMeters}m
-                                </Text>
+                    {!isSharedCurrentLocationOnlyMap &&
+                        !isSelectedMode &&
+                        shouldShowRecordingSettings && (
+                            <View style={styles.recordingSettingRow}>
+                                <View style={styles.recordingSettingBadge}>
+                                    <Text
+                                        style={styles.recordingSettingBadgeText}
+                                    >
+                                        頻度: {recordingIntervalSeconds}秒 /
+                                        距離: {recordingDistanceMeters}m
+                                    </Text>
+                                </View>
                             </View>
-                        </View>
-                    )}
+                        )}
 
-                <View style={styles.mapLayerRow}>
-                    {MAP_LAYER_OPTIONS.map((option) => {
-                        const isActive = mapLayerMode === option.value;
+                    <View style={styles.mapLayerRow}>
+                        {MAP_LAYER_OPTIONS.map((option) => {
+                            const isActive = mapLayerMode === option.value;
 
-                        return (
-                            <Pressable
-                                key={option.value}
-                                style={({ pressed }) => [
-                                    styles.mapLayerButton,
-                                    isActive && styles.mapLayerButtonActive,
-                                    pressed && styles.mapLayerButtonPressed,
-                                ]}
-                                onPress={() => setMapLayerMode(option.value)}
-                            >
-                                <Text
-                                    style={[
-                                        styles.mapLayerButtonText,
-                                        isActive &&
-                                            styles.mapLayerButtonTextActive,
+                            return (
+                                <Pressable
+                                    key={option.value}
+                                    style={({ pressed }) => [
+                                        styles.mapLayerButton,
+                                        isActive && styles.mapLayerButtonActive,
+                                        pressed && styles.mapLayerButtonPressed,
                                     ]}
+                                    onPress={() =>
+                                        setMapLayerMode(option.value)
+                                    }
                                 >
-                                    {option.label}
+                                    <Text
+                                        style={[
+                                            styles.mapLayerButtonText,
+                                            isActive &&
+                                                styles.mapLayerButtonTextActive,
+                                        ]}
+                                    >
+                                        {option.label}
+                                    </Text>
+                                </Pressable>
+                            );
+                        })}
+                    </View>
+
+                    {!isSharedCurrentLocationOnlyMap && (
+                        <View style={styles.mapActionButtonRow}>
+                            <Pressable
+                                style={({ pressed }) => [
+                                    styles.mapActionButton,
+                                    pressed && styles.mapActionButtonPressed,
+                                ]}
+                                onPress={() =>
+                                    setShowPoints((current) => !current)
+                                }
+                            >
+                                <Text style={styles.mapActionButtonText}>
+                                    ポイント表示: {showPoints ? "OFF" : "ON"}
                                 </Text>
                             </Pressable>
-                        );
-                    })}
-                </View>
 
-                {!isSharedCurrentLocationOnlyMap && (
-                    <View style={styles.mapActionButtonRow}>
-                        <Pressable
-                            style={({ pressed }) => [
-                                styles.mapActionButton,
-                                pressed && styles.mapActionButtonPressed,
-                            ]}
-                            onPress={() => setShowPoints((current) => !current)}
-                        >
-                            <Text style={styles.mapActionButtonText}>
-                                ポイント表示: {showPoints ? "OFF" : "ON"}
-                            </Text>
-                        </Pressable>
-
-                        <Pressable
-                            style={({ pressed }) => [
-                                styles.mapActionButton,
-
-                                isRouteFitButtonActive &&
-                                    !isActivityHistoryMap &&
-                                    styles.mapActionButtonActive,
-
-                                pressed &&
-                                    !isActivityHistoryMap &&
-                                    styles.mapActionButtonPressed,
-
-                                isActivityHistoryMap &&
-                                    styles.mapActionButtonDisabled,
-                            ]}
-                            onPress={toggleRouteViewMode}
-                            disabled={isActivityHistoryMap}
-                        >
-                            <Text
-                                style={[
-                                    styles.mapActionButtonText,
+                            <Pressable
+                                style={({ pressed }) => [
+                                    styles.mapActionButton,
 
                                     isRouteFitButtonActive &&
                                         !isActivityHistoryMap &&
-                                        styles.mapActionButtonTextActive,
+                                        styles.mapActionButtonActive,
+
+                                    pressed &&
+                                        !isActivityHistoryMap &&
+                                        styles.mapActionButtonPressed,
 
                                     isActivityHistoryMap &&
-                                        styles.mapActionButtonTextDisabled,
+                                        styles.mapActionButtonDisabled,
                                 ]}
-                                numberOfLines={1}
-                                adjustsFontSizeToFit
+                                onPress={toggleRouteViewMode}
+                                disabled={isActivityHistoryMap}
                             >
-                                {isActivityHistoryMap
-                                    ? "ルート全体を表示"
-                                    : routeFitButtonText}
+                                <Text
+                                    style={[
+                                        styles.mapActionButtonText,
+
+                                        isRouteFitButtonActive &&
+                                            !isActivityHistoryMap &&
+                                            styles.mapActionButtonTextActive,
+
+                                        isActivityHistoryMap &&
+                                            styles.mapActionButtonTextDisabled,
+                                    ]}
+                                    numberOfLines={1}
+                                    adjustsFontSizeToFit
+                                >
+                                    {isActivityHistoryMap
+                                        ? "ルート全体を表示"
+                                        : routeFitButtonText}
+                                </Text>
+                            </Pressable>
+                        </View>
+                    )}
+
+                    {isActivityHistoryMap && (
+                        <Pressable
+                            style={({ pressed }) => [
+                                styles.locationLogListButton,
+                                pressed && styles.mapActionButtonPressed,
+                            ]}
+                            onPress={() => {
+                                setShowLocationLogList(true);
+                                setShowPoints(true);
+                            }}
+                        >
+                            <Text style={styles.locationLogListButtonText}>
+                                記録ポイント一覧を見る（
+                                {editableLocationLogs.length}件）
+                            </Text>
+                        </Pressable>
+                    )}
+                </View>
+            )}
+            {showLocationLogList && isActivityHistoryMap && (
+                <View
+                    style={[
+                        styles.locationLogListPanel,
+                        {
+                            bottom: Math.max(insets.bottom + 8, 16),
+                        },
+                    ]}
+                >
+                    <View style={styles.locationLogListHeader}>
+                        <View>
+                            <Text style={styles.locationLogListTitle}>
+                                記録ポイント一覧
+                            </Text>
+
+                            <Text style={styles.locationLogListSubTitle}>
+                                {editableLocationLogs.length}件
+                            </Text>
+                        </View>
+
+                        <Pressable
+                            style={styles.locationLogListCloseButton}
+                            onPress={() => {
+                                setShowLocationLogList(false);
+                                setSelectedLogId(null);
+                                showRouteOverview();
+                            }}
+                        >
+                            <Text style={styles.locationLogListCloseButtonText}>
+                                閉じる
                             </Text>
                         </Pressable>
                     </View>
-                )}
-            </View>
+
+                    <View style={styles.locationLogListColumnHeader}>
+                        <Text style={styles.locationLogNoHeader}>No.</Text>
+                        <Text style={styles.locationLogTimeHeader}>時刻</Text>
+                        <Text style={styles.locationLogSourceHeader}>
+                            取得元
+                        </Text>
+                        <Text style={styles.locationLogAccuracyHeader}>
+                            精度
+                        </Text>
+                        <View style={styles.locationLogDeleteHeaderSpace} />
+                    </View>
+
+                    <FlatList
+                        style={styles.locationLogFlatList}
+                        data={editableLocationLogs}
+                        keyExtractor={(item) => item.id}
+                        extraData={{
+                            selectedLogId,
+                            deletingLogId,
+                        }}
+                        renderItem={({ item, index }) => {
+                            const isSelected = item.id === selectedLogId;
+
+                            const sourceText =
+                                item.source === "background" ? "B" : "F";
+
+                            const sourceDetail =
+                                item.source === "background"
+                                    ? "background"
+                                    : "foreground";
+
+                            const accuracyText =
+                                item.accuracy !== null &&
+                                item.accuracy !== undefined
+                                    ? `${Number(item.accuracy).toFixed(1)}m`
+                                    : "-";
+
+                            const isLowAccuracy =
+                                typeof item.accuracy === "number" &&
+                                item.accuracy >= 100;
+
+                            return (
+                                <Pressable
+                                    style={[
+                                        styles.locationLogListItem,
+                                        isSelected &&
+                                            styles.locationLogListItemSelected,
+                                    ]}
+                                    onPress={() =>
+                                        handleSelectLocationLog(item)
+                                    }
+                                >
+                                    <Text style={styles.locationLogNo}>
+                                        {index + 1}
+                                    </Text>
+
+                                    <Text style={styles.locationLogTime}>
+                                        {formatTimeWithSeconds(item.recordedAt)}
+                                    </Text>
+
+                                    <View
+                                        style={styles.locationLogSourceColumn}
+                                    >
+                                        <Text
+                                            style={[
+                                                styles.locationLogSourceBadge,
+                                                item.source === "background"
+                                                    ? styles.locationLogSourceBackground
+                                                    : styles.locationLogSourceForeground,
+                                            ]}
+                                        >
+                                            {sourceText}
+                                        </Text>
+
+                                        <Text
+                                            style={styles.locationLogSourceText}
+                                        >
+                                            {sourceDetail}
+                                        </Text>
+                                    </View>
+
+                                    <Text
+                                        style={[
+                                            styles.locationLogAccuracy,
+                                            isLowAccuracy &&
+                                                styles.locationLogAccuracyWarning,
+                                        ]}
+                                    >
+                                        {accuracyText}
+                                    </Text>
+
+                                    <Pressable
+                                        style={[
+                                            styles.locationLogDeleteButton,
+                                            deletingLogId === item.id &&
+                                                styles.locationLogDeleteButtonDisabled,
+                                        ]}
+                                        disabled={deletingLogId === item.id}
+                                        onPress={(event) => {
+                                            event.stopPropagation();
+
+                                            handleDeleteLocationLog(item);
+                                        }}
+                                    >
+                                        <Text
+                                            style={
+                                                styles.locationLogDeleteButtonText
+                                            }
+                                        >
+                                            {deletingLogId === item.id
+                                                ? "..."
+                                                : "削除"}
+                                        </Text>
+                                    </Pressable>
+                                </Pressable>
+                            );
+                        }}
+                    />
+                </View>
+            )}
         </View>
     );
 }
@@ -1958,6 +2339,16 @@ function formatTime(value: string) {
     const mi = String(date.getMinutes()).padStart(2, "0");
 
     return `${hh}:${mi}`;
+}
+
+function formatTimeWithSeconds(value: string) {
+    const date = new Date(value);
+
+    const hh = String(date.getHours()).padStart(2, "0");
+    const mi = String(date.getMinutes()).padStart(2, "0");
+    const ss = String(date.getSeconds()).padStart(2, "0");
+
+    return `${hh}:${mi}:${ss}`;
 }
 
 function formatPeriod(startValue: string, endValue: string) {
@@ -2651,5 +3042,231 @@ const styles = StyleSheet.create({
 
     mapActionButtonTextDisabled: {
         color: "#777",
+    },
+
+    selectedLocationMarkerContainer: {
+        width: 44,
+        height: 44,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    selectedLocationMarker: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        backgroundColor: "rgba(255, 59, 48, 0.28)",
+        borderWidth: 4,
+        borderColor: "#ff3b30",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    selectedLocationMarkerCenter: {
+        width: 12,
+        height: 12,
+        borderRadius: 6,
+        backgroundColor: "#ff3b30",
+        borderWidth: 2,
+        borderColor: "#ffffff",
+    },
+
+    locationLogListButton: {
+        marginTop: 10,
+        paddingVertical: 10,
+        borderRadius: 8,
+        backgroundColor: "#4b6f8f",
+        alignItems: "center",
+    },
+
+    locationLogListButtonText: {
+        color: "#ffffff",
+        fontSize: 13,
+        fontWeight: "bold",
+    },
+
+    locationLogListPanel: {
+        position: "absolute",
+        left: 8,
+        right: 8,
+        height: "40%",
+        backgroundColor: "rgba(255,255,255,0.98)",
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+        overflow: "hidden",
+    },
+
+    locationLogListHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: "#d9e0e5",
+    },
+
+    locationLogListTitle: {
+        fontSize: 16,
+        fontWeight: "bold",
+        color: "#333333",
+    },
+
+    locationLogListSubTitle: {
+        marginTop: 2,
+        fontSize: 12,
+        color: "#666666",
+    },
+
+    locationLogListCloseButton: {
+        paddingHorizontal: 14,
+        paddingVertical: 7,
+        borderRadius: 7,
+        backgroundColor: "#eef3f7",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+    },
+
+    locationLogListCloseButtonText: {
+        color: "#2f4f66",
+        fontSize: 12,
+        fontWeight: "bold",
+    },
+
+    locationLogListColumnHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        paddingHorizontal: 8,
+        paddingVertical: 6,
+        backgroundColor: "#f6f8fa",
+        borderBottomWidth: 1,
+        borderBottomColor: "#dddddd",
+    },
+
+    locationLogNoHeader: {
+        width: 34,
+        fontSize: 11,
+        color: "#666666",
+    },
+
+    locationLogTimeHeader: {
+        width: 70,
+        fontSize: 11,
+        color: "#666666",
+    },
+
+    locationLogSourceHeader: {
+        flex: 1,
+        fontSize: 11,
+        color: "#666666",
+    },
+
+    locationLogAccuracyHeader: {
+        width: 62,
+        textAlign: "right",
+        fontSize: 11,
+        color: "#666666",
+    },
+
+    locationLogDeleteHeaderSpace: {
+        width: 58,
+    },
+
+    locationLogListItem: {
+        flexDirection: "row",
+        alignItems: "center",
+        minHeight: 48,
+        paddingHorizontal: 8,
+        paddingVertical: 6,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: "#dddddd",
+    },
+
+    locationLogListItemSelected: {
+        backgroundColor: "#fff0ee",
+        borderLeftWidth: 4,
+        borderLeftColor: "#ff3b30",
+    },
+
+    locationLogNo: {
+        width: 34,
+        fontSize: 12,
+        color: "#555555",
+    },
+
+    locationLogTime: {
+        width: 70,
+        fontSize: 12,
+        fontWeight: "600",
+        color: "#222222",
+    },
+
+    locationLogSourceColumn: {
+        flex: 1,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+    },
+
+    locationLogSourceBadge: {
+        width: 22,
+        height: 22,
+        lineHeight: 22,
+        borderRadius: 11,
+        textAlign: "center",
+        overflow: "hidden",
+        fontSize: 11,
+        fontWeight: "bold",
+    },
+
+    locationLogSourceForeground: {
+        backgroundColor: "#4b6f8f",
+        color: "#ffffff",
+    },
+
+    locationLogSourceBackground: {
+        backgroundColor: "#d1d5db",
+        color: "#333333",
+    },
+
+    locationLogSourceText: {
+        fontSize: 10,
+        color: "#666666",
+    },
+
+    locationLogAccuracy: {
+        width: 62,
+        textAlign: "right",
+        fontSize: 12,
+        color: "#444444",
+    },
+
+    locationLogAccuracyWarning: {
+        color: "#d32f2f",
+        fontWeight: "bold",
+    },
+
+    locationLogDeleteButton: {
+        width: 52,
+        marginLeft: 6,
+        paddingVertical: 7,
+        borderRadius: 6,
+        backgroundColor: "#b94a48",
+        alignItems: "center",
+    },
+
+    locationLogDeleteButtonDisabled: {
+        opacity: 0.5,
+    },
+
+    locationLogDeleteButtonText: {
+        color: "#ffffff",
+        fontSize: 11,
+        fontWeight: "bold",
+    },
+
+    locationLogFlatList: {
+        flex: 1,
     },
 });

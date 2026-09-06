@@ -1,0 +1,620 @@
+diff --git a/node_modules/expo-task-manager/android/.gradle/9.2.0/checksums/checksums.lock b/node_modules/expo-task-manager/android/.gradle/9.2.0/checksums/checksums.lock
+new file mode 100644
+index 0000000..e86fa26
+Binary files /dev/null and b/node_modules/expo-task-manager/android/.gradle/9.2.0/checksums/checksums.lock differ
+diff --git a/node_modules/expo-task-manager/android/.gradle/9.2.0/fileChanges/last-build.bin b/node_modules/expo-task-manager/android/.gradle/9.2.0/fileChanges/last-build.bin
+new file mode 100644
+index 0000000..f76dd23
+Binary files /dev/null and b/node_modules/expo-task-manager/android/.gradle/9.2.0/fileChanges/last-build.bin differ
+diff --git a/node_modules/expo-task-manager/android/.gradle/9.2.0/fileHashes/fileHashes.bin b/node_modules/expo-task-manager/android/.gradle/9.2.0/fileHashes/fileHashes.bin
+new file mode 100644
+index 0000000..36f6005
+Binary files /dev/null and b/node_modules/expo-task-manager/android/.gradle/9.2.0/fileHashes/fileHashes.bin differ
+diff --git a/node_modules/expo-task-manager/android/.gradle/9.2.0/fileHashes/fileHashes.lock b/node_modules/expo-task-manager/android/.gradle/9.2.0/fileHashes/fileHashes.lock
+new file mode 100644
+index 0000000..a68305b
+Binary files /dev/null and b/node_modules/expo-task-manager/android/.gradle/9.2.0/fileHashes/fileHashes.lock differ
+diff --git a/node_modules/expo-task-manager/android/.gradle/9.2.0/gc.properties b/node_modules/expo-task-manager/android/.gradle/9.2.0/gc.properties
+new file mode 100644
+index 0000000..e69de29
+diff --git a/node_modules/expo-task-manager/android/.gradle/buildOutputCleanup/buildOutputCleanup.lock b/node_modules/expo-task-manager/android/.gradle/buildOutputCleanup/buildOutputCleanup.lock
+new file mode 100644
+index 0000000..db996d0
+Binary files /dev/null and b/node_modules/expo-task-manager/android/.gradle/buildOutputCleanup/buildOutputCleanup.lock differ
+diff --git a/node_modules/expo-task-manager/android/.gradle/buildOutputCleanup/cache.properties b/node_modules/expo-task-manager/android/.gradle/buildOutputCleanup/cache.properties
+new file mode 100644
+index 0000000..a67b3ec
+--- /dev/null
++++ b/node_modules/expo-task-manager/android/.gradle/buildOutputCleanup/cache.properties
+@@ -0,0 +1,2 @@
++#Sat Sep 05 07:28:06 JST 2026
++gradle.version=9.2.0
+diff --git a/node_modules/expo-task-manager/android/.gradle/vcs-1/gc.properties b/node_modules/expo-task-manager/android/.gradle/vcs-1/gc.properties
+new file mode 100644
+index 0000000..e69de29
+diff --git a/node_modules/expo-task-manager/android/build.gradle b/node_modules/expo-task-manager/android/build.gradle
+index 856c83d..8b0d25d 100644
+--- a/node_modules/expo-task-manager/android/build.gradle
++++ b/node_modules/expo-task-manager/android/build.gradle
+@@ -16,5 +16,10 @@ android {
+ 
+ dependencies {
+   implementation project(':unimodules-app-loader')
++
++  // HeadlessJsTaskContext など React Native API を
++  // TaskService.java から直接使用するため必要
++  implementation 'com.facebook.react:react-android'
++
+   api "androidx.core:core:1.0.0"
+ }
+diff --git a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
+index 2b6c2fa..ebd5dca 100644
+--- a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
++++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
+@@ -1,31 +1,44 @@
+ package expo.modules.taskManager;
+ 
++import static expo.modules.taskManager.Utils.getConsumerVersion;
++import static expo.modules.taskManager.Utils.jsonToMap;
++import static expo.modules.taskManager.Utils.unversionedClassForClass;
++
++import java.lang.ref.WeakReference;
++import java.lang.reflect.Constructor;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++import org.json.JSONObject;
++
++import com.facebook.react.ReactApplication;
++import com.facebook.react.ReactHost;
++import com.facebook.react.bridge.ReactContext;
++import com.facebook.react.bridge.UiThreadUtil;
++import com.facebook.react.bridge.WritableNativeMap;
++import com.facebook.react.jstasks.HeadlessJsTaskConfig;
++import com.facebook.react.jstasks.HeadlessJsTaskContext;
++import com.facebook.react.ReactInstanceEventListener;
++
+ import android.app.job.JobParameters;
+ import android.app.job.JobService;
+-import android.content.Context;
+ import android.content.Intent;
+ import android.content.SharedPreferences;
+ import android.net.Uri;
+ import android.os.Bundle;
+-import android.os.Handler;
+ import android.os.PersistableBundle;
+ import android.util.Log;
++import android.content.Context;
++import android.os.Handler;
+ 
+-import org.json.JSONObject;
++import androidx.annotation.NonNull;
++import androidx.annotation.Nullable;
+ import expo.modules.apploader.AppLoaderProvider;
+ import expo.modules.apploader.HeadlessAppLoader;
+ import expo.modules.core.interfaces.SingletonModule;
+-
+-import java.lang.ref.WeakReference;
+-import java.lang.reflect.Constructor;
+-import java.util.ArrayList;
+-import java.util.HashMap;
+-import java.util.List;
+-import java.util.Map;
+-import java.util.UUID;
+-
+-import androidx.annotation.Nullable;
+-
+ import expo.modules.interfaces.taskManager.TaskConsumerInterface;
+ import expo.modules.interfaces.taskManager.TaskExecutionCallback;
+ import expo.modules.interfaces.taskManager.TaskInterface;
+@@ -37,23 +50,17 @@ import expo.modules.taskManager.exceptions.TaskNotFoundException;
+ import expo.modules.taskManager.exceptions.TaskRegisteringFailedException;
+ import expo.modules.taskManager.repository.TasksAndEventsRepository;
+ 
+-import static expo.modules.taskManager.Utils.getConsumerVersion;
+-import static expo.modules.taskManager.Utils.jsonToMap;
+-import static expo.modules.taskManager.Utils.unversionedClassForClass;
+-
+ // @tsapeta: TaskService is a funny kind of singleton module... because it's actually not a singleton :D
+ // Since it would make too much troubles in order to get the singleton instance (from ModuleRegistryProvider)
+ // in classes like TaskJobService and TaskBroadcastReceiver, almost all properties of TaskService are static.
+ // Thanks to that, we can instantiate new TaskService in those classes, that has just its own context and all other resources are shared.
+ 
+ public class TaskService implements SingletonModule, TaskServiceInterface {
++
+   private static final String TAG = "TaskService";
+   private static final String SHARED_PREFERENCES_NAME = "TaskManagerModule";
+-  private static final int MAX_TASK_EXECUTION_TIME_MS = 15000; // 15 seconds
+-
+-  private WeakReference<Context> mContextRef;
+-  private TaskManagerUtilsInterface mTaskManagerUtils;
+ 
++  private static final int MAX_TASK_EXECUTION_TIME_MS = 15000; // 15 seconds
+   // Map with task managers of running (foregrounded) apps. { "<appScopeKey>": WeakReference(TaskManagerInterface) }
+   private static final Map<String, WeakReference<TaskManagerInterface>> sTaskManagers = new HashMap<>();
+ 
+@@ -63,11 +70,19 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+   // { "<appScopeKey>": List(eventIds...) }
+   private static final Map<String, List<String>> sEvents = new HashMap<>();
+ 
+-  private TasksAndEventsRepository mTasksAndEventsRepository;
+-
+   // Map of callbacks for task execution events. Schema: { "<eventId>": TaskExecutionCallback }
+   private static final Map<String, TaskExecutionCallback> sTaskCallbacks = new HashMap<>();
+ 
++  // Background task実行中にJS timerを維持するために開始した
++  // React Native Headless JS task IDをappScopeKeyごとに保持する。
++  private static final Map<String, Integer> sHeadlessTaskIds = new HashMap<>();
++
++  private WeakReference<Context> mContextRef;
++
++  private TaskManagerUtilsInterface mTaskManagerUtils;
++
++  private TasksAndEventsRepository mTasksAndEventsRepository;
++
+   public TaskService(Context context) {
+     super();
+     mContextRef = new WeakReference<>(context);
+@@ -203,9 +218,13 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+     if (appEvents != null) {
+       appEvents.remove(eventId);
+ 
+-      if (appEvents.size() == 0) {
++      if (appEvents.isEmpty()) {
+         sEvents.remove(appScopeKey);
+ 
++        // すべてのBackground eventが終了したので、
++        // JS timer維持用Headless taskも終了する。
++        maybeFinishHeadlessTask(appScopeKey);
++
+         // Invalidate app record but after 2 seconds delay so we can still take batched events.
+         Handler handler = new Handler();
+         handler.postDelayed(new Runnable() {
+@@ -220,7 +239,7 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+     }
+ 
+     // Invoke task callback
+-    TaskExecutionCallback taskCallback = sTaskCallbacks.get(eventId);
++    TaskExecutionCallback taskCallback = sTaskCallbacks.remove(eventId);
+ 
+     if (taskCallback != null) {
+       taskCallback.onFinished(response);
+@@ -232,6 +251,7 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+     // It may be called with null when the host activity is destroyed.
+     if (taskManager == null) {
+       sTaskManagers.remove(appScopeKey);
++      sHeadlessTaskManagers.remove(appScopeKey);
+       return;
+     }
+ 
+@@ -386,16 +406,36 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+       sTaskCallbacks.put(eventId, callback);
+     }
+ 
++    boolean isFirstEvent = sEvents.get(appScopeKey) == null;
++
+     final List<String> appEvents;
+-    if (sEvents.get(appScopeKey) == null) {
++    if (isFirstEvent) {
+       appEvents = new ArrayList<>();
+       appEvents.add(eventId);
+       sEvents.put(appScopeKey, appEvents);
+     } else {
+-      appEvents = new ArrayList<>();
++      appEvents = sEvents.get(appScopeKey);
+       appEvents.add(eventId);
+     }
+ 
++    // Background task が存在する間、React Native に Headless JS task が
++    // 実行中であることを通知する。
++    // これにより Activity が pause されても JavaTimerManager が
++    // setTimeout 等の JS timer を停止しないようにする。
++    if (isFirstEvent) {
++      Log.i(
++        TAG,
++        "[HEADLESS_TIMER] first event detected, appScopeKey=" + appScopeKey
++      );
++
++      maybeStartHeadlessTask(appScopeKey);
++    } else {
++      Log.i(
++        TAG,
++        "[HEADLESS_TIMER] additional event, appScopeKey=" + appScopeKey
++      );
++    }
++
+     if (taskManager != null) {
+       taskManager.executeTaskWithBody(body);
+       return;
+@@ -619,4 +659,363 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+     }, timeout);
+   }
+ 
++  /**
++   * React Native の HeadlessJsTaskContext に task を登録し、
++   * Background中も JS timer が停止しない状態を維持する。
++   */
++  private void maybeStartHeadlessTask(String appScopeKey) {
++    Log.i(
++      TAG,
++      "[HEADLESS_TIMER] maybeStartHeadlessTask ENTER, appScopeKey=" + appScopeKey
++    );
++
++    try {
++      Context context = mContextRef.get();
++
++      if (context == null) {
++        Log.w(
++          TAG,
++          "[HEADLESS_TIMER] context is null, appScopeKey=" + appScopeKey
++        );
++        return;
++      }
++
++      Log.i(
++        TAG,
++        "[HEADLESS_TIMER] context available, class=" +
++          context.getClass().getName()
++      );
++
++      ReactContext reactContext = getReactContext(context);
++
++      Log.i(
++        TAG,
++        "[HEADLESS_TIMER] getReactContext result=" +
++          (reactContext != null ? "available" : "null") +
++          ", appScopeKey=" + appScopeKey
++      );
++
++      if (reactContext != null) {
++        Log.i(
++          TAG,
++          "[HEADLESS_TIMER] ReactContext already available -> invokeStartHeadlessTask"
++        );
++
++        invokeStartHeadlessTask(reactContext, appScopeKey);
++      } else {
++        Log.i(
++          TAG,
++          "[HEADLESS_TIMER] ReactContext unavailable -> waitForReactContextAndStartTask"
++        );
++
++        waitForReactContextAndStartTask(context, appScopeKey);
++      }
++    } catch (Exception e) {
++      Log.e(
++        TAG,
++        "[HEADLESS_TIMER] maybeStartHeadlessTask failed",
++        e
++      );
++    }
++  }
++
++private void invokeStartHeadlessTask(
++  ReactContext reactContext,
++  String appScopeKey
++) {
++  Log.i(
++    TAG,
++    "[HEADLESS_TIMER] invokeStartHeadlessTask ENTER, appScopeKey=" +
++      appScopeKey
++  );
++
++  HeadlessJsTaskContext headlessContext =
++    HeadlessJsTaskContext.getInstance(reactContext);
++
++  UiThreadUtil.runOnUiThread(() -> {
++    try {
++      /*
++       * 同一appScopeKeyで既にHeadless taskが存在する場合は
++       * 新しいtaskを作成しない。
++       */
++      Integer existingTaskId =
++        sHeadlessTaskIds.get(appScopeKey);
++
++      if (existingTaskId != null) {
++        boolean isRunning =
++          headlessContext.isTaskRunning(existingTaskId);
++
++        Log.i(
++          TAG,
++          "[HEADLESS_TIMER] keep-alive task already exists" +
++            ", appScopeKey=" + appScopeKey +
++            ", taskId=" + existingTaskId +
++            ", isRunning=" + isRunning
++        );
++
++        /*
++         * Mapには残っているがReact Native上では終了済みだった場合、
++         * stale entryとして削除し、新しいtaskを開始する。
++         */
++        if (isRunning) {
++          return;
++        }
++
++        sHeadlessTaskIds.remove(appScopeKey);
++      }
++
++      WritableNativeMap taskData =
++        new WritableNativeMap();
++
++      taskData.putString(
++        "appScopeKey",
++        appScopeKey
++      );
++
++      /*
++       * timeout=0:
++       *
++       * Headless JS task自身のtimeoutでは終了させず、
++       * Expo background eventがすべて終了した時点で
++       * Native側からfinishTask()を直接呼ぶ。
++       */
++      HeadlessJsTaskConfig taskConfig =
++        new HeadlessJsTaskConfig(
++          "expo-task-manager",
++          taskData,
++          0,
++          true
++        );
++
++      int taskId =
++        headlessContext.startTask(taskConfig);
++
++      sHeadlessTaskIds.put(
++        appScopeKey,
++        taskId
++      );
++
++      Log.i(
++        TAG,
++        "[HEADLESS_TIMER] Started keep-alive headless task" +
++          ", appScopeKey=" + appScopeKey +
++          ", taskId=" + taskId +
++          ", isRunning=" +
++          headlessContext.isTaskRunning(taskId) +
++          ", hasActiveTasks=" +
++          headlessContext.hasActiveTasks()
++      );
++
++    } catch (Exception e) {
++      Log.e(
++        TAG,
++        "[HEADLESS_TIMER] Failed to start keep-alive headless task",
++        e
++      );
++    }
++  });
++}
++
++private void waitForReactContextAndStartTask(
++  Context context,
++  String appScopeKey
++) {
++  Log.i(
++    TAG,
++    "[HEADLESS_TIMER] waitForReactContextAndStartTask ENTER, appScopeKey=" +
++      appScopeKey
++  );
++
++  ReactApplication app =
++    (ReactApplication) context.getApplicationContext();
++
++  Log.i(
++    TAG,
++    "[HEADLESS_TIMER] ReactApplication class=" +
++      app.getClass().getName()
++  );
++
++  ReactHost reactHost = app.getReactHost();
++
++  Log.i(
++    TAG,
++    "[HEADLESS_TIMER] ReactHost=" +
++      (reactHost != null ? "available" : "null")
++  );
++
++  if (reactHost == null) {
++    Log.w(
++      TAG,
++      "[HEADLESS_TIMER] ReactHost is null, cannot wait for ReactContext"
++    );
++    return;
++  }
++
++  ReactContext currentReactContext =
++    reactHost.getCurrentReactContext();
++
++  Log.i(
++    TAG,
++    "[HEADLESS_TIMER] ReactHost currentReactContext=" +
++      (currentReactContext != null ? "available" : "null")
++  );
++
++  if (currentReactContext != null) {
++    Log.i(
++      TAG,
++      "[HEADLESS_TIMER] ReactContext became available before listener registration"
++    );
++
++    invokeStartHeadlessTask(
++      currentReactContext,
++      appScopeKey
++    );
++    return;
++  }
++
++  Log.i(
++    TAG,
++    "[HEADLESS_TIMER] registering ReactInstanceEventListener"
++  );
++
++  reactHost.addReactInstanceEventListener(
++    new ReactInstanceEventListener() {
++      @Override
++      public void onReactContextInitialized(
++        @NonNull ReactContext reactContext
++      ) {
++        Log.i(
++          TAG,
++          "[HEADLESS_TIMER] onReactContextInitialized fired, appScopeKey=" +
++            appScopeKey
++        );
++
++        invokeStartHeadlessTask(
++          reactContext,
++          appScopeKey
++        );
++
++        reactHost.removeReactInstanceEventListener(this);
++
++        Log.i(
++          TAG,
++          "[HEADLESS_TIMER] ReactInstanceEventListener removed"
++        );
++      }
++    }
++  );
++}
++
++/**
++ * そのappScopeKeyに属するBackground eventがすべて終了したら、
++ * timer維持用Headless JS taskをNative側から直接終了する。
++ */
++private void maybeFinishHeadlessTask(
++  String appScopeKey
++) {
++  UiThreadUtil.runOnUiThread(() -> {
++    Integer taskId =
++      sHeadlessTaskIds.remove(appScopeKey);
++
++    if (taskId == null) {
++      Log.i(
++        TAG,
++        "[HEADLESS_TIMER] no keep-alive task to finish" +
++          ", appScopeKey=" + appScopeKey
++      );
++
++      return;
++    }
++
++    try {
++      Context context = mContextRef.get();
++
++      if (context == null) {
++        Log.w(
++          TAG,
++          "[HEADLESS_TIMER] context unavailable while finishing" +
++            ", appScopeKey=" + appScopeKey +
++            ", taskId=" + taskId
++        );
++
++        return;
++      }
++
++      ReactContext reactContext =
++        getReactContext(context);
++
++      if (reactContext == null) {
++        Log.w(
++          TAG,
++          "[HEADLESS_TIMER] ReactContext unavailable while finishing" +
++            ", appScopeKey=" + appScopeKey +
++            ", taskId=" + taskId
++        );
++
++        return;
++      }
++
++      HeadlessJsTaskContext headlessContext =
++        HeadlessJsTaskContext.getInstance(
++          reactContext
++        );
++
++      boolean runningBeforeFinish =
++        headlessContext.isTaskRunning(taskId);
++
++      Log.i(
++        TAG,
++        "[HEADLESS_TIMER_STATE] before direct finish" +
++          ", appScopeKey=" + appScopeKey +
++          ", taskId=" + taskId +
++          ", isRunning=" + runningBeforeFinish +
++          ", hasActiveTasks=" +
++          headlessContext.hasActiveTasks()
++      );
++
++      if (runningBeforeFinish) {
++        headlessContext.finishTask(taskId);
++      }
++
++      boolean runningAfterFinish =
++        headlessContext.isTaskRunning(taskId);
++
++      Log.i(
++        TAG,
++        "[HEADLESS_TIMER] Finished keep-alive headless task directly" +
++          ", appScopeKey=" + appScopeKey +
++          ", taskId=" + taskId +
++          ", wasRunning=" + runningBeforeFinish +
++          ", isRunning=" + runningAfterFinish +
++          ", hasActiveTasks=" +
++          headlessContext.hasActiveTasks()
++      );
++
++    } catch (Exception e) {
++      Log.e(
++        TAG,
++        "[HEADLESS_TIMER] Failed to finish keep-alive headless task directly" +
++          ", appScopeKey=" + appScopeKey +
++          ", taskId=" + taskId,
++        e
++      );
++    }
++  });
++}
++
++/**
++ * 現在のReactContextをReactHostから取得する。
++ */
++@Nullable
++private ReactContext getReactContext(Context context) {
++  ReactApplication app =
++    (ReactApplication) context.getApplicationContext();
++
++  ReactHost reactHost = app.getReactHost();
++
++  return reactHost != null
++    ? reactHost.getCurrentReactContext()
++    : null;
++}
++
+ }
+diff --git a/node_modules/expo-task-manager/src/TaskManager.ts b/node_modules/expo-task-manager/src/TaskManager.ts
+index 88aa2d9..9e32ffa 100644
+--- a/node_modules/expo-task-manager/src/TaskManager.ts
++++ b/node_modules/expo-task-manager/src/TaskManager.ts
+@@ -1,7 +1,19 @@
+-import { LegacyEventEmitter, UnavailabilityError } from 'expo-modules-core';
++import { LegacyEventEmitter, Platform, UnavailabilityError } from 'expo-modules-core';
++import { AppRegistry } from 'react-native';
+ 
+ import ExpoTaskManager from './ExpoTaskManager';
+ 
++if (Platform.OS === 'android') {
++
++  /**
++   * Native HeadlessJsTaskContext.startTask() から起動される。
++   */
++  AppRegistry.registerHeadlessTask(
++    'expo-task-manager',
++    () => async () => {},
++  );
++}
++
+ // @needsAudit @docsMissing
+ /**
+  * Error object that can be received through [`TaskManagerTaskBody`](#taskmanagertaskbody) when the

@@ -325,12 +325,32 @@ class OperationTimeoutError extends Error {
     readonly operationName: string;
     readonly timeoutMs: number;
 
-    constructor(operationName: string, timeoutMs: number) {
+    // 長時間・PC非接続テスト用のtimer診断情報
+    readonly runtimeBootId: string;
+    readonly scheduledAtMs: number;
+    readonly expectedFireAtMs: number;
+    readonly actuallyFiredAtMs: number;
+    readonly timerDriftMs: number;
+
+    constructor(
+        operationName: string,
+        timeoutMs: number,
+        runtimeBootId: string,
+        scheduledAtMs: number,
+        expectedFireAtMs: number,
+        actuallyFiredAtMs: number,
+    ) {
         super(`${operationName} timed out after ${timeoutMs}ms.`);
 
         this.name = "OperationTimeoutError";
         this.operationName = operationName;
         this.timeoutMs = timeoutMs;
+
+        this.runtimeBootId = runtimeBootId;
+        this.scheduledAtMs = scheduledAtMs;
+        this.expectedFireAtMs = expectedFireAtMs;
+        this.actuallyFiredAtMs = actuallyFiredAtMs;
+        this.timerDriftMs = actuallyFiredAtMs - expectedFireAtMs;
     }
 }
 
@@ -391,7 +411,16 @@ async function withTimeout<T>(
                 timerDriftMs: actuallyFiredAtMs - expectedFireAtMs,
             });
 
-            reject(new OperationTimeoutError(operationName, timeoutMs));
+            reject(
+                new OperationTimeoutError(
+                    operationName,
+                    timeoutMs,
+                    BACKGROUND_RUNTIME_BOOT_ID,
+                    scheduledAtMs,
+                    expectedFireAtMs,
+                    actuallyFiredAtMs,
+                ),
+            );
         }, timeoutMs);
     });
 
@@ -648,6 +677,14 @@ console.log("[BG_RUNTIME_BOOT]", {
     bootedAt: new Date().toISOString(),
 });
 
+/*
+ * Headless JS keep-alive 中に、
+ * JS setTimeout が本当に進み続けるか確認する一時診断。
+ *
+ * 同一JS Runtimeでは最初のBackground callbackで1回だけ実行する。
+ */
+let hasRunBackgroundKeepAliveTimerTest = false;
+
 TaskManager.defineTask(
     BACKGROUND_LOCATION_TASK_NAME,
     async ({ data, error }) => {
@@ -658,6 +695,51 @@ TaskManager.defineTask(
             taskStartedAtMs,
             taskFiredAt,
         });
+
+        /*
+         * Headless JS keep-alive中に
+         * setTimeout(5000) が正常に進むか確認する。
+         *
+         * 同一JS Runtimeにつき1回だけ。
+         */
+        if (!hasRunBackgroundKeepAliveTimerTest) {
+            hasRunBackgroundKeepAliveTimerTest = true;
+
+            const timerTestScheduledAtMs = Date.now();
+            const timerTestExpectedFireAtMs = timerTestScheduledAtMs + 5_000;
+
+            console.log("[BG_KEEPALIVE_TIMER_TEST_SCHEDULED]", {
+                runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
+                scheduledAtMs: timerTestScheduledAtMs,
+                scheduledAt: new Date(timerTestScheduledAtMs).toISOString(),
+                expectedFireAtMs: timerTestExpectedFireAtMs,
+                expectedFireAt: new Date(
+                    timerTestExpectedFireAtMs,
+                ).toISOString(),
+            });
+
+            await new Promise<void>((resolve) => {
+                setTimeout(() => {
+                    const actuallyFiredAtMs = Date.now();
+
+                    console.log("[BG_KEEPALIVE_TIMER_TEST_FIRED]", {
+                        runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
+                        scheduledAtMs: timerTestScheduledAtMs,
+                        expectedFireAtMs: timerTestExpectedFireAtMs,
+                        actuallyFiredAtMs,
+                        actuallyFiredAt: new Date(
+                            actuallyFiredAtMs,
+                        ).toISOString(),
+                        timerDriftMs:
+                            actuallyFiredAtMs - timerTestExpectedFireAtMs,
+                        actualElapsedMs:
+                            actuallyFiredAtMs - timerTestScheduledAtMs,
+                    });
+
+                    resolve();
+                }, 5_000);
+            });
+        }
         /*
          * 後続処理より前に、OSから渡された地点数を取得する。
          *
@@ -1186,18 +1268,12 @@ TaskManager.defineTask(
                         );
 
                     currentState = liveLocationResult.nextState;
-
                     liveLocationUpdateAttempted = liveLocationResult.attempted;
-
                     liveLocationUpdateSucceeded = liveLocationResult.succeeded;
-
                     liveLocationUpdateTimedOut = liveLocationResult.timedOut;
-
                     liveLocationUpdateOperation = liveLocationResult.operation;
-
                     liveLocationUpdateErrorMessage =
                         liveLocationResult.errorMessage ?? null;
-
                     liveLocationUpdatedId =
                         liveLocationResult.liveLocationId ?? null;
                 }
@@ -1955,8 +2031,28 @@ async function updateBackgroundLiveLocation(
                 longitude,
                 isRecording,
                 sharedOwnerCount: sharedOwners.length,
+
                 timeoutMs: timedOut ? error.timeoutMs : null,
                 operationName: timedOut ? error.operationName : null,
+
+                // PC非接続でも確認できるtimer診断情報
+                runtimeBootId: timedOut ? error.runtimeBootId : null,
+                scheduledAtMs: timedOut ? error.scheduledAtMs : null,
+                scheduledAt: timedOut
+                    ? new Date(error.scheduledAtMs).toISOString()
+                    : null,
+                expectedFireAtMs: timedOut ? error.expectedFireAtMs : null,
+                expectedFireAt: timedOut
+                    ? new Date(error.expectedFireAtMs).toISOString()
+                    : null,
+                actuallyFiredAtMs: timedOut ? error.actuallyFiredAtMs : null,
+                actuallyFiredAt: timedOut
+                    ? new Date(error.actuallyFiredAtMs).toISOString()
+                    : null,
+                timerDriftMs: timedOut ? error.timerDriftMs : null,
+                actualElapsedMs: timedOut
+                    ? error.actuallyFiredAtMs - error.scheduledAtMs
+                    : null,
             },
         });
 
@@ -2370,6 +2466,9 @@ async function saveBackgroundLocation(
                 longitude,
                 operationName: error.operationName,
                 timeoutMs: error.timeoutMs,
+                runtimeBootId: error.runtimeBootId,
+                timerDriftMs: error.timerDriftMs,
+                actualElapsedMs: error.actuallyFiredAtMs - error.scheduledAtMs,
             });
 
             await safeSaveBackgroundLocationDebugLog({
@@ -2382,8 +2481,26 @@ async function saveBackgroundLocation(
                     recordedAt,
                     latitude,
                     longitude,
+
                     operationName: error.operationName,
                     timeoutMs: error.timeoutMs,
+
+                    // PC非接続でも確認できるtimer診断情報
+                    runtimeBootId: error.runtimeBootId,
+                    scheduledAtMs: error.scheduledAtMs,
+                    scheduledAt: new Date(error.scheduledAtMs).toISOString(),
+                    expectedFireAtMs: error.expectedFireAtMs,
+                    expectedFireAt: new Date(
+                        error.expectedFireAtMs,
+                    ).toISOString(),
+                    actuallyFiredAtMs: error.actuallyFiredAtMs,
+                    actuallyFiredAt: new Date(
+                        error.actuallyFiredAtMs,
+                    ).toISOString(),
+                    timerDriftMs: error.timerDriftMs,
+                    actualElapsedMs:
+                        error.actuallyFiredAtMs - error.scheduledAtMs,
+
                     isRecording: state.isRecording,
                     isLiveSharing: state.liveShareOwnerValues.length > 0,
                     sharedOwnersCount: state.liveShareOwnerValues.length,

@@ -1320,6 +1320,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
             setPendingSessionShareOwnerValues([]);
             setPendingRecordingIntervalMs(null);
             setPendingRecordingDistanceMeters(null);
+
+            Alert.alert("保存完了", "アクティビティ記録の保存が完了しました。");
         } catch (error) {
             console.error("Save session name error:", error);
             Alert.alert("保存エラー", "アクティビティ名の保存に失敗しました。");
@@ -2657,11 +2659,11 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     <View style={styles.modalOverlay}>
                         <View style={styles.modalContent}>
                             <Text style={styles.modalTitle}>
-                                セッション名を入力
+                                アクティビティ名を入力
                             </Text>
 
                             <Text style={styles.modalDescription}>
-                                この自動記録セッションの名前を入力してください。
+                                この自動記録アクティビティの名前を入力してください。
                             </Text>
 
                             <TextInput

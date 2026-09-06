@@ -1593,15 +1593,20 @@ export function useForegroundLocationRecorder({
             return;
         }
 
-        let cancelled = false;
+        const stopRequest = pendingPlanLimitStop;
+
+        /*
+         * 同じ停止要求を再処理しないよう先にクリアする。
+         *
+         * ただしEffect cleanupによるcancelled判定は使わない。
+         * setPendingPlanLimitStop(null)によってcleanupが発生するため、
+         * cancelledを使うとstopRecording完了後の処理まで
+         * 到達できなくなる。
+         */
+        setPendingPlanLimitStop(null);
 
         const stopByPlanLimit = async (): Promise<void> => {
-            const { recordingSessionId, reason } = pendingPlanLimitStop;
-
-            /*
-             * 同じ停止要求を再処理しないよう先にクリアする。
-             */
-            setPendingPlanLimitStop(null);
+            const { recordingSessionId, reason } = stopRequest;
 
             console.log(
                 "[SubscriptionPlanLimit] Stop recording by plan limit:",
@@ -1613,16 +1618,12 @@ export function useForegroundLocationRecorder({
 
             /*
              * 上限到達後に最終地点を追加保存すると
-             * 1001件目になる可能性があるため、
+             * 上限超過になる可能性があるため、
              * final LocationLogは保存しない。
              */
             const finishedSessionId = await stopRecording({
                 skipFinalLocationSave: true,
             });
-
-            if (cancelled) {
-                return;
-            }
 
             if (!finishedSessionId) {
                 return;
@@ -1633,6 +1634,10 @@ export function useForegroundLocationRecorder({
                     ? "FREE_PLAN_DURATION_LIMIT"
                     : "FREE_PLAN_POINT_LIMIT";
 
+            /*
+             * LocationHomeScreenへ
+             * セッションIDとPlan上限停止理由を通知する。
+             */
             setPlanLimitAutoStop({
                 recordingSessionId: finishedSessionId,
                 reason: autoStopReason,
@@ -1641,14 +1646,11 @@ export function useForegroundLocationRecorder({
             console.log("[SubscriptionPlanLimit] Recording stopped:", {
                 recordingSessionId: finishedSessionId,
                 reason,
+                autoStopReason,
             });
         };
 
         void stopByPlanLimit();
-
-        return () => {
-            cancelled = true;
-        };
     }, [pendingPlanLimitStop, stopRecording]);
 
     /*

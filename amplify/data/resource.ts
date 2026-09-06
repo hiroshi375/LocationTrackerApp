@@ -106,7 +106,12 @@ const schema = a
                 currentMonthDistanceMeters: a.float(),
                 currentMonthDurationSeconds: a.integer(),
                 currentMonthSessionCount: a.integer(),
+                subscriptionUsageMonthKey: a.string(),
+                currentMonthRecordedActivityCount: a.integer(),
             })
+            .secondaryIndexes((index) => [
+                index("userId").queryField("listUserProfilesByUserId"),
+            ])
             .authorization((allow) => [
                 allow.owner(),
                 allow.authenticated().to(["read"]),

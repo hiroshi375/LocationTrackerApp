@@ -38,6 +38,11 @@ type SessionLogItem = {
 
 type RecordingSessionSummaryOptions = {
     skipAggregation?: boolean;
+    /*
+     * Backfill等で複数sessionを一括処理するときは
+     * 各sessionごとの課金利用量再計算をスキップする。
+     */
+    skipSubscriptionUsageRecalculation?: boolean;
     lastContinuationConfirmedAt?: string | null;
     continuationConfirmationCount?: number | null;
     autoStoppedAt?: string | null;
@@ -49,6 +54,135 @@ function createRecordingSessionRecordId(
     recordingSessionId: string,
 ): string {
     return `recording-session:${userId}:${recordingSessionId}`;
+}
+
+export async function recalculateCurrentMonthRecordedActivityUsage(
+    userId: string,
+    now = new Date(),
+): Promise<number> {
+    const recordingSessionModel = client.models.RecordingSession as any;
+
+    const userProfileModel = client.models.UserProfile as any;
+
+    const currentMonthKey = createMonthKey(now.toISOString());
+
+    /*
+     * ローカルタイム基準で今月の範囲を作る。
+     */
+    const startOfMonth = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        1,
+        0,
+        0,
+        0,
+        0,
+    );
+
+    const startOfNextMonth = new Date(
+        now.getFullYear(),
+        now.getMonth() + 1,
+        1,
+        0,
+        0,
+        0,
+        0,
+    );
+
+    const endOfMonth = new Date(startOfNextMonth.getTime() - 1);
+
+    let nextToken: string | null = null;
+    let count = 0;
+
+    do {
+        const result =
+            (await recordingSessionModel.listRecordingSessionsByUserAndEndedAt({
+                userId,
+
+                endedAt: {
+                    between: [
+                        startOfMonth.toISOString(),
+                        endOfMonth.toISOString(),
+                    ],
+                },
+
+                sortDirection: "ASC",
+                limit: 1000,
+                nextToken: nextToken ?? undefined,
+            })) as ListResult;
+
+        if (result.errors) {
+            throw new Error(
+                `RecordingSession monthly usage query failed: ${JSON.stringify(
+                    result.errors,
+                )}`,
+            );
+        }
+
+        count += (result.data ?? []).filter(
+            (item: any) =>
+                item?.userId === userId &&
+                typeof item.recordingSessionId === "string" &&
+                item.recordingSessionId.length > 0,
+        ).length;
+
+        nextToken = result.nextToken ?? null;
+    } while (nextToken);
+
+    /*
+     * UserProfileは現在id=userIdで作成しているため、
+     * 固定IDで直接更新する。
+     */
+    const profileResult = await userProfileModel.listUserProfilesByUserId({
+        userId,
+        limit: 10,
+    });
+
+    if (profileResult.errors) {
+        throw new Error(
+            `UserProfile subscription usage query failed: ${JSON.stringify(
+                profileResult.errors,
+            )}`,
+        );
+    }
+
+    const profile = (profileResult.data ?? []).find(
+        (item: any) =>
+            item?.userId === userId &&
+            typeof item.id === "string" &&
+            item.id.length > 0,
+    );
+
+    if (!profile?.id) {
+        throw new Error(
+            `UserProfile not found for subscription usage: ${userId}`,
+        );
+    }
+
+    const updateResult = await userProfileModel.update({
+        id: userId,
+        subscriptionUsageMonthKey: currentMonthKey,
+        currentMonthRecordedActivityCount: count,
+    });
+
+    if (updateResult.errors) {
+        throw new Error(
+            `UserProfile subscription usage update failed: ${JSON.stringify(
+                updateResult.errors,
+            )}`,
+        );
+    }
+
+    console.log(
+        "[SubscriptionUsage] Current month activity usage recalculated:",
+        {
+            userId,
+            currentMonthKey,
+            count,
+        },
+    );
+
+    return count;
 }
 
 export async function upsertRecordingSessionSummary(
@@ -309,6 +443,26 @@ export async function upsertRecordingSessionSummary(
         isAggregationTarget,
     );
 
+    /*
+     * 課金制限用の月間アクティビティ件数を更新する。
+     *
+     * RecordingSessionを正本として毎回再計算するため、
+     * 同一sessionの再保存でも二重加算されない。
+     *
+     * Backfillなど複数sessionを一括処理するときは、
+     * skipSubscriptionUsageRecalculation = true として
+     * 各sessionごとの再計算をスキップする。
+     */
+    if (!options?.skipSubscriptionUsageRecalculation) {
+        await recalculateCurrentMonthRecordedActivityUsage(currentUser.userId);
+    }
+
+    /*
+     * 既存のアクティビティ集計処理。
+     *
+     * Backfillでは各sessionごとの集計をスキップし、
+     * 最後にまとめて再計算する。
+     */
     if (!options?.skipAggregation) {
         await recalculateUserActivityAggregates(currentUser.userId);
     }
@@ -450,6 +604,12 @@ export async function updateRecordingSessionActivityType(
 export async function recalculateCurrentUserActivityAggregates(): Promise<void> {
     const currentUser = await getCurrentUser();
     await recalculateUserActivityAggregates(currentUser.userId);
+}
+
+export async function recalculateCurrentUserSubscriptionUsage(): Promise<number> {
+    const currentUser = await getCurrentUser();
+
+    return recalculateCurrentMonthRecordedActivityUsage(currentUser.userId);
 }
 
 async function updateLocationLogClassification(
@@ -693,6 +853,7 @@ export async function backfillRecordingSessionsFromLocationLogs(
                 undefined,
                 {
                     skipAggregation: true,
+                    skipSubscriptionUsageRecalculation: true,
                 },
             );
 
@@ -748,6 +909,7 @@ export async function backfillRecordingSessionsFromLocationLogs(
         currentRecordingSessionId: null,
     });
 
+    await recalculateCurrentMonthRecordedActivityUsage(currentUser.userId);
     await recalculateUserActivityAggregates(currentUser.userId);
 
     return {

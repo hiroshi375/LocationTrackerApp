@@ -25,6 +25,8 @@ import * as Location from "expo-location";
 import * as Updates from "expo-updates";
 import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRecorder";
 import {
+    canStartMonthlyActivity,
+    getSubscriptionPlanLimits,
     isRecordingDistanceAllowed,
     isRecordingIntervalAllowed,
     sanitizeRecordingDistance,
@@ -53,14 +55,16 @@ import {
     getRecordingContinuationState,
 } from "../services/recordingContinuationService";
 import {
-    backfillRecordingSessionsFromLocationLogs,
-    upsertRecordingSessionSummary,
     type RecordingSessionBackfillProgress,
+    backfillRecordingSessionsFromLocationLogs,
+    recalculateCurrentUserSubscriptionUsage,
+    upsertRecordingSessionSummary,
 } from "../services/recordingSessionService";
 import {
     ensureUserProfile,
     getCurrentUserProfile,
 } from "../services/userProfileService";
+import { createMonthKey } from "../services/userActivityAggregationService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationHome">;
 
@@ -148,11 +152,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
     );
     const [isAdmin, setIsAdmin] = useState(false);
 
-    const {
-        tier: subscriptionTier,
-        isPremium,
-        loading: subscriptionLoading,
-    } = useSubscription();
+    const { tier: subscriptionTier, loading: subscriptionLoading } =
+        useSubscription();
 
     const RECORD_INTERVAL_OPTIONS = [
         { label: "10秒", value: 10 * 1000 },
@@ -893,6 +894,58 @@ export default function LocationHomeScreen({ navigation }: Props) {
             }
         }, []);
 
+    const loadCurrentMonthSubscriptionUsage = useCallback(async (): Promise<{
+        monthKey: string;
+        activityCount: number;
+    }> => {
+        const currentMonthKey = createMonthKey(new Date());
+
+        const profile = await getCurrentUserProfile();
+
+        /*
+         * UserProfileに保存されている課金用月キーが
+         * 現在の月と一致している場合は、
+         * 保存済みの件数をそのまま使用する。
+         */
+        if (profile.subscriptionUsageMonthKey === currentMonthKey) {
+            const activityCount =
+                profile.currentMonthRecordedActivityCount ?? 0;
+
+            console.log(
+                "[SubscriptionUsage] Current month usage loaded from UserProfile:",
+                {
+                    currentMonthKey,
+                    activityCount,
+                },
+            );
+
+            return {
+                monthKey: currentMonthKey,
+                activityCount,
+            };
+        }
+
+        /*
+         * 月が変わっている、またはまだ課金用月キーが
+         * 作成されていない場合はRecordingSessionを正本として
+         * 当月件数を再計算する。
+         */
+        console.log(
+            "[SubscriptionUsage] Month key changed. Recalculating usage:",
+            {
+                savedMonthKey: profile.subscriptionUsageMonthKey ?? null,
+                currentMonthKey,
+            },
+        );
+
+        const activityCount = await recalculateCurrentUserSubscriptionUsage();
+
+        return {
+            monthKey: currentMonthKey,
+            activityCount,
+        };
+    }, []);
+
     const handleStartRecording = async () => {
         if (startingRecording) {
             return;
@@ -920,7 +973,40 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
                 return;
             }
+            /*
+             * Phase 2:
+             * 月間アクティビティ数の制限を確認する。
+             *
+             * Premiumなど月間上限のないプランの場合は
+             * このチェック自体をスキップする。
+             */
+            const planLimits = getSubscriptionPlanLimits(subscriptionTier);
 
+            if (planLimits.maxMonthlyActivities !== null) {
+                const usage = await loadCurrentMonthSubscriptionUsage();
+
+                const canStart = canStartMonthlyActivity(
+                    subscriptionTier,
+                    usage.activityCount,
+                );
+
+                console.log("[SubscriptionUsage] Recording start check:", {
+                    subscriptionTier,
+                    monthKey: usage.monthKey,
+                    activityCount: usage.activityCount,
+                    maxMonthlyActivities: planLimits.maxMonthlyActivities,
+                    canStart,
+                });
+
+                if (!canStart) {
+                    Alert.alert(
+                        "今月の記録上限に達しました",
+                        `無料プランでは1か月に${planLimits.maxMonthlyActivities}件までアクティビティを記録できます。\n\nPremiumプランでは月間アクティビティ数の制限なく記録できます。`,
+                    );
+
+                    return;
+                }
+            }
             await startRecording();
         } catch (error) {
             if (isBackgroundLocationDisclosureDeclined(error)) {

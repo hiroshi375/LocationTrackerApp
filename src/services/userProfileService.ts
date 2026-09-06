@@ -19,6 +19,8 @@ type UserProfileRecord = {
     currentMonthDistanceMeters?: number | null;
     currentMonthDurationSeconds?: number | null;
     currentMonthSessionCount?: number | null;
+    subscriptionUsageMonthKey?: string | null;
+    currentMonthRecordedActivityCount?: number | null;
 };
 
 type CurrentUserProfile = {
@@ -36,6 +38,8 @@ type CurrentUserProfile = {
     currentMonthDistanceMeters: number;
     currentMonthDurationSeconds: number;
     currentMonthSessionCount: number;
+    subscriptionUsageMonthKey: string | null;
+    currentMonthRecordedActivityCount: number;
 };
 
 export async function ensureUserProfile() {
@@ -162,6 +166,11 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
             currentMonthDurationSeconds:
                 existing.currentMonthDurationSeconds ?? 0,
             currentMonthSessionCount: existing.currentMonthSessionCount ?? 0,
+            subscriptionUsageMonthKey:
+                existing.subscriptionUsageMonthKey ?? null,
+
+            currentMonthRecordedActivityCount:
+                existing.currentMonthRecordedActivityCount ?? 0,
         };
     }
 
@@ -185,6 +194,8 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
             currentMonthDistanceMeters: 0,
             currentMonthDurationSeconds: 0,
             currentMonthSessionCount: 0,
+            subscriptionUsageMonthKey: null,
+            currentMonthRecordedActivityCount: 0,
         };
     }
 
@@ -205,51 +216,56 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
         currentMonthDistanceMeters: created.currentMonthDistanceMeters ?? 0,
         currentMonthDurationSeconds: created.currentMonthDurationSeconds ?? 0,
         currentMonthSessionCount: created.currentMonthSessionCount ?? 0,
+        subscriptionUsageMonthKey: created.subscriptionUsageMonthKey ?? null,
+        currentMonthRecordedActivityCount:
+            created.currentMonthRecordedActivityCount ?? 0,
     };
 }
 
 async function findExistingUserProfile(
     userId: string,
 ): Promise<UserProfileRecord | null> {
-    const allProfiles: UserProfileRecord[] = [];
-    let nextToken: string | null = null;
+    const userProfileModel = client.models.UserProfile as any;
 
-    do {
-        const userProfileModel = client.models.UserProfile as any;
+    const result = await userProfileModel.listUserProfilesByUserId({
+        userId,
+        limit: 10,
+    });
 
-        const result = (await userProfileModel.list({
-            filter: {
-                userId: {
-                    eq: userId,
-                },
-            },
-            limit: 100,
-            nextToken: nextToken ?? undefined,
-        })) as {
-            data?: UserProfileRecord[] | null;
-            errors?: unknown;
-            nextToken?: string | null;
-        };
+    if (result.errors) {
+        console.error("UserProfile query errors:", result.errors);
 
-        if (result.errors) {
-            console.error("UserProfile list errors:", result.errors);
-            throw new Error("プロフィールを取得できませんでした。");
-        }
+        throw new Error("プロフィールを取得できませんでした。");
+    }
 
-        allProfiles.push(...(result.data ?? []));
+    const profiles = (result.data ?? []).filter(
+        (profile: UserProfileRecord) => profile.userId === userId,
+    );
 
-        const matchingProfile = allProfiles.find(
-            (profile) => profile.userId === userId,
-        );
+    return pickUserProfile(profiles);
+}
 
-        if (matchingProfile) {
-            return matchingProfile;
-        }
+function pickUserProfile(
+    profiles: UserProfileRecord[],
+): UserProfileRecord | null {
+    if (profiles.length === 0) {
+        return null;
+    }
 
-        nextToken = result.nextToken ?? null;
-    } while (nextToken);
-
-    return allProfiles.find((profile) => profile.userId === userId) ?? null;
+    return (
+        profiles.find(
+            (profile) =>
+                profile.ownerValue &&
+                profile.displayName &&
+                profile.displayName.trim().length > 0,
+        ) ??
+        profiles.find((profile) => profile.ownerValue) ??
+        profiles.find(
+            (profile) =>
+                profile.displayName && profile.displayName.trim().length > 0,
+        ) ??
+        profiles[0]
+    );
 }
 
 function buildSearchText(displayName: string, email: string) {

@@ -585,6 +585,20 @@
               "isRequired": false,
               "attributes": []
             },
+            "subscriptionUsageMonthKey": {
+              "name": "subscriptionUsageMonthKey",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "currentMonthRecordedActivityCount": {
+              "name": "currentMonthRecordedActivityCount",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
             "createdAt": {
               "name": "createdAt",
               "isArray": false,
@@ -608,6 +622,16 @@
             {
               "type": "model",
               "properties": {}
+            },
+            {
+              "type": "key",
+              "properties": {
+                "name": "userProfilesByUserId",
+                "queryField": "listUserProfilesByUserId",
+                "fields": [
+                  "userId"
+                ]
+              }
             },
             {
               "type": "auth",

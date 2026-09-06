@@ -28,6 +28,7 @@ import {
 } from "../services/activityClassificationService";
 import {
     recalculateCurrentUserActivityAggregates,
+    recalculateCurrentUserSubscriptionUsage,
     updateRecordingSessionActivityType,
 } from "../services/recordingSessionService";
 
@@ -860,7 +861,7 @@ export default function LocationLogScreen({ navigation }: Props) {
             setRecordingSessionTotalCount((currentCount) =>
                 currentCount === null ? null : Math.max(0, currentCount - 1),
             );
-
+            await recalculateCurrentUserSubscriptionUsage();
             await recalculateCurrentUserActivityAggregates();
         } catch (error) {
             console.error("RecordingSession delete error:", error);

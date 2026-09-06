@@ -190,6 +190,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
     const [loadingLiveShareUsers, setLoadingLiveShareUsers] = useState(false);
     const [liveShareStatusMessage, setLiveShareStatusMessage] = useState("");
+    const [planLimitStatusMessage, setPlanLimitStatusMessage] = useState("");
     const [openingSharedLiveMap, setOpeningSharedLiveMap] = useState(false);
     const [backfillingSessions, setBackfillingSessions] = useState(false);
     const [forcingEasUpdate, setForcingEasUpdate] = useState(false);
@@ -962,6 +963,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
         try {
             setStartingRecording(true);
             setLiveShareStatusMessage("");
+            setPlanLimitStatusMessage("");
 
             const intervalAllowed = isRecordingIntervalAllowed(
                 subscriptionTier,
@@ -1903,27 +1905,25 @@ export default function LocationHomeScreen({ navigation }: Props) {
             const isSharing = selectedLiveShareUsers.length > 0;
 
             if (reason === "FREE_PLAN_DURATION_LIMIT") {
-                setLiveShareStatusMessage(
-                    isSharing
-                        ? "無料プランの1アクティビティあたり2時間の上限に達したため、自動記録を停止しました。現在地共有は継続中です。"
-                        : "無料プランの1アクティビティあたり2時間の上限に達したため、自動記録を停止しました。",
-                );
-
-                Alert.alert(
-                    "自動記録を停止しました",
+                setPlanLimitStatusMessage(
                     "無料プランの1アクティビティあたり2時間の上限に達したため、自動記録を停止しました。",
                 );
-            } else {
-                setLiveShareStatusMessage(
-                    isSharing
-                        ? "無料プランの1アクティビティあたり1,000ポイントの上限に達したため、自動記録を停止しました。現在地共有は継続中です。"
-                        : "無料プランの1アクティビティあたり1,000ポイントの上限に達したため、自動記録を停止しました。",
-                );
 
-                Alert.alert(
-                    "自動記録を停止しました",
+                if (isSharing) {
+                    setLiveShareStatusMessage(
+                        "自動記録は停止しました。現在地共有は継続中です。",
+                    );
+                }
+            } else {
+                setPlanLimitStatusMessage(
                     "無料プランの1アクティビティあたり1,000ポイントの上限に達したため、自動記録を停止しました。",
                 );
+
+                if (isSharing) {
+                    setLiveShareStatusMessage(
+                        "自動記録は停止しました。現在地共有は継続中です。",
+                    );
+                }
             }
 
             /*
@@ -2850,6 +2850,14 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                             : "自動記録開始"}
                                 </Text>
                             </Pressable>
+
+                            {planLimitStatusMessage.length > 0 && (
+                                <View style={styles.planLimitStatusBox}>
+                                    <Text style={styles.planLimitStatusText}>
+                                        {planLimitStatusMessage}
+                                    </Text>
+                                </View>
+                            )}
 
                             {!checkingBackgroundLocationPermission &&
                                 !hasBackgroundLocationPermission && (
@@ -4026,5 +4034,23 @@ const styles = StyleSheet.create({
 
     liveShareUserTextContainer: {
         flex: 1,
+    },
+
+    planLimitStatusBox: {
+        marginTop: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: 8,
+        backgroundColor: "#fff4e5",
+        borderWidth: 1,
+        borderColor: "#f0b35a",
+    },
+
+    planLimitStatusText: {
+        fontSize: 14,
+        lineHeight: 20,
+        color: "#8a4b08",
+        fontWeight: "600",
+        textAlign: "center",
     },
 });

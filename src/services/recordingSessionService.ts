@@ -62,6 +62,12 @@ export async function upsertRecordingSessionSummary(
     const logs = await listLocationLogsBySessionId(recordingSessionId);
     const routeLogs = normalizeRouteLogs(logs);
 
+    console.log("[RecordingSessionSummary] LocationLog counts:", {
+        recordingSessionId,
+        locationLogCount: logs.length,
+        routeLogCount: routeLogs.length,
+    });
+
     if (routeLogs.length === 0) {
         return;
     }
@@ -185,7 +191,7 @@ export async function upsertRecordingSessionSummary(
         startedAt: startAt,
         endedAt: endAt,
         distanceMeters,
-        pointCount: routeLogs.length,
+        pointCount: logs.length,
         startBatteryLevel: batteryLogs[0]?.batteryLevel ?? null,
         endBatteryLevel:
             batteryLogs[batteryLogs.length - 1]?.batteryLevel ?? null,

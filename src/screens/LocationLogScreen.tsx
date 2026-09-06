@@ -376,20 +376,52 @@ export default function LocationLogScreen({ navigation }: Props) {
                         Boolean(item.endAt),
                 );
 
+                /*
+                 * 地図から戻った場合、
+                 * prependSession は地図を開く前の古い表示データなので、
+                 * LocationLogの最新件数を再取得して更新する。
+                 */
+                let refreshedPrependSession: RecordingSessionDisplayItem | null =
+                    null;
+
+                if (prependSession) {
+                    const pointCounts = await loadSessionPointCounts(
+                        prependSession.recordingSessionId,
+                    );
+
+                    refreshedPrependSession = {
+                        ...prependSession,
+                        pointCount: pointCounts.pointCount,
+                        foregroundPointCount: pointCounts.foregroundPointCount,
+                        backgroundPointCount: pointCounts.backgroundPointCount,
+                    };
+
+                    console.log(
+                        "[LocationLogScreen] Refreshed return session point count:",
+                        {
+                            recordingSessionId:
+                                prependSession.recordingSessionId,
+                            oldPointCount: prependSession.pointCount,
+                            newPointCount: pointCounts.pointCount,
+                            foregroundPointCount:
+                                pointCounts.foregroundPointCount,
+                            backgroundPointCount:
+                                pointCounts.backgroundPointCount,
+                        },
+                    );
+                }
+
                 setRecordingSessions((currentItems) => {
                     if (reset) {
                         /*
                          * 地図から戻った場合は、
-                         * 参照したsessionを必ず先頭に置く。
-                         *
-                         * GSIではそれより古いsessionだけを取得しているため、
-                         * 選択sessionとの重複も発生しない。
+                         * 最新ポイント数へ更新した参照sessionを先頭に置く。
                          */
-                        if (prependSession) {
-                            return [prependSession, ...nextItems].slice(
-                                0,
-                                SESSION_PAGE_SIZE,
-                            );
+                        if (refreshedPrependSession) {
+                            return [
+                                refreshedPrependSession,
+                                ...nextItems,
+                            ].slice(0, SESSION_PAGE_SIZE);
                         }
 
                         /*
@@ -398,11 +430,6 @@ export default function LocationLogScreen({ navigation }: Props) {
                         return nextItems;
                     }
 
-                    /*
-                     * 「もっと見る」の場合。
-                     * nextToken再読込などによる重複に備え、
-                     * id単位で重複を除外する。
-                     */
                     const itemMap = new Map<
                         string,
                         RecordingSessionDisplayItem

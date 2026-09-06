@@ -3,9 +3,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 const RECORDING_CONTINUATION_STATE_KEY =
     "location-tracker-recording-continuation-state";
 
-//export const RECORDING_CONTINUATION_HOUR_INTERVAL_MS = 60 * 60 * 1000;
+export const RECORDING_CONTINUATION_HOUR_INTERVAL_MS = 60 * 60 * 1000;
 // 5分ごとに継続確認するように変更
-export const RECORDING_CONTINUATION_HOUR_INTERVAL_MS = 5 * 60 * 1000;
+//export const RECORDING_CONTINUATION_HOUR_INTERVAL_MS = 5 * 60 * 1000;
 export const RECORDING_CONTINUATION_POINT_INTERVAL = 1000;
 export const RECORDING_CONTINUATION_RESPONSE_TIMEOUT_MS = 3 * 60 * 1000;
 

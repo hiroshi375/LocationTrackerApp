@@ -468,7 +468,7 @@ async function listMyShareCandidates(
     const { userId } = getCaller(event);
 
     /*
-     * 自分が所属しているグループを取得。
+     * 自分が所属しているグループを取得する。
      */
     const myMembershipResult =
         await client.models.ShareGroupMember.listShareGroupMembershipsByUser(
@@ -495,14 +495,19 @@ async function listMyShareCandidates(
         return [];
     }
 
-    const candidateMap = new Map<
+    /*
+     * ShareGroupMemberからは、
+     * 「誰が同じグループに所属しているか」と
+     * ownerValueだけを取得する。
+     *
+     * displayName / email / iconImagePath は
+     * ShareGroupMemberに保存されているコピーを使用しない。
+     */
+    const membershipCandidateMap = new Map<
         string,
         {
             userId: string;
             ownerValue: string;
-            displayName?: string;
-            email?: string;
-            iconImagePath?: string;
         }
     >();
 
@@ -530,6 +535,9 @@ async function listMyShareCandidates(
         }
 
         for (const member of groupMembersResult.data ?? []) {
+            /*
+             * 自分自身は共有候補から除外する。
+             */
             if (member.userId === userId) {
                 continue;
             }
@@ -538,23 +546,104 @@ async function listMyShareCandidates(
                 continue;
             }
 
-            candidateMap.set(member.userId, {
+            /*
+             * 同じユーザーと複数グループでつながっていても
+             * userId単位で1件だけ保持する。
+             */
+            membershipCandidateMap.set(member.userId, {
                 userId: member.userId,
                 ownerValue: member.ownerValue,
-                displayName: member.displayName ?? undefined,
-                email: member.email ?? undefined,
-                iconImagePath: member.iconImagePath ?? undefined,
             });
         }
     }
 
-    return [...candidateMap.values()].sort((a, b) => {
-        const aName = a.displayName ?? a.email ?? "";
+    /*
+     * ShareGroupMemberで確定した共有候補について、
+     * 最新のUserProfileを取得する。
+     */
+    const candidateEntries = await Promise.all(
+        [...membershipCandidateMap.values()].map(async (candidate) => {
+            const profileResult = await client.models.UserProfile.list({
+                filter: {
+                    userId: {
+                        eq: candidate.userId,
+                    },
+                },
+                limit: 100,
+            });
 
-        const bName = b.displayName ?? b.email ?? "";
+            if (profileResult.errors) {
+                console.error(
+                    "[ShareGroup] UserProfile lookup errors:",
+                    profileResult.errors,
+                    {
+                        userId: candidate.userId,
+                    },
+                );
 
-        return aName.localeCompare(bName, "ja");
-    });
+                /*
+                 * 1人のプロフィール取得失敗で
+                 * 共有候補一覧全体を失敗させない。
+                 */
+                return null;
+            }
+
+            const profile = (profileResult.data ?? []).find(
+                (item) => item.userId === candidate.userId,
+            );
+
+            /*
+             * Cognito削除済みなどでUserProfileが存在しない場合は、
+             * 古いShareGroupMemberを候補として表示しない。
+             */
+            if (!profile) {
+                console.warn(
+                    "[ShareGroup] UserProfile not found for membership:",
+                    {
+                        userId: candidate.userId,
+                    },
+                );
+
+                return null;
+            }
+
+            return {
+                userId: candidate.userId,
+
+                /*
+                 * 共有権限判定に使うownerValueは
+                 * Membership側を正とする。
+                 */
+                ownerValue: candidate.ownerValue,
+
+                /*
+                 * 表示情報は最新UserProfileを正とする。
+                 */
+                displayName: profile.displayName ?? undefined,
+                email: profile.email ?? undefined,
+                iconImagePath: profile.iconImagePath ?? undefined,
+            };
+        }),
+    );
+
+    return candidateEntries
+        .filter(
+            (
+                candidate,
+            ): candidate is {
+                userId: string;
+                ownerValue: string;
+                displayName: string | undefined;
+                email: string | undefined;
+                iconImagePath: string | undefined;
+            } => candidate !== null,
+        )
+        .sort((a, b) => {
+            const aName = a.displayName ?? a.email ?? "";
+            const bName = b.displayName ?? b.email ?? "";
+
+            return aName.localeCompare(bName, "ja");
+        });
 }
 
 /*

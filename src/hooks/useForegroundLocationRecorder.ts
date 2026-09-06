@@ -27,6 +27,7 @@ import {
     evaluateRecordingContinuation,
     initializeRecordingContinuationState,
     markRecordingContinuationAutoStopped,
+    pauseRecordingContinuationConfirmation,
     type RecordingContinuationState,
 } from "../services/recordingContinuationService";
 import {
@@ -1237,9 +1238,22 @@ export function useForegroundLocationRecorder({
             return;
         }
 
+        /*
+         * 継続確認の3分タイムアウトは、
+         * ユーザーが確認UIを見られるforegroundでのみ開始する。
+         */
+        if (AppState.currentState !== "active") {
+            return;
+        }
+
         try {
-            const evaluation =
-                await evaluateRecordingContinuation(recordingSessionId);
+            const evaluation = await evaluateRecordingContinuation(
+                recordingSessionId,
+                Date.now(),
+                {
+                    startConfirmationTimeout: true,
+                },
+            );
 
             /*
              * 期限切れを先に判定する。
@@ -1390,6 +1404,33 @@ export function useForegroundLocationRecorder({
 
                 appStateRef.current = nextState;
 
+                const leftForeground =
+                    previousState === "active" && nextState !== "active";
+
+                /*
+                 * 継続確認ダイアログ表示中にBackgroundへ移行した場合、
+                 * 3分タイムアウトを解除する。
+                 *
+                 * 次回Foreground復帰時に再評価し、
+                 * その時点から改めて3分を開始する。
+                 */
+                if (leftForeground) {
+                    const recordingSessionId = recordingSessionIdRef.current;
+
+                    if (recordingSessionId) {
+                        void pauseRecordingContinuationConfirmation(
+                            recordingSessionId,
+                        );
+
+                        /*
+                         * 画面上の確認表示状態も解除する。
+                         */
+                        setContinuationPrompt(null);
+                    }
+
+                    return;
+                }
+
                 const returnedToForeground =
                     previousState !== "active" && nextState === "active";
 
@@ -1403,12 +1444,6 @@ export function useForegroundLocationRecorder({
 
                 /*
                  * まず位置取得系をhealth checkする。
-                 *
-                 * BG heartbeatがstaleならBG taskを再登録し、
-                 * FG watcherも再登録する。
-                 *
-                 * heartbeat正常でもforeground復帰時には
-                 * FG watcherだけ再登録する。
                  */
                 void verifyAndRecoverLocationRecording("returnedToForeground");
 
@@ -1416,13 +1451,26 @@ export function useForegroundLocationRecorder({
                  * SQLite pending回収は従来通り維持。
                  */
                 void drainSQLiteQueueOnForeground();
+
+                /*
+                 * Background中に継続確認条件へ達していても、
+                 * Foregroundへ戻るまで期限は開始しない。
+                 *
+                 * Foreground復帰時に再評価し、
+                 * 必要ならこの時点から3分タイムアウトを開始する。
+                 */
+                void checkRecordingContinuation();
             },
         );
 
         return () => {
             subscription.remove();
         };
-    }, [drainSQLiteQueueOnForeground, verifyAndRecoverLocationRecording]);
+    }, [
+        drainSQLiteQueueOnForeground,
+        verifyAndRecoverLocationRecording,
+        checkRecordingContinuation,
+    ]);
 
     useEffect(() => {
         if (!isRecording) {
@@ -1481,15 +1529,22 @@ export function useForegroundLocationRecorder({
         }
 
         /*
-         * 記録開始・復元直後にも一度確認する。
+         * 記録開始・復元直後も、
+         * foregroundの場合だけ継続確認を評価する。
          */
-        void checkRecordingContinuation();
+        if (AppState.currentState === "active") {
+            void checkRecordingContinuation();
+        }
 
         /*
-         * アプリがforegroundで動作している間だけ、
-         * 30秒ごとに継続確認条件と期限切れを確認する。
+         * 3分タイムアウトを開始する継続確認評価は
+         * foregroundだけで実行する。
          */
         const timerId = setInterval(() => {
+            if (AppState.currentState !== "active") {
+                return;
+            }
+
             void checkRecordingContinuation();
         }, 30_000);
 

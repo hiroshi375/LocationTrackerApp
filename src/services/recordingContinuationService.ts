@@ -37,6 +37,17 @@ export type RecordingContinuationEvaluation = {
     isDeadlineExpired: boolean;
 };
 
+export type RecordingContinuationEvaluationOptions = {
+    /**
+     * 継続確認が必要になった場合に、
+     * confirmationRequestedAt / confirmationDeadlineAt を作成して
+     * 3分タイムアウトを開始してよいか。
+     *
+     * foregroundで実際に確認UIを表示できる場合だけ true にする。
+     */
+    startConfirmationTimeout?: boolean;
+};
+
 export async function initializeRecordingContinuationState(
     recordingSessionId: string,
     recordingStartedAt: string,
@@ -141,6 +152,7 @@ export async function getRecordingContinuationState(): Promise<RecordingContinua
 export async function incrementRecordingContinuationPointCount(
     recordingSessionId: string,
     nowMs: number = Date.now(),
+    options: RecordingContinuationEvaluationOptions = {},
 ): Promise<RecordingContinuationEvaluation> {
     const state = await getRecordingContinuationState();
 
@@ -157,12 +169,17 @@ export async function incrementRecordingContinuationPointCount(
         savedPointCount: state.savedPointCount + 1,
     };
 
-    return evaluateAndPersist(nextState, nowMs);
+    return evaluateAndPersist(
+        nextState,
+        nowMs,
+        options.startConfirmationTimeout === true,
+    );
 }
 
 export async function evaluateRecordingContinuation(
     recordingSessionId: string,
     nowMs: number = Date.now(),
+    options: RecordingContinuationEvaluationOptions = {},
 ): Promise<RecordingContinuationEvaluation> {
     const state = await getRecordingContinuationState();
 
@@ -174,7 +191,11 @@ export async function evaluateRecordingContinuation(
         };
     }
 
-    return evaluateAndPersist(state, nowMs);
+    return evaluateAndPersist(
+        state,
+        nowMs,
+        options.startConfirmationTimeout === true,
+    );
 }
 
 export async function confirmRecordingContinuation(
@@ -218,6 +239,45 @@ export async function confirmRecordingContinuation(
     return nextState;
 }
 
+export async function pauseRecordingContinuationConfirmation(
+    recordingSessionId: string,
+): Promise<RecordingContinuationState | null> {
+    const state = await getRecordingContinuationState();
+
+    if (!state || state.recordingSessionId !== recordingSessionId) {
+        return state;
+    }
+
+    /*
+     * まだ継続確認中でなければ何もしない。
+     */
+    if (!state.confirmationRequired) {
+        return state;
+    }
+
+    /*
+     * Backgroundへ移行したため、
+     * 継続確認の3分タイムアウトを解除する。
+     *
+     * 次回Foregroundへ戻った時に再評価され、
+     * その時点から新しく3分タイムアウトを開始する。
+     */
+    const nextState: RecordingContinuationState = {
+        ...state,
+        confirmationRequired: false,
+        confirmationReason: null,
+        confirmationRequestedAt: null,
+        confirmationDeadlineAt: null,
+        recordingExpiresAt: null,
+        requestedElapsedHours: 0,
+        requestedPointMilestone: 0,
+    };
+
+    await writeRecordingContinuationState(nextState);
+
+    return nextState;
+}
+
 export async function markRecordingContinuationAutoStopped(
     recordingSessionId: string,
     nowIso: string = new Date().toISOString(),
@@ -258,6 +318,7 @@ export async function clearRecordingContinuationState(
 async function evaluateAndPersist(
     state: RecordingContinuationState,
     nowMs: number,
+    startConfirmationTimeout: boolean,
 ): Promise<RecordingContinuationEvaluation> {
     if (state.autoStoppedAt) {
         return {
@@ -269,8 +330,15 @@ async function evaluateAndPersist(
 
     if (state.confirmationRequired && state.confirmationDeadlineAt) {
         const deadlineMs = new Date(state.confirmationDeadlineAt).getTime();
+
         const isDeadlineExpired =
             Number.isFinite(deadlineMs) && nowMs >= deadlineMs;
+
+        /*
+         * incrementRecordingContinuationPointCount() から渡された場合に、
+         * confirmation待ち中でも最新のsavedPointCountを保持する。
+         */
+        await writeRecordingContinuationState(state);
 
         return {
             state,
@@ -286,6 +354,8 @@ async function evaluateAndPersist(
     const pointsReached = pointMilestone > state.confirmedPointMilestone;
 
     if (!timeReached && !pointsReached) {
+        await writeRecordingContinuationState(state);
+
         return {
             state,
             shouldShowConfirmation: false,
@@ -295,6 +365,23 @@ async function evaluateAndPersist(
 
     const reason: RecordingContinuationReason =
         timeReached && pointsReached ? "BOTH" : timeReached ? "TIME" : "POINTS";
+
+    /*
+     * 1時間経過 / ポイント到達は認識するが、
+     * background側からの評価では3分タイムアウトを開始しない。
+     *
+     * foregroundへ戻った際に再評価され、
+     * その時点から3分タイムアウトを開始する。
+     */
+    if (!startConfirmationTimeout) {
+        await writeRecordingContinuationState(state);
+
+        return {
+            state,
+            shouldShowConfirmation: false,
+            isDeadlineExpired: false,
+        };
+    }
 
     const requestedAt = new Date(nowMs).toISOString();
     const deadlineAt = new Date(

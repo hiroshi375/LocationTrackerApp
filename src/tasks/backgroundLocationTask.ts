@@ -2430,7 +2430,19 @@ async function saveBackgroundLocation(
         const continuationUpdateStartedAtMs = Date.now();
 
         try {
-            await incrementRecordingContinuationPointCount(recordingSessionId);
+            await incrementRecordingContinuationPointCount(
+                recordingSessionId,
+                Date.now(),
+                {
+                    /*
+                     * Backgroundではポイント数だけ更新する。
+                     *
+                     * 継続確認の3分タイムアウトは開始しない。
+                     * foregroundへ戻って確認UIを表示できる状態になった時だけ開始する。
+                     */
+                    startConfirmationTimeout: false,
+                },
+            );
         } finally {
             const durationMs = Date.now() - continuationUpdateStartedAtMs;
 

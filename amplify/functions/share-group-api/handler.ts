@@ -36,18 +36,45 @@ const INVITE_CODE_LENGTH = 8;
  */
 const INVITE_CODE_GENERATION_MAX_ATTEMPTS = 10;
 
-/*
- * Freeプランの共有グループ制限。
- *
- * Phase 5以降でPremium判定を追加したら、
- * ユーザーのプランに応じてこの制限を適用する。
- */
-const FREE_MAX_OWNED_SHARE_GROUPS = 2;
+type BackendSubscriptionTier = "FREE" | "PREMIUM";
+
+type BackendSubscriptionLimits = {
+    maxOwnedShareGroups: number | null;
+    maxUsersPerShareGroup: number | null;
+};
+
+const BACKEND_SUBSCRIPTION_LIMITS: Record<
+    BackendSubscriptionTier,
+    BackendSubscriptionLimits
+> = {
+    FREE: {
+        maxOwnedShareGroups: 2,
+        maxUsersPerShareGroup: 5,
+    },
+    PREMIUM: {
+        maxOwnedShareGroups: 10,
+        maxUsersPerShareGroup: 20,
+    },
+};
 
 /*
- * OWNERを含む1グループあたりの最大人数。
+ * 現時点ではRevenueCat未導入のため、
+ * すべてのユーザーをFREEとして扱う。
+ *
+ * Phase 5で、この関数の中身だけを
+ * RevenueCat / entitlement判定へ置き換える。
  */
-const FREE_MAX_USERS_PER_SHARE_GROUP = 5;
+async function getSubscriptionTierForUser(
+    _userId: string,
+): Promise<BackendSubscriptionTier> {
+    return "FREE";
+}
+
+function getBackendSubscriptionLimits(
+    tier: BackendSubscriptionTier,
+): BackendSubscriptionLimits {
+    return BACKEND_SUBSCRIPTION_LIMITS[tier];
+}
 
 /*
  * 招待コードを生成する。
@@ -167,12 +194,25 @@ async function loadUserProfile(userId: string) {
 }
 
 /*
- * Freeプランの所有グループ数上限を確認する。
+ * グループOWNERのプランに応じて、
+ * 所有できる共有グループ数の上限を確認する。
  *
- * 新しいテーブルやGSIは作らず、
- * 既存のownerUserId GSIを利用する。
+ * 既存のownerUserId GSIのみ使用するため、
+ * DynamoDB schema変更は不要。
  */
 async function assertCanCreateShareGroup(userId: string): Promise<void> {
+    const tier = await getSubscriptionTierForUser(userId);
+
+    const maxOwnedShareGroups =
+        getBackendSubscriptionLimits(tier).maxOwnedShareGroups;
+
+    /*
+     * nullなら上限なし。
+     */
+    if (maxOwnedShareGroups === null) {
+        return;
+    }
+
     let nextToken: string | null = null;
     let activeOwnedGroupCount = 0;
 
@@ -224,9 +264,12 @@ async function assertCanCreateShareGroup(userId: string): Promise<void> {
              * 上限に到達した時点で、
              * それ以上Queryする必要はない。
              */
-            if (activeOwnedGroupCount >= FREE_MAX_OWNED_SHARE_GROUPS) {
+            if (activeOwnedGroupCount >= maxOwnedShareGroups) {
+                const planName =
+                    tier === "PREMIUM" ? "Premiumプラン" : "Freeプラン";
+
                 throw new Error(
-                    `Freeプランでは共有グループを${FREE_MAX_OWNED_SHARE_GROUPS}件まで作成できます。`,
+                    `${planName}では共有グループを${maxOwnedShareGroups}件まで作成できます。`,
                 );
             }
         }
@@ -493,12 +536,10 @@ async function joinShareGroupByInviteCode(
     }
 
     /*
-     * Freeプランのグループ人数上限を確認する。
-     *
-     * OWNERを含めて5人以上なら、
-     * 新しいMEMBERは追加しない。
+     * グループOWNERのプランに応じて、
+     * グループ人数上限を確認する。
      */
-    await assertCanJoinShareGroup(group.groupId);
+    await assertCanJoinShareGroup(group.groupId, group.ownerUserId);
 
     /*
      * 参加ユーザーのプロフィール取得。
@@ -932,27 +973,49 @@ async function regenerateShareGroupInviteCode(
 }
 
 /*
- * Freeプランのグループ人数上限を確認する。
+ * グループOWNERのプランに応じて、
+ * 1グループあたりの最大人数を確認する。
  *
  * OWNERも1人として数える。
  *
  * 既存のgroupId GSIのみ使用するため、
  * DynamoDB schema変更は不要。
  */
-async function assertCanJoinShareGroup(groupId: string): Promise<void> {
-    const result =
-        await client.models.ShareGroupMember.listShareGroupMembersByGroup(
-            {
-                groupId,
-            },
-            {
-                /*
-                 * 5件取れれば上限到達を判定できるため、
-                 * 全メンバー取得は不要。
-                 */
-                limit: FREE_MAX_USERS_PER_SHARE_GROUP,
-            },
-        );
+async function assertCanJoinShareGroup(
+    groupId: string,
+    ownerUserId: string,
+): Promise<void> {
+    const tier = await getSubscriptionTierForUser(ownerUserId);
+
+    const maxUsersPerShareGroup =
+        getBackendSubscriptionLimits(tier).maxUsersPerShareGroup;
+
+    /*
+     * nullなら上限なし。
+     */
+    if (maxUsersPerShareGroup === null) {
+        return;
+    }
+
+    const result = (await (
+        client.models.ShareGroupMember as any
+    ).listShareGroupMembersByGroup(
+        {
+            groupId,
+        },
+        {
+            limit: maxUsersPerShareGroup,
+        },
+    )) as {
+        data?:
+            | {
+                  membershipId: string;
+                  groupId: string;
+                  userId: string;
+              }[]
+            | null;
+        errors?: unknown;
+    };
 
     if (result.errors) {
         console.error(
@@ -960,6 +1023,8 @@ async function assertCanJoinShareGroup(groupId: string): Promise<void> {
             result.errors,
             {
                 groupId,
+                ownerUserId,
+                tier,
             },
         );
 
@@ -968,9 +1033,11 @@ async function assertCanJoinShareGroup(groupId: string): Promise<void> {
 
     const memberCount = (result.data ?? []).length;
 
-    if (memberCount >= FREE_MAX_USERS_PER_SHARE_GROUP) {
+    if (memberCount >= maxUsersPerShareGroup) {
+        const planName = tier === "PREMIUM" ? "Premiumプラン" : "Freeプラン";
+
         throw new Error(
-            `この共有グループはFreeプランの上限${FREE_MAX_USERS_PER_SHARE_GROUP}人に達しています。`,
+            `この共有グループは${planName}の上限${maxUsersPerShareGroup}人に達しています。`,
         );
     }
 }

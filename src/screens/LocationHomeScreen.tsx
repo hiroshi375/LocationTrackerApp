@@ -154,6 +154,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
     const { tier: subscriptionTier, loading: subscriptionLoading } =
         useSubscription();
+    const monthlyActivityLimit =
+        getSubscriptionPlanLimits(subscriptionTier).maxMonthlyActivities;
 
     const RECORD_INTERVAL_OPTIONS = [
         { label: "10秒", value: 10 * 1000 },
@@ -645,6 +647,9 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [pendingRecordingDistanceMeters, setPendingRecordingDistanceMeters] =
         useState<number | null>(null);
     const [savingSessionName, setSavingSessionName] = useState(false);
+    const [currentMonthActivityCount, setCurrentMonthActivityCount] = useState<
+        number | null
+    >(null);
 
     const loadLoginUserName = useCallback(async () => {
         try {
@@ -1006,6 +1011,9 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
             if (planLimits.maxMonthlyActivities !== null) {
                 const usage = await loadCurrentMonthSubscriptionUsage();
+                setCurrentMonthActivityCount(usage.activityCount);
+
+                const planLimits = getSubscriptionPlanLimits(subscriptionTier);
 
                 const canStart = canStartMonthlyActivity(
                     subscriptionTier,
@@ -1311,11 +1319,33 @@ export default function LocationHomeScreen({ navigation }: Props) {
         void refreshBackgroundLocationPermission();
     }, [refreshBackgroundLocationPermission]);
 
+    const loadCurrentMonthActivityUsage = useCallback(async () => {
+        try {
+            const profile = await getCurrentUserProfile();
+
+            setCurrentMonthActivityCount(
+                profile.currentMonthRecordedActivityCount ?? 0,
+            );
+        } catch (error) {
+            console.error(
+                "[SubscriptionUsage] load current month activity count error:",
+                error,
+            );
+
+            setCurrentMonthActivityCount(null);
+        }
+    }, []);
+
     useFocusEffect(
         useCallback(() => {
             void loadLoginUserName();
             void loadLiveShareUsers();
-        }, [loadLoginUserName, loadLiveShareUsers]),
+            void loadCurrentMonthActivityUsage();
+        }, [
+            loadLoginUserName,
+            loadLiveShareUsers,
+            loadCurrentMonthActivityUsage,
+        ]),
     );
 
     useEffect(() => {
@@ -2831,6 +2861,19 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         </Pressable>
                     ) : (
                         <>
+                            <View style={styles.monthlyActivityUsageBox}>
+                                <Text style={styles.monthlyActivityUsageLabel}>
+                                    今月のアクティビティ
+                                </Text>
+
+                                <Text style={styles.monthlyActivityUsageValue}>
+                                    {currentMonthActivityCount === null
+                                        ? "取得中..."
+                                        : monthlyActivityLimit === null
+                                          ? `${currentMonthActivityCount}件 / 上限なし`
+                                          : `${currentMonthActivityCount}件 / ${monthlyActivityLimit}件`}
+                                </Text>
+                            </View>
                             <Pressable
                                 style={({ pressed }) => [
                                     styles.autoRecordStartButton,
@@ -4064,5 +4107,27 @@ const styles = StyleSheet.create({
         color: "#8a4b08",
         fontWeight: "600",
         textAlign: "center",
+    },
+
+    monthlyActivityUsageBox: {
+        marginBottom: 10,
+        paddingVertical: 10,
+        paddingHorizontal: 14,
+        borderWidth: 1,
+        borderColor: "#d9e0e6",
+        borderRadius: 8,
+        backgroundColor: "#f7f9fb",
+    },
+
+    monthlyActivityUsageLabel: {
+        fontSize: 13,
+        color: "#666",
+        marginBottom: 4,
+    },
+
+    monthlyActivityUsageValue: {
+        fontSize: 17,
+        fontWeight: "bold",
+        color: "#333",
     },
 });

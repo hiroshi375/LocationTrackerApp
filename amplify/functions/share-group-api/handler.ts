@@ -65,8 +65,28 @@ const BACKEND_SUBSCRIPTION_LIMITS: Record<
  * RevenueCat / entitlement判定へ置き換える。
  */
 async function getSubscriptionTierForUser(
-    _userId: string,
+    userId: string,
 ): Promise<BackendSubscriptionTier> {
+    /*
+     * 管理者は課金状態に関係なく
+     * Premium相当の機能を利用可能とする。
+     */
+    const profile = await loadUserProfile(userId);
+
+    if (profile.role === "admin") {
+        console.log("[ShareGroup] Admin user -> PREMIUM", {
+            userId,
+        });
+
+        return "PREMIUM";
+    }
+
+    /*
+     * 現時点ではRevenueCat未接続のため、
+     * 一般ユーザーはFREEとして扱う。
+     *
+     * Phase 5でRevenueCat / entitlement判定へ置き換える。
+     */
     return "FREE";
 }
 

@@ -15,9 +15,11 @@ import {
 import { client } from "../lib/client";
 
 import {
-    FREE_PLAN_LIMITS,
     canCreateShareGroup,
+    getSubscriptionPlanLimits,
 } from "../config/subscriptionPlan";
+
+import { useSubscription } from "../hooks/useSubscription";
 
 type ShareGroupSummaryItem = {
     groupId: string;
@@ -86,12 +88,16 @@ export default function ShareGroupManagementScreen() {
         (group) => group.role === "OWNER",
     ).length;
 
-    const canCreateFreeShareGroup = canCreateShareGroup(
-        "FREE",
-        ownedGroupCount,
-    );
+    const { tier: subscriptionTier, loading: subscriptionLoading } =
+        useSubscription();
 
-    const maxOwnedShareGroups = FREE_PLAN_LIMITS.maxOwnedShareGroups;
+    const planLimits = getSubscriptionPlanLimits(subscriptionTier);
+
+    const maxOwnedShareGroups = planLimits.maxOwnedShareGroups;
+
+    const canCreateCurrentPlanShareGroup =
+        !subscriptionLoading &&
+        canCreateShareGroup(subscriptionTier, ownedGroupCount);
 
     const loadGroups = useCallback(async () => {
         try {
@@ -131,14 +137,16 @@ export default function ShareGroupManagementScreen() {
     );
 
     const handleCreateGroup = useCallback(async () => {
-        if (creatingGroup) {
+        if (creatingGroup || subscriptionLoading) {
             return;
         }
 
-        if (!canCreateFreeShareGroup) {
+        if (!canCreateCurrentPlanShareGroup) {
             Alert.alert(
                 "作成上限",
-                `Freeプランでは共有グループを${maxOwnedShareGroups}件まで作成できます。`,
+                maxOwnedShareGroups !== null
+                    ? `現在のプランでは共有グループを${maxOwnedShareGroups}件まで作成できます。`
+                    : "共有グループを作成できません。",
             );
             return;
         }
@@ -196,11 +204,12 @@ export default function ShareGroupManagementScreen() {
             setCreatingGroup(false);
         }
     }, [
-        canCreateFreeShareGroup,
+        canCreateCurrentPlanShareGroup,
         creatingGroup,
         groupName,
         loadGroups,
         maxOwnedShareGroups,
+        subscriptionLoading,
     ]);
 
     const handleJoinGroup = useCallback(async () => {
@@ -397,25 +406,36 @@ export default function ShareGroupManagementScreen() {
                     位置情報を共有したい相手とのグループを作成します。
                 </Text>
                 <Text style={styles.groupLimitText}>
-                    作成済み: {ownedGroupCount} / {maxOwnedShareGroups}グループ
+                    <Text>
+                        作成済み: {ownedGroupCount}
+                        {maxOwnedShareGroups !== null
+                            ? ` / ${maxOwnedShareGroups}グループ`
+                            : " / 上限なし"}
+                    </Text>
                 </Text>
 
-                {!canCreateFreeShareGroup && (
-                    <Text style={styles.limitWarningText}>
-                        Freeプランでは共有グループを
+                {maxOwnedShareGroups !== null ? (
+                    <Text>
+                        現在のプランでは共有グループを
                         {maxOwnedShareGroups}件まで作成できます。
                     </Text>
+                ) : (
+                    <Text>共有グループ数の上限はありません。</Text>
                 )}
                 <TextInput
                     style={[
                         styles.input,
-                        !canCreateFreeShareGroup && styles.disabledInput,
+                        !canCreateCurrentPlanShareGroup && styles.disabledInput,
                     ]}
                     value={groupName}
                     onChangeText={setGroupName}
                     placeholder="例：家族、ランニング仲間"
                     maxLength={50}
-                    editable={!creatingGroup && canCreateFreeShareGroup}
+                    editable={
+                        !creatingGroup &&
+                        !subscriptionLoading &&
+                        canCreateCurrentPlanShareGroup
+                    }
                 />
 
                 <Pressable
@@ -423,22 +443,31 @@ export default function ShareGroupManagementScreen() {
                         styles.primaryButton,
                         pressed &&
                             !creatingGroup &&
-                            canCreateFreeShareGroup &&
+                            !subscriptionLoading &&
+                            canCreateCurrentPlanShareGroup &&
                             styles.buttonPressed,
-                        (creatingGroup || !canCreateFreeShareGroup) &&
+                        (creatingGroup ||
+                            subscriptionLoading ||
+                            !canCreateCurrentPlanShareGroup) &&
                             styles.disabledButton,
                     ]}
                     onPress={() => {
                         void handleCreateGroup();
                     }}
-                    disabled={creatingGroup || !canCreateFreeShareGroup}
+                    disabled={
+                        creatingGroup ||
+                        subscriptionLoading ||
+                        !canCreateCurrentPlanShareGroup
+                    }
                 >
                     <Text style={styles.primaryButtonText}>
                         {creatingGroup
                             ? "作成中..."
-                            : !canCreateFreeShareGroup
-                              ? "作成上限に達しています"
-                              : "グループを作成"}
+                            : subscriptionLoading
+                              ? "プラン確認中..."
+                              : !canCreateCurrentPlanShareGroup
+                                ? "作成上限に達しています"
+                                : "グループを作成"}
                     </Text>
                 </Pressable>
 

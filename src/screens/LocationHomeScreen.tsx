@@ -657,8 +657,15 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
             setLoginUserName(name);
 
+            const nextIsAdmin = profile?.role === "admin";
+
+            console.log("[AdminCheck] isAdmin:", {
+                role: profile?.role,
+                isAdmin: nextIsAdmin,
+            });
+
             // 追加
-            setIsAdmin(profile?.role === "admin");
+            setIsAdmin(nextIsAdmin);
 
             if (profile?.iconImagePath) {
                 const urlResult = await getUrl({
@@ -910,7 +917,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
         const currentMonthKey = createMonthKey(new Date());
 
         const profile = await getCurrentUserProfile();
-
+        console.log("[AdminCheck] UserProfile:", {
+            id: profile?.id,
+            userId: profile?.userId,
+            email: profile?.email,
+            role: profile?.role,
+        });
         /*
          * UserProfileに保存されている課金用月キーが
          * 現在の月と一致している場合は、

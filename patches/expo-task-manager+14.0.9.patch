@@ -703,6 +703,30 @@ index a872533..51f5ae6 100644
    }
 -
  }
+diff --git a/node_modules/expo-task-manager/build/TaskManager.js b/node_modules/expo-task-manager/build/TaskManager.js
+index 63f2fb6..eef80ff 100644
+--- a/node_modules/expo-task-manager/build/TaskManager.js
++++ b/node_modules/expo-task-manager/build/TaskManager.js
+@@ -1,5 +1,18 @@
+-import { LegacyEventEmitter, UnavailabilityError } from 'expo-modules-core';
++import {
++  LegacyEventEmitter,
++  Platform,
++  UnavailabilityError,
++} from 'expo-modules-core';
++import { AppRegistry } from 'react-native';
++
+ import ExpoTaskManager from './ExpoTaskManager';
++
++if (Platform.OS === 'android') {
++  AppRegistry.registerHeadlessTask(
++    'expo-task-manager',
++    () => async () => {},
++  );
++}
+ const tasks = new Map();
+ function _validate(taskName) {
+     if (!taskName || typeof taskName !== 'string') {
 diff --git a/node_modules/expo-task-manager/src/TaskManager.ts b/node_modules/expo-task-manager/src/TaskManager.ts
 index 88aa2d9..9e32ffa 100644
 --- a/node_modules/expo-task-manager/src/TaskManager.ts

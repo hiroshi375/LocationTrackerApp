@@ -1,37 +1,3 @@
-diff --git a/node_modules/expo-task-manager/android/.gradle/9.2.0/checksums/checksums.lock b/node_modules/expo-task-manager/android/.gradle/9.2.0/checksums/checksums.lock
-new file mode 100644
-index 0000000..e86fa26
-Binary files /dev/null and b/node_modules/expo-task-manager/android/.gradle/9.2.0/checksums/checksums.lock differ
-diff --git a/node_modules/expo-task-manager/android/.gradle/9.2.0/fileChanges/last-build.bin b/node_modules/expo-task-manager/android/.gradle/9.2.0/fileChanges/last-build.bin
-new file mode 100644
-index 0000000..f76dd23
-Binary files /dev/null and b/node_modules/expo-task-manager/android/.gradle/9.2.0/fileChanges/last-build.bin differ
-diff --git a/node_modules/expo-task-manager/android/.gradle/9.2.0/fileHashes/fileHashes.bin b/node_modules/expo-task-manager/android/.gradle/9.2.0/fileHashes/fileHashes.bin
-new file mode 100644
-index 0000000..36f6005
-Binary files /dev/null and b/node_modules/expo-task-manager/android/.gradle/9.2.0/fileHashes/fileHashes.bin differ
-diff --git a/node_modules/expo-task-manager/android/.gradle/9.2.0/fileHashes/fileHashes.lock b/node_modules/expo-task-manager/android/.gradle/9.2.0/fileHashes/fileHashes.lock
-new file mode 100644
-index 0000000..a68305b
-Binary files /dev/null and b/node_modules/expo-task-manager/android/.gradle/9.2.0/fileHashes/fileHashes.lock differ
-diff --git a/node_modules/expo-task-manager/android/.gradle/9.2.0/gc.properties b/node_modules/expo-task-manager/android/.gradle/9.2.0/gc.properties
-new file mode 100644
-index 0000000..e69de29
-diff --git a/node_modules/expo-task-manager/android/.gradle/buildOutputCleanup/buildOutputCleanup.lock b/node_modules/expo-task-manager/android/.gradle/buildOutputCleanup/buildOutputCleanup.lock
-new file mode 100644
-index 0000000..db996d0
-Binary files /dev/null and b/node_modules/expo-task-manager/android/.gradle/buildOutputCleanup/buildOutputCleanup.lock differ
-diff --git a/node_modules/expo-task-manager/android/.gradle/buildOutputCleanup/cache.properties b/node_modules/expo-task-manager/android/.gradle/buildOutputCleanup/cache.properties
-new file mode 100644
-index 0000000..a67b3ec
---- /dev/null
-+++ b/node_modules/expo-task-manager/android/.gradle/buildOutputCleanup/cache.properties
-@@ -0,0 +1,2 @@
-+#Sat Sep 05 07:28:06 JST 2026
-+gradle.version=9.2.0
-diff --git a/node_modules/expo-task-manager/android/.gradle/vcs-1/gc.properties b/node_modules/expo-task-manager/android/.gradle/vcs-1/gc.properties
-new file mode 100644
-index 0000000..e69de29
 diff --git a/node_modules/expo-task-manager/android/build.gradle b/node_modules/expo-task-manager/android/build.gradle
 index 856c83d..8b0d25d 100644
 --- a/node_modules/expo-task-manager/android/build.gradle
@@ -48,7 +14,7 @@ index 856c83d..8b0d25d 100644
    api "androidx.core:core:1.0.0"
  }
 diff --git a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
-index 2b6c2fa..ebd5dca 100644
+index 2b6c2fa..b4f3bb8 100644
 --- a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
 +++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
 @@ -1,31 +1,44 @@
@@ -229,7 +195,30 @@ index 2b6c2fa..ebd5dca 100644
      if (taskManager != null) {
        taskManager.executeTaskWithBody(body);
        return;
-@@ -619,4 +659,363 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -516,8 +556,20 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+ 
+   private SharedPreferences getSharedPreferences() {
+     Context context = mContextRef.get();
+-    return context != null ? context.getSharedPreferences(SHARED_PREFERENCES_NAME, Context.MODE_PRIVATE) : null;
+-  }
++
++    if (context == null) {
++        Log.e(
++            TAG,
++            "[ContextDebug] TaskService context is null in getSharedPreferences()"
++        );
++        return null;
++    }
++
++    return context.getSharedPreferences(
++        SHARED_PREFERENCES_NAME,
++        Context.MODE_PRIVATE
++    );
++}
+ 
+   private void maybeUpdateAppUrlForAppScopeKey(String appUrl, String appScopeKey) {
+     SharedPreferences preferences = getSharedPreferences();
+@@ -619,4 +671,363 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
      }, timeout);
    }
  
@@ -592,6 +581,127 @@ index 2b6c2fa..ebd5dca 100644
 +    : null;
 +}
 +
+ }
+diff --git a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/repository/TasksPersistence.java b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/repository/TasksPersistence.java
+index a872533..51f5ae6 100644
+--- a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/repository/TasksPersistence.java
++++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/repository/TasksPersistence.java
+@@ -16,19 +16,38 @@ import expo.modules.interfaces.taskManager.TaskInterface;
+ public class TasksPersistence {
+ 
+   public void clearTaskPersistence(SharedPreferences preferences, String but) {
++    /*
++     * TaskService#getSharedPreferences() は、
++     * Context を取得できない場合に null を返す可能性がある。
++     *
++     * null のまま preferences.getAll() を呼ぶと
++     * NullPointerException となり、
++     * Location.startLocationUpdatesAsync() の開始処理まで失敗するため、
++     * ここで安全に終了する。
++     */
++    if (preferences == null) {
++      return;
++    }
++
+     Map<String, ?> map = preferences.getAll();
+-    for(String key: map.keySet()) {
+-      if(!but.equals(key)) {
++
++    for (String key : map.keySet()) {
++      if (!but.equals(key)) {
+         preferences.edit().remove(key).apply();
+       }
+     }
+   }
+ 
+-  public void persistTasksForAppScopeKey(SharedPreferences preferences, String appScopeKey, Map<String, TaskInterface> appRow) {
++  public void persistTasksForAppScopeKey(
++      SharedPreferences preferences,
++      String appScopeKey,
++      Map<String, TaskInterface> appRow
++  ) {
+ 
+     if (preferences == null) {
+       return;
+     }
++
+     if (appRow == null || appRow.size() == 0) {
+       preferences.edit().remove(appScopeKey).apply();
+       return;
+@@ -48,35 +67,63 @@ public class TasksPersistence {
+     appConfig.put("tasks", tasks);
+ 
+     preferences
+-          .edit()
+-          .putString(appScopeKey, new JSONObject(appConfig).toString())
+-          .apply();
++        .edit()
++        .putString(appScopeKey, new JSONObject(appConfig).toString())
++        .apply();
+   }
+ 
+-  public Map<String, TasksAndEventsRepository.AppConfig> readPersistedTasks(SharedPreferences preferences) {
++  public Map<String, TasksAndEventsRepository.AppConfig> readPersistedTasks(
++      SharedPreferences preferences
++  ) {
+     Map<String, TasksAndEventsRepository.AppConfig> result = new HashMap<>();
+ 
++    /*
++     * clearTaskPersistence() と同様、
++     * SharedPreferences が取得できない場合に
++     * getAll() で NullPointerException を起こさないようにする。
++     *
++     * 永続タスクを読み込めない場合は、
++     * 空の結果を返して呼び出し元に処理を継続させる。
++     */
++    if (preferences == null) {
++      return result;
++    }
++
+     Map<String, ?> appScopeKeyToAppConfigsMap = preferences.getAll();
+ 
+-    for (Map.Entry<String, ?> appScopeKeyToConfig : appScopeKeyToAppConfigsMap.entrySet()) {
+-      Map<String, Object> appConfig = jsonToMap(appScopeKeyToConfig.getValue().toString());
++    for (
++        Map.Entry<String, ?> appScopeKeyToConfig :
++            appScopeKeyToAppConfigsMap.entrySet()
++    ) {
++      Map<String, Object> appConfig =
++          jsonToMap(appScopeKeyToConfig.getValue().toString());
++
+       String appUrl = (String) appConfig.get("appUrl");
+-      Map<String, Object> tasksConfig = (HashMap<String, Object>) appConfig.get("tasks");
+ 
+-      if (appUrl != null && tasksConfig != null && tasksConfig.size() > 0) {
++      Map<String, Object> tasksConfig =
++          (HashMap<String, Object>) appConfig.get("tasks");
++
++      if (
++          appUrl != null &&
++          tasksConfig != null &&
++          tasksConfig.size() > 0
++      ) {
+         Map<String, Object> tasksForApp = new HashMap<>();
++
+         for (String taskName : tasksConfig.keySet()) {
+           tasksForApp.put(taskName, tasksConfig.get(taskName));
+         }
+-        TasksAndEventsRepository.AppConfig app = new TasksAndEventsRepository.AppConfig();
++
++        TasksAndEventsRepository.AppConfig app =
++            new TasksAndEventsRepository.AppConfig();
++
+         app.appUrl = appUrl;
+         app.tasks = tasksForApp;
++
+         result.put(appScopeKeyToConfig.getKey(), app);
+       }
+     }
+ 
+     return result;
+-
+   }
+-
  }
 diff --git a/node_modules/expo-task-manager/src/TaskManager.ts b/node_modules/expo-task-manager/src/TaskManager.ts
 index 88aa2d9..9e32ffa 100644

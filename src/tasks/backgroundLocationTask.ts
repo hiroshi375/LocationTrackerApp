@@ -1849,6 +1849,48 @@ async function setBackgroundRecordingState(state: BackgroundRecordingState) {
     );
 }
 
+async function updateBackgroundRecordingStateIfCurrent(
+    expectedUserId: string,
+    expectedRecordingSessionId: string | null,
+    updater: (
+        currentState: BackgroundRecordingState,
+    ) => BackgroundRecordingState,
+): Promise<BackgroundRecordingState | null> {
+    const currentState = await getBackgroundRecordingState();
+
+    if (!currentState) {
+        return null;
+    }
+
+    /*
+     * callback開始後に別ユーザー・別RecordingSessionへ
+     * stateが切り替わっていた場合、
+     * 古いcallbackからstateを書き戻さない。
+     */
+    if (
+        currentState.userId !== expectedUserId ||
+        (currentState.recordingSessionId ?? null) !== expectedRecordingSessionId
+    ) {
+        console.warn("[BackgroundRecordingState] Skip stale state update:", {
+            expectedUserId,
+            expectedRecordingSessionId,
+            currentUserId: currentState.userId,
+            currentRecordingSessionId: currentState.recordingSessionId ?? null,
+        });
+
+        return null;
+    }
+
+    const nextState = updater(currentState);
+
+    await AsyncStorage.setItem(
+        BACKGROUND_RECORDING_STATE_KEY,
+        JSON.stringify(nextState),
+    );
+
+    return nextState;
+}
+
 async function updateBackgroundLiveLocation(
     location: Location.LocationObject,
     state: BackgroundRecordingState,
@@ -2025,12 +2067,20 @@ async function updateBackgroundLiveLocation(
             };
         }
 
-        const nextState: BackgroundRecordingState = {
-            ...state,
-            liveLocationId: createdLiveLocationId,
-        };
+        const updatedState = await updateBackgroundRecordingStateIfCurrent(
+            state.userId,
+            state.recordingSessionId ?? null,
+            (currentState) => ({
+                ...currentState,
+                liveLocationId: createdLiveLocationId,
+            }),
+        );
 
-        await setBackgroundRecordingState(nextState);
+        /*
+         * callback開始後に別sessionへ切り替わっていた場合は、
+         * 古いstateを返して後続処理へ伝播させない。
+         */
+        const nextState = updatedState ?? state;
 
         return {
             nextState,
@@ -2149,12 +2199,26 @@ async function saveBackgroundLocation(
     );
 
     if (durationLimitReason === "DURATION") {
-        const stoppedState: BackgroundRecordingState = {
-            ...state,
-            isRecording: false,
-        };
+        const stoppedState = await updateBackgroundRecordingStateIfCurrent(
+            state.userId,
+            recordingSessionId,
+            (currentState) => ({
+                ...currentState,
+                isRecording: false,
+            }),
+        );
 
-        await setBackgroundRecordingState(stoppedState);
+        /*
+         * callback処理中に別sessionへ切り替わっていた場合、
+         * 新しいsessionを停止しない。
+         */
+        if (!stoppedState) {
+            return {
+                saved: false,
+                nextState: state,
+                skippedReason: "planLimitReached",
+            };
+        }
 
         console.log(
             "[SubscriptionPlanLimit] Background duration limit reached:",
@@ -2166,7 +2230,7 @@ async function saveBackgroundLocation(
         );
 
         await safeSaveBackgroundLocationDebugLog({
-            userId: state.userId,
+            userId: stoppedState.userId,
             recordingSessionId,
             eventName: "backgroundRecordingPlanLimitReached",
             taskFiredAt,
@@ -2395,12 +2459,22 @@ async function saveBackgroundLocation(
         );
 
         if (!reservation.allowed) {
-            const stoppedState: BackgroundRecordingState = {
-                ...latestState,
-                isRecording: false,
-            };
+            const stoppedState = await updateBackgroundRecordingStateIfCurrent(
+                latestState.userId,
+                recordingSessionId,
+                (currentState) => ({
+                    ...currentState,
+                    isRecording: false,
+                }),
+            );
 
-            await setBackgroundRecordingState(stoppedState);
+            if (!stoppedState) {
+                return {
+                    saved: false,
+                    nextState: latestState,
+                    skippedReason: "planLimitReached",
+                };
+            }
 
             console.log(
                 "[SubscriptionPlanLimit] Background point save blocked:",
@@ -2416,7 +2490,7 @@ async function saveBackgroundLocation(
             );
 
             await safeSaveBackgroundLocationDebugLog({
-                userId: latestState.userId,
+                userId: stoppedState.userId,
                 recordingSessionId,
                 eventName: "backgroundRecordingPlanLimitReached",
                 taskFiredAt,
@@ -2511,13 +2585,25 @@ async function saveBackgroundLocation(
                  * 今回の予約によって1000件へ到達していた場合は、
                  * duplicateでもFree上限到達として記録を終了する。
                  */
-                if (reservationReachedLimit) {
-                    const stoppedState: BackgroundRecordingState = {
-                        ...latestState,
-                        isRecording: false,
-                    };
 
-                    await setBackgroundRecordingState(stoppedState);
+                if (reservationReachedLimit) {
+                    const stoppedState =
+                        await updateBackgroundRecordingStateIfCurrent(
+                            latestState.userId,
+                            recordingSessionId,
+                            (currentState) => ({
+                                ...currentState,
+                                isRecording: false,
+                            }),
+                        );
+
+                    if (!stoppedState) {
+                        return {
+                            saved: false,
+                            nextState: latestState,
+                            skippedReason: "exactDuplicate",
+                        };
+                    }
 
                     console.log(
                         "[SubscriptionPlanLimit] Background point limit reached by duplicate:",
@@ -2528,18 +2614,27 @@ async function saveBackgroundLocation(
                         },
                     );
 
+                    await safeSaveBackgroundLocationDebugLog({
+                        userId: stoppedState.userId,
+                        recordingSessionId,
+                        eventName: "backgroundRecordingPlanLimitReached",
+                        taskFiredAt,
+                        details: {
+                            reason: "POINTS",
+                            locationLogId,
+                            recordedAt,
+                            reservedPointCount:
+                                reservation.state?.reservedLocationLogIds
+                                    .length ?? null,
+                        },
+                    });
+
                     return {
                         saved: false,
                         nextState: stoppedState,
                         skippedReason: "exactDuplicate",
                     };
                 }
-
-                return {
-                    saved: false,
-                    nextState: latestState,
-                    skippedReason: "exactDuplicate",
-                };
             }
 
             /*
@@ -2592,35 +2687,53 @@ async function saveBackgroundLocation(
             };
         }
 
-        const nextState: BackgroundRecordingState = {
-            ...latestState,
-
-            /*
-             * 1000件目そのものは保存する。
-             * その保存成功後は自動記録を終了状態にする。
-             *
-             * liveShareOwnerValuesやliveLocationIdは維持するため、
-             * 現在地共有は継続できる。
-             */
-            isRecording: reservationReachedLimit
-                ? false
-                : latestState.isRecording,
-
-            lastSavedLocation: {
-                latitude,
-                longitude,
-                recordedAt: recordedAtMs,
-            },
-        };
-
-        /*
-         * create成功からロック解放までの間に最終保存位置を更新する。
-         */
         const stateUpdateStartedAtMs = Date.now();
 
+        let nextState: BackgroundRecordingState = latestState;
+
         try {
-            await setBackgroundRecordingState(nextState);
+            const updatedState = await updateBackgroundRecordingStateIfCurrent(
+                latestState.userId,
+                recordingSessionId,
+                (currentState) => ({
+                    ...currentState,
+
+                    isRecording: reservationReachedLimit
+                        ? false
+                        : currentState.isRecording,
+
+                    lastSavedLocation: {
+                        latitude,
+                        longitude,
+                        recordedAt: recordedAtMs,
+                    },
+                }),
+            );
+
+            /*
+             * LocationLog.create中に新しいsessionへ切り替わった場合、
+             * 古いsessionのstateをAsyncStorageへ戻さない。
+             */
+            if (!updatedState) {
+                console.warn(
+                    "[BackgroundRecordingState] Skip stale LocationLog state update:",
+                    {
+                        recordingSessionId,
+                        recordedAt,
+                    },
+                );
+
+                return {
+                    saved: true,
+                    nextState: latestState,
+                };
+            }
+
+            nextState = updatedState;
+
             if (reservationReachedLimit) {
+                // 以下、既存処理
+                //   if (reservationReachedLimit) {
                 console.log(
                     "[SubscriptionPlanLimit] Background point limit reached:",
                     {
@@ -2781,12 +2894,40 @@ async function saveBackgroundLocation(
             if (planLimitReservationReached) {
                 const latestState = await getBackgroundRecordingState();
 
-                const stoppedState: BackgroundRecordingState = {
-                    ...(latestState ?? state),
-                    isRecording: false,
-                };
+                /*
+                 * stateが既に削除されている、
+                 * または別sessionへ切り替わっている場合は、
+                 * 古いcallbackからstateを書き換えない。
+                 */
+                if (
+                    !latestState ||
+                    !latestState.isRecording ||
+                    latestState.recordingSessionId !== recordingSessionId
+                ) {
+                    return {
+                        saved: false,
+                        nextState: state,
+                        skippedReason: "planLimitReached",
+                    };
+                }
 
-                await setBackgroundRecordingState(stoppedState);
+                const stoppedState =
+                    await updateBackgroundRecordingStateIfCurrent(
+                        latestState.userId,
+                        recordingSessionId,
+                        (currentState) => ({
+                            ...currentState,
+                            isRecording: false,
+                        }),
+                    );
+
+                if (!stoppedState) {
+                    return {
+                        saved: false,
+                        nextState: latestState,
+                        skippedReason: "planLimitReached",
+                    };
+                }
 
                 console.log(
                     "[SubscriptionPlanLimit] Background point limit reached by duplicate exception:",

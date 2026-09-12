@@ -300,6 +300,7 @@ export function useForegroundLocationRecorder({
 
                 await updateBackgroundRecordingLiveLocationId(
                     liveLocationIdRef.current,
+                    recordingSessionId,
                 );
             } catch (error) {
                 console.error("LiveLocation update error:", error);
@@ -903,7 +904,9 @@ export function useForegroundLocationRecorder({
                 });
 
                 try {
-                    await stopBackgroundLocationRecording();
+                    await stopBackgroundLocationRecording({
+                        expectedRecordingSessionId: state.recordingSessionId,
+                    });
                 } catch (error) {
                     console.error(
                         "Clear expired background recording state error:",
@@ -1089,22 +1092,20 @@ export function useForegroundLocationRecorder({
                 });
             } catch (error) {
                 /*
-                 * Background開始が途中まで成功している可能性があるため、
-                 * まずBackground側を停止する。
+                 * startBackgroundLocationRecording() は、
+                 * startLocationUpdatesAsync() の開始失敗時に
+                 *
+                 * ・新しく保存したRecording stateを破棄
+                 * ・開始前のpreviousStateを復元
+                 * ・必要ならLive Sharing taskも復旧
+                 *
+                 * まで自身で実行する。
+                 *
+                 * ここでstopBackgroundLocationRecording()を呼ぶと、
+                 * 復元したLive Sharing state/taskまで停止・削除してしまうため
+                 * 二重cleanupは行わない。
                  */
-                try {
-                    await stopBackgroundLocationRecording();
-                } catch (stopError) {
-                    console.error(
-                        "Stop background after start error:",
-                        stopError,
-                    );
-                }
 
-                /*
-                 * startRecording開始時に作成した
-                 * Phase 3のPlan Limit stateも削除する。
-                 */
                 try {
                     await clearRecordingPlanLimitState(newSessionId);
                 } catch (planLimitCleanupError) {
@@ -1146,9 +1147,6 @@ export function useForegroundLocationRecorder({
             setIsRecording(true);
 
             await updateLiveLocation(currentLocation);
-            await updateBackgroundRecordingLiveLocationId(
-                liveLocationIdRef.current,
-            );
             await saveLocationLog(currentLocation, true);
         } finally {
             isStartingRef.current = false;
@@ -1492,6 +1490,7 @@ export function useForegroundLocationRecorder({
             try {
                 await stopBackgroundLocationRecording({
                     continueLiveSharing: shouldContinueLiveSharing,
+                    expectedRecordingSessionId: finishedSessionId,
                 });
             } catch (error) {
                 console.error(

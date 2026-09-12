@@ -90,6 +90,14 @@ export type BackgroundRecordingState = {
 
 type StopBackgroundLocationRecordingOptions = {
     continueLiveSharing?: boolean;
+
+    /*
+     * 指定された場合、
+     * このRecordingSessionが現在のstateと一致するときだけ停止する。
+     *
+     * 古い非同期stopが新しいRecordingSessionを削除するのを防ぐ。
+     */
+    expectedRecordingSessionId?: string | null;
 };
 
 export type BackgroundLocationHeartbeatStatus = {
@@ -722,6 +730,17 @@ export async function stopBackgroundLocationRecording(
     options: StopBackgroundLocationRecordingOptions = {},
 ) {
     const continueLiveSharing = options.continueLiveSharing === true;
+
+    /*
+     * 指定されている場合、
+     * このRecordingSessionだけを停止対象とする。
+     *
+     * 古い非同期stop処理が、
+     * すでに開始された新しいRecordingSessionを
+     * 停止・削除してしまうことを防ぐ。
+     */
+    const expectedRecordingSessionId = options.expectedRecordingSessionId;
+
     const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);
 
     let recordingSessionId: string | null = null;
@@ -744,6 +763,41 @@ export async function stopBackgroundLocationRecording(
         }
     }
 
+    /*
+     * ★ここに追加
+     *
+     * stop処理を開始した時点で想定していたsessionと、
+     * 現在AsyncStorageに保存されているsessionが異なる場合、
+     * このstop処理は古い処理と判断して何もしない。
+     */
+    if (
+        expectedRecordingSessionId !== undefined &&
+        currentState &&
+        (currentState.recordingSessionId ?? null) !== expectedRecordingSessionId
+    ) {
+        await saveBackgroundLocationDebugLog({
+            userId: currentState.userId ?? null,
+            recordingSessionId: currentState.recordingSessionId ?? null,
+            eventName: "stopBackgroundLocationRecordingSkippedSessionMismatch",
+            details: {
+                expectedRecordingSessionId,
+                currentRecordingSessionId:
+                    currentState.recordingSessionId ?? null,
+            },
+        });
+
+        console.warn("[BackgroundRecordingState] Skip stale stop:", {
+            expectedRecordingSessionId,
+            currentRecordingSessionId: currentState.recordingSessionId ?? null,
+        });
+
+        return;
+    }
+
+    /*
+     * session一致確認が終わってから、
+     * 通常のstop開始ログを出す。
+     */
     await saveBackgroundLocationDebugLog({
         userId,
         recordingSessionId,
@@ -758,8 +812,51 @@ export async function stopBackgroundLocationRecording(
     );
 
     if (continueLiveSharing && currentState) {
+        let stateForUpdate = currentState;
+
+        if (expectedRecordingSessionId !== undefined) {
+            const latestRaw = await AsyncStorage.getItem(
+                BACKGROUND_RECORDING_STATE_KEY,
+            );
+
+            if (!latestRaw) {
+                return;
+            }
+
+            try {
+                const latestState = JSON.parse(
+                    latestRaw,
+                ) as BackgroundRecordingState;
+
+                if (
+                    (latestState.recordingSessionId ?? null) !==
+                    expectedRecordingSessionId
+                ) {
+                    console.warn(
+                        "[BackgroundRecordingState] Skip stale continue sharing stop:",
+                        {
+                            expectedRecordingSessionId,
+                            currentRecordingSessionId:
+                                latestState.recordingSessionId ?? null,
+                        },
+                    );
+
+                    return;
+                }
+
+                stateForUpdate = latestState;
+            } catch (error) {
+                console.error(
+                    "Parse latest background recording state before continue sharing error:",
+                    error,
+                );
+
+                return;
+            }
+        }
+
         const nextState: BackgroundRecordingState = {
-            ...currentState,
+            ...stateForUpdate,
             isRecording: false,
             recordingSessionId: null,
             startedAt: null,
@@ -771,6 +868,8 @@ export async function stopBackgroundLocationRecording(
             BACKGROUND_RECORDING_STATE_KEY,
             JSON.stringify(nextState),
         );
+
+        // 以下既存処理
 
         if (liveLocationId) {
             try {
@@ -862,6 +961,64 @@ export async function stopBackgroundLocationRecording(
                 errorMessage:
                     error instanceof Error ? error.message : String(error),
             });
+        }
+    }
+
+    /*
+     * stop処理中に新しいRecordingSessionが開始されていないか、
+     * state削除直前でも再確認する。
+     */
+    if (expectedRecordingSessionId !== undefined) {
+        const latestRaw = await AsyncStorage.getItem(
+            BACKGROUND_RECORDING_STATE_KEY,
+        );
+
+        if (latestRaw) {
+            try {
+                const latestState = JSON.parse(
+                    latestRaw,
+                ) as BackgroundRecordingState;
+
+                if (
+                    (latestState.recordingSessionId ?? null) !==
+                    expectedRecordingSessionId
+                ) {
+                    await saveBackgroundLocationDebugLog({
+                        userId: latestState.userId ?? null,
+                        recordingSessionId:
+                            latestState.recordingSessionId ?? null,
+                        eventName:
+                            "backgroundRecordingStateRemoveSkippedSessionMismatch",
+                        details: {
+                            expectedRecordingSessionId,
+                            currentRecordingSessionId:
+                                latestState.recordingSessionId ?? null,
+                        },
+                    });
+
+                    console.warn(
+                        "[BackgroundRecordingState] Skip stale state removal:",
+                        {
+                            expectedRecordingSessionId,
+                            currentRecordingSessionId:
+                                latestState.recordingSessionId ?? null,
+                        },
+                    );
+
+                    return;
+                }
+            } catch (error) {
+                console.error(
+                    "Parse background recording state before remove error:",
+                    error,
+                );
+
+                /*
+                 * state内容を安全に確認できない場合、
+                 * 新しいsessionを誤削除するより削除しない方を優先する。
+                 */
+                return;
+            }
         }
     }
 
@@ -1144,6 +1301,7 @@ export async function ensureBackgroundLocationPermission(
 
 export async function updateBackgroundRecordingLiveLocationId(
     liveLocationId: string | null,
+    expectedRecordingSessionId?: string | null,
 ) {
     const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);
 
@@ -1152,7 +1310,22 @@ export async function updateBackgroundRecordingLiveLocationId(
     }
 
     try {
-        const state = JSON.parse(raw);
+        const state = JSON.parse(raw) as BackgroundRecordingState;
+
+        if (
+            expectedRecordingSessionId !== undefined &&
+            (state.recordingSessionId ?? null) !== expectedRecordingSessionId
+        ) {
+            console.warn(
+                "[BackgroundRecordingState] Skip stale liveLocationId update:",
+                {
+                    expectedRecordingSessionId,
+                    currentRecordingSessionId: state.recordingSessionId ?? null,
+                },
+            );
+
+            return;
+        }
 
         await AsyncStorage.setItem(
             BACKGROUND_RECORDING_STATE_KEY,

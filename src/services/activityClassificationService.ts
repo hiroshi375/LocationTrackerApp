@@ -189,7 +189,10 @@ export function classifyActivitySession(
     const p90SpeedKmh = percentile(speeds, 0.9);
     const p95SpeedKmh = percentile(speeds, 0.95);
 
-    const secondsAtOrAbove18 = sumDurationAtOrAbove(analysisSegments, 18);
+    const maxContinuousSecondsAtOrAbove18 = getMaxContinuousDurationAtOrAbove(
+        analysisSegments,
+        18,
+    );
     const secondsAtOrAbove25 = sumDurationAtOrAbove(analysisSegments, 25);
     const secondsAtOrAbove35 = sumDurationAtOrAbove(analysisSegments, 35);
 
@@ -225,7 +228,7 @@ export function classifyActivitySession(
     }
 
     if (
-        secondsAtOrAbove18 >= 120 ||
+        maxContinuousSecondsAtOrAbove18 >= 60 ||
         p90SpeedKmh >= 20 ||
         averageSpeedKmh >= 14
     ) {
@@ -236,6 +239,9 @@ export function classifyActivitySession(
                 `平均${averageSpeedKmh.toFixed(1)}km/h`,
                 `90%点${p90SpeedKmh.toFixed(1)}km/h`,
                 `最高${maxSpeedKmh.toFixed(1)}km/h`,
+                `18km/h以上連続${Math.round(
+                    maxContinuousSecondsAtOrAbove18,
+                )}秒`,
             ].join(" "),
             averageSpeedKmh,
             maxSpeedKmh,
@@ -310,6 +316,29 @@ function sumDurationAtOrAbove(
     return segments
         .filter((segment) => segment.speedKmh >= thresholdKmh)
         .reduce((sum, segment) => sum + segment.durationSeconds, 0);
+}
+
+function getMaxContinuousDurationAtOrAbove(
+    segments: SpeedSegment[],
+    thresholdKmh: number,
+): number {
+    let currentDurationSeconds = 0;
+    let maxDurationSeconds = 0;
+
+    for (const segment of segments) {
+        if (segment.speedKmh >= thresholdKmh) {
+            currentDurationSeconds += segment.durationSeconds;
+
+            maxDurationSeconds = Math.max(
+                maxDurationSeconds,
+                currentDurationSeconds,
+            );
+        } else {
+            currentDurationSeconds = 0;
+        }
+    }
+
+    return maxDurationSeconds;
 }
 
 function roundNumber(value: number, digits: number): number {

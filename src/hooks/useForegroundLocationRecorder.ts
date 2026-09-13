@@ -48,6 +48,7 @@ import {
     reserveRecordingPlanPoint,
     type RecordingPlanLimitReason,
 } from "../services/recordingPlanLimitService";
+import { saveBackgroundLocationDebugLog } from "../services/backgroundLocationDebugLogService";
 
 type SavedLocation = {
     latitude: number;
@@ -944,34 +945,74 @@ export function useForegroundLocationRecorder({
             recordingSubscriptionRef.current ||
             isStartingRef.current
         ) {
+            await saveBackgroundLocationDebugLog({
+                userId: recordingUserIdRef.current,
+                recordingSessionId: recordingSessionIdRef.current,
+                eventName: "recordingStartSkipped",
+                details: {
+                    isRecording,
+                    hasRecordingSubscription:
+                        recordingSubscriptionRef.current !== null,
+                    isStarting: isStartingRef.current,
+                },
+            });
+
             return;
         }
 
         isStartingRef.current = true;
 
+        await saveBackgroundLocationDebugLog({
+            userId: recordingUserIdRef.current,
+            recordingSessionId: recordingSessionIdRef.current,
+            eventName: "recordingStartEntered",
+            details: {
+                intervalMs,
+                distanceMeters,
+                liveShareOwnerCount: normalizedLiveShareOwnerValues.length,
+            },
+        });
+
         try {
             try {
+                await saveBackgroundLocationDebugLog({
+                    userId: recordingUserIdRef.current,
+                    recordingSessionId: recordingSessionIdRef.current,
+                    eventName: "recordingStartPermissionCheckStarted",
+                });
+
                 await ensureBackgroundLocationPermission();
+
+                await saveBackgroundLocationDebugLog({
+                    userId: recordingUserIdRef.current,
+                    recordingSessionId: recordingSessionIdRef.current,
+                    eventName: "recordingStartPermissionCheckCompleted",
+                });
             } catch (error) {
+                await saveBackgroundLocationDebugLog({
+                    userId: recordingUserIdRef.current,
+                    recordingSessionId: recordingSessionIdRef.current,
+                    eventName: "recordingStartPermissionCheckFailed",
+                    errorMessage:
+                        error instanceof Error ? error.message : String(error),
+                    details: {
+                        liveLocationId: liveLocationIdRef.current,
+                        liveShareOwnerCount:
+                            normalizedLiveShareOwnerValues.length,
+                    },
+                });
+
                 const isExpectedPermissionResult =
                     isBackgroundLocationDisclosureDeclined(error) ||
                     isForegroundLocationPermissionError(error) ||
                     isBackgroundLocationPermissionError(error);
 
                 if (isExpectedPermissionResult) {
-                    /*
-                     * 事前説明のキャンセルや権限拒否は、
-                     * LocationHomeScreen側で判定するため呼び出し元へ返す。
-                     */
                     throw error;
                 }
 
                 console.error("Location permission error:", error);
 
-                /*
-                 * 画面側でエラーを表示するため、
-                 * このフック内ではAlertを表示しない。
-                 */
                 throw error;
             }
 
@@ -989,7 +1030,22 @@ export function useForegroundLocationRecorder({
 
             const startedAt = new Date().toISOString();
 
+            await saveBackgroundLocationDebugLog({
+                userId: recordingUserIdRef.current,
+                recordingSessionId: newSessionId,
+                eventName: "recordingStartSessionCreated",
+                details: {
+                    startedAt,
+                },
+            });
+
             try {
+                await saveBackgroundLocationDebugLog({
+                    userId: recordingUserIdRef.current,
+                    recordingSessionId: newSessionId,
+                    eventName: "recordingStartStateInitializationStarted",
+                });
+
                 await initializeRecordingContinuationState(
                     newSessionId,
                     startedAt,
@@ -1000,7 +1056,26 @@ export function useForegroundLocationRecorder({
                     startedAt,
                     subscriptionTier,
                 );
+
+                await saveBackgroundLocationDebugLog({
+                    userId: recordingUserIdRef.current,
+                    recordingSessionId: newSessionId,
+                    eventName: "recordingStartStateInitializationCompleted",
+                });
             } catch (error) {
+                await saveBackgroundLocationDebugLog({
+                    userId: recordingUserIdRef.current,
+                    recordingSessionId: newSessionId,
+                    eventName: "recordingStartStateInitializationFailed",
+                    errorMessage:
+                        error instanceof Error ? error.message : String(error),
+                    details: {
+                        liveLocationId: liveLocationIdRef.current,
+                        liveShareOwnerCount:
+                            normalizedLiveShareOwnerValues.length,
+                    },
+                });
+
                 /*
                  * Plan Limit stateの初期化途中で失敗した場合でも、
                  * 部分的にAsyncStorageへ残っている可能性を考慮して削除する。
@@ -1029,10 +1104,39 @@ export function useForegroundLocationRecorder({
             let currentLocation: Location.LocationObject;
 
             try {
+                await saveBackgroundLocationDebugLog({
+                    userId: recordingUserIdRef.current,
+                    recordingSessionId: newSessionId,
+                    eventName: "recordingStartCurrentLocationRequestStarted",
+                });
+
                 currentLocation = await Location.getCurrentPositionAsync({
                     accuracy: Location.Accuracy.Balanced,
                 });
+
+                await saveBackgroundLocationDebugLog({
+                    userId: recordingUserIdRef.current,
+                    recordingSessionId: newSessionId,
+                    eventName: "recordingStartCurrentLocationRequestCompleted",
+                    details: {
+                        accuracy: currentLocation.coords.accuracy ?? null,
+                        timestamp: currentLocation.timestamp ?? null,
+                    },
+                });
             } catch (error) {
+                await saveBackgroundLocationDebugLog({
+                    userId: recordingUserIdRef.current,
+                    recordingSessionId: newSessionId,
+                    eventName: "recordingStartCurrentLocationRequestFailed",
+                    errorMessage:
+                        error instanceof Error ? error.message : String(error),
+                    details: {
+                        liveLocationId: liveLocationIdRef.current,
+                        liveShareOwnerCount:
+                            normalizedLiveShareOwnerValues.length,
+                    },
+                });
+
                 /*
                  * recordingPlanLimitStateはすでに初期化済みなので、
                  * 記録開始に失敗した場合は残さない。
@@ -1072,8 +1176,33 @@ export function useForegroundLocationRecorder({
             setDistanceFromStartMeters(0);
 
             try {
+                await saveBackgroundLocationDebugLog({
+                    userId: recordingUserIdRef.current,
+                    recordingSessionId: newSessionId,
+                    eventName: "recordingStartCurrentUserRequestStarted",
+                });
+
                 const currentUser = await getCurrentUser();
                 recordingUserIdRef.current = currentUser.userId;
+
+                await saveBackgroundLocationDebugLog({
+                    userId: currentUser.userId,
+                    recordingSessionId: newSessionId,
+                    eventName: "recordingStartCurrentUserRequestCompleted",
+                });
+
+                await saveBackgroundLocationDebugLog({
+                    userId: currentUser.userId,
+                    recordingSessionId: newSessionId,
+                    eventName: "recordingStartBackgroundStartRequested",
+                    details: {
+                        intervalMs,
+                        distanceMeters,
+                        liveShareOwnerCount:
+                            normalizedLiveShareOwnerValues.length,
+                        liveLocationId: liveLocationIdRef.current,
+                    },
+                });
 
                 await startBackgroundLocationRecording({
                     userId: currentUser.userId,
@@ -1090,7 +1219,25 @@ export function useForegroundLocationRecorder({
                         recordedAt: currentLocationRecordedAtMs,
                     },
                 });
+
+                await saveBackgroundLocationDebugLog({
+                    userId: currentUser.userId,
+                    recordingSessionId: newSessionId,
+                    eventName: "recordingStartBackgroundStartCompleted",
+                });
             } catch (error) {
+                await saveBackgroundLocationDebugLog({
+                    userId: recordingUserIdRef.current,
+                    recordingSessionId: newSessionId,
+                    eventName: "recordingStartBackgroundStartFailed",
+                    errorMessage:
+                        error instanceof Error ? error.message : String(error),
+                    details: {
+                        liveLocationId: liveLocationIdRef.current,
+                        liveShareOwnerCount:
+                            normalizedLiveShareOwnerValues.length,
+                    },
+                });
                 /*
                  * startBackgroundLocationRecording() は、
                  * startLocationUpdatesAsync() の開始失敗時に
@@ -1143,11 +1290,32 @@ export function useForegroundLocationRecorder({
                 );
             }
 
+            await saveBackgroundLocationDebugLog({
+                userId: recordingUserIdRef.current,
+                recordingSessionId: newSessionId,
+                eventName: foregroundWatcherStarted
+                    ? "recordingStartForegroundWatcherStarted"
+                    : "recordingStartForegroundWatcherFailed",
+            });
+
             isRecordingRef.current = true;
             setIsRecording(true);
 
             await updateLiveLocation(currentLocation);
             await saveLocationLog(currentLocation, true);
+
+            await saveBackgroundLocationDebugLog({
+                userId: recordingUserIdRef.current,
+                recordingSessionId: newSessionId,
+                eventName: "recordingStartCompleted",
+                details: {
+                    foregroundWatcherStarted,
+                    hasLiveShareOwners:
+                        normalizedLiveShareOwnerValues.length > 0,
+                    liveShareOwnerCount: normalizedLiveShareOwnerValues.length,
+                    liveLocationId: liveLocationIdRef.current,
+                },
+            });
         } finally {
             isStartingRef.current = false;
         }

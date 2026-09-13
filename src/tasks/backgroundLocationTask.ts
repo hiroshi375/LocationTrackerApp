@@ -1842,13 +1842,6 @@ function getLatestSavedLocation(
         : backgroundLocation;
 }
 
-async function setBackgroundRecordingState(state: BackgroundRecordingState) {
-    await AsyncStorage.setItem(
-        BACKGROUND_RECORDING_STATE_KEY,
-        JSON.stringify(state),
-    );
-}
-
 async function updateBackgroundRecordingStateIfCurrent(
     expectedUserId: string,
     expectedRecordingSessionId: string | null,

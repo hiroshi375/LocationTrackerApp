@@ -1102,25 +1102,69 @@ export function useForegroundLocationRecorder({
             setRecordingStartedAt(startedAt);
 
             let currentLocation: Location.LocationObject;
+            let currentLocationSource: "lastKnown" | "current";
 
             try {
                 await saveBackgroundLocationDebugLog({
                     userId: recordingUserIdRef.current,
                     recordingSessionId: newSessionId,
                     eventName: "recordingStartCurrentLocationRequestStarted",
+                    details: {
+                        lastKnownMaxAgeMs: 30_000,
+                        lastKnownRequiredAccuracyMeters: 100,
+                    },
                 });
 
-                currentLocation = await Location.getCurrentPositionAsync({
-                    accuracy: Location.Accuracy.Balanced,
-                });
+                /*
+                 * まず端末に保持されている直近位置を確認する。
+                 *
+                 * ・30秒以内
+                 * ・精度100m以内
+                 *
+                 * の位置があれば、新しい測位を待たずに利用する。
+                 */
+                const lastKnownLocation =
+                    await Location.getLastKnownPositionAsync({
+                        maxAge: 30_000,
+                        requiredAccuracy: 100,
+                    });
+
+                if (lastKnownLocation) {
+                    currentLocation = lastKnownLocation;
+                    currentLocationSource = "lastKnown";
+                } else {
+                    await saveBackgroundLocationDebugLog({
+                        userId: recordingUserIdRef.current,
+                        recordingSessionId: newSessionId,
+                        eventName: "recordingStartLastKnownLocationUnavailable",
+                        details: {
+                            maxAgeMs: 30_000,
+                            requiredAccuracyMeters: 100,
+                        },
+                    });
+
+                    currentLocation = await Location.getCurrentPositionAsync({
+                        accuracy: Location.Accuracy.Balanced,
+                    });
+
+                    currentLocationSource = "current";
+                }
 
                 await saveBackgroundLocationDebugLog({
                     userId: recordingUserIdRef.current,
                     recordingSessionId: newSessionId,
                     eventName: "recordingStartCurrentLocationRequestCompleted",
                     details: {
+                        locationSource: currentLocationSource,
                         accuracy: currentLocation.coords.accuracy ?? null,
                         timestamp: currentLocation.timestamp ?? null,
+                        ageMs:
+                            typeof currentLocation.timestamp === "number"
+                                ? Math.max(
+                                      0,
+                                      Date.now() - currentLocation.timestamp,
+                                  )
+                                : null,
                     },
                 });
             } catch (error) {

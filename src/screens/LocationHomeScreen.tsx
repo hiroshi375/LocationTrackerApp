@@ -1557,6 +1557,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 },
             );
 
+            /*
+             * RecordingSession保存によって更新された
+             * 今月のアクティビティ件数をホーム画面へ即時反映する。
+             */
+            await loadCurrentMonthActivityUsage();
+
             await clearRecordingContinuationState(pendingSessionId);
 
             setSessionNameModalVisible(false);

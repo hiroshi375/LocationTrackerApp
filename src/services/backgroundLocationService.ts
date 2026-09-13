@@ -2,6 +2,7 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
+import * as TaskManager from "expo-task-manager";
 import { Alert, Linking, Platform } from "react-native";
 import { client } from "../lib/client";
 
@@ -212,6 +213,108 @@ async function safeHasStartedLocationUpdates(): Promise<boolean> {
         console.error("Check background location updates status error:", error);
 
         return false;
+    }
+}
+
+async function saveTaskManagerDiagnosticSnapshot({
+    userId,
+    recordingSessionId,
+    eventName,
+}: {
+    userId?: string | null;
+    recordingSessionId?: string | null;
+    eventName: string;
+}): Promise<void> {
+    let locationHasStarted: boolean | null = null;
+    let locationHasStartedError: string | null = null;
+
+    let taskManagerIsRegistered: boolean | null = null;
+    let taskManagerIsRegisteredError: string | null = null;
+
+    let registeredTasks:
+        | {
+              taskName: string | null;
+              taskType: string | null;
+              options: unknown;
+          }[]
+        | null = null;
+    let registeredTasksError: string | null = null;
+
+    let targetTaskOptions: unknown = null;
+    let targetTaskOptionsError: string | null = null;
+
+    try {
+        locationHasStarted = await Location.hasStartedLocationUpdatesAsync(
+            BACKGROUND_LOCATION_TASK_NAME,
+        );
+    } catch (error) {
+        locationHasStartedError =
+            error instanceof Error ? error.message : String(error);
+    }
+
+    try {
+        taskManagerIsRegistered = await TaskManager.isTaskRegisteredAsync(
+            BACKGROUND_LOCATION_TASK_NAME,
+        );
+    } catch (error) {
+        taskManagerIsRegisteredError =
+            error instanceof Error ? error.message : String(error);
+    }
+
+    try {
+        const tasks = await TaskManager.getRegisteredTasksAsync();
+
+        registeredTasks = tasks.map((task: any) => ({
+            taskName: typeof task?.taskName === "string" ? task.taskName : null,
+            taskType: typeof task?.taskType === "string" ? task.taskType : null,
+            options: task?.options ?? null,
+        }));
+    } catch (error) {
+        registeredTasksError =
+            error instanceof Error ? error.message : String(error);
+    }
+
+    try {
+        targetTaskOptions = await TaskManager.getTaskOptionsAsync(
+            BACKGROUND_LOCATION_TASK_NAME,
+        );
+    } catch (error) {
+        targetTaskOptionsError =
+            error instanceof Error ? error.message : String(error);
+    }
+
+    try {
+        await saveBackgroundLocationDebugLog({
+            userId: userId ?? null,
+            recordingSessionId: recordingSessionId ?? null,
+            eventName,
+            hasStartedLocationUpdates: locationHasStarted,
+            details: {
+                taskName: BACKGROUND_LOCATION_TASK_NAME,
+
+                locationHasStarted,
+                locationHasStartedError,
+
+                taskManagerIsRegistered,
+                taskManagerIsRegisteredError,
+
+                registeredTasks,
+                registeredTasksError,
+
+                targetTaskOptions,
+                targetTaskOptionsError,
+            },
+        });
+    } catch (error) {
+        /*
+         * 診断ログ自体の失敗によって
+         * 自動記録開始・停止処理を失敗させない。
+         */
+        console.error(
+            "[BackgroundLocation] TaskManager diagnostic snapshot failed:",
+            eventName,
+            error,
+        );
     }
 }
 
@@ -479,6 +582,12 @@ export async function startBackgroundLocationRecording({
         },
     });
 
+    await saveTaskManagerDiagnosticSnapshot({
+        userId,
+        recordingSessionId,
+        eventName: "taskManagerSnapshotBeforeRecordingStart",
+    });
+
     if (hasStartedBeforeRestart) {
         await saveBackgroundLocationDebugLog({
             userId,
@@ -524,6 +633,12 @@ export async function startBackgroundLocationRecording({
             recordingSessionId,
             eventName: "existingLocationUpdatesStoppedBeforeRecordingStart",
             hasStartedLocationUpdates: hasStartedAfterStop,
+        });
+
+        await saveTaskManagerDiagnosticSnapshot({
+            userId,
+            recordingSessionId,
+            eventName: "taskManagerSnapshotAfterExistingTaskStop",
         });
 
         if (hasStartedAfterStop) {
@@ -581,10 +696,21 @@ export async function startBackgroundLocationRecording({
     );
 
     try {
+        await saveTaskManagerDiagnosticSnapshot({
+            userId,
+            recordingSessionId,
+            eventName: "taskManagerSnapshotImmediatelyBeforeStartCall",
+        });
         await Location.startLocationUpdatesAsync(
             BACKGROUND_LOCATION_TASK_NAME,
             locationTaskOptions,
         );
+
+        await saveTaskManagerDiagnosticSnapshot({
+            userId,
+            recordingSessionId,
+            eventName: "taskManagerSnapshotImmediatelyAfterStartCall",
+        });
 
         const hasStartedAfterStart =
             await Location.hasStartedLocationUpdatesAsync(
@@ -625,6 +751,11 @@ export async function startBackgroundLocationRecording({
          *
          */
     } catch (error) {
+        await saveTaskManagerDiagnosticSnapshot({
+            userId,
+            recordingSessionId,
+            eventName: "taskManagerSnapshotOnStartFailure",
+        });
         await saveBackgroundLocationDebugLog({
             userId,
             recordingSessionId,
@@ -811,6 +942,12 @@ export async function stopBackgroundLocationRecording(
         BACKGROUND_LOCATION_TASK_NAME,
     );
 
+    await saveTaskManagerDiagnosticSnapshot({
+        userId,
+        recordingSessionId,
+        eventName: "taskManagerSnapshotBeforeRecordingStop",
+    });
+
     if (continueLiveSharing && currentState) {
         let stateForUpdate = currentState;
 
@@ -940,6 +1077,16 @@ export async function stopBackgroundLocationRecording(
             hasStartedBeforeStop: hasStarted,
             continueLiveSharing: false,
         },
+    });
+
+    /*
+     * stopLocationUpdatesAsync() 後に、
+     * TaskManager側の登録状態が完全に解除されているか診断する。
+     */
+    await saveTaskManagerDiagnosticSnapshot({
+        userId,
+        recordingSessionId,
+        eventName: "taskManagerSnapshotAfterRecordingStop",
     });
 
     if (liveLocationId) {

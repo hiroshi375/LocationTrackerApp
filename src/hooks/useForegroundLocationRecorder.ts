@@ -116,6 +116,15 @@ export function useForegroundLocationRecorder({
     const recordingSubscriptionRef =
         useRef<Location.LocationSubscription | null>(null);
 
+    /*
+     * Foreground recording watcher の世代番号。
+     *
+     * watchPositionAsync() の登録中に停止・再登録が行われた場合、
+     * 古い非同期処理が完了して stale subscription を
+     * recordingSubscriptionRef.current に書き戻すことを防ぐ。
+     */
+    const recordingWatcherGenerationRef = useRef(0);
+
     const liveSharingSubscriptionRef =
         useRef<Location.LocationSubscription | null>(null);
 
@@ -792,15 +801,29 @@ export function useForegroundLocationRecorder({
      *
      * forceRestart=trueの場合だけ既存watcherを破棄して再登録する。
      *
-     * 位置取得条件・保存条件は従来と同じ。
+     * watchPositionAsync() は非同期のため、
+     * 登録待ち中に停止・別セッション開始が行われる可能性がある。
+     *
+     * そのため、
+     * ・開始時のrecordingSessionId
+     * ・watcher generation
+     *
+     * を保持し、登録完了後に同じセッションがまだ有効か確認する。
      */
     const ensureForegroundRecordingWatcher = useCallback(
         async (forceRestart: boolean = false): Promise<boolean> => {
-            if (!recordingSessionIdRef.current) {
+            const targetRecordingSessionId = recordingSessionIdRef.current;
+
+            if (!targetRecordingSessionId) {
                 return false;
             }
 
             if (forceRestart) {
+                /*
+                 * 現在進行中の非同期watcher登録も無効化する。
+                 */
+                recordingWatcherGenerationRef.current += 1;
+
                 recordingSubscriptionRef.current?.remove();
                 recordingSubscriptionRef.current = null;
             }
@@ -808,6 +831,16 @@ export function useForegroundLocationRecorder({
             if (recordingSubscriptionRef.current) {
                 return true;
             }
+
+            /*
+             * この登録処理固有のgenerationを確保する。
+             *
+             * この後stop/restartが入るとgenerationが変わるため、
+             * await完了後にstale判定できる。
+             */
+            const watcherGeneration = recordingWatcherGenerationRef.current + 1;
+
+            recordingWatcherGenerationRef.current = watcherGeneration;
 
             try {
                 const subscription = await Location.watchPositionAsync(
@@ -823,6 +856,28 @@ export function useForegroundLocationRecorder({
                         distanceInterval: 0,
                     },
                     async (location) => {
+                        /*
+                         * 古いwatcherのcallbackが遅れて到着した場合は無視する。
+                         */
+                        if (
+                            recordingWatcherGenerationRef.current !==
+                            watcherGeneration
+                        ) {
+                            return;
+                        }
+
+                        /*
+                         * watcherを開始したセッションと
+                         * 現在のセッションが一致していなければ保存しない。
+                         */
+                        if (
+                            !isRecordingRef.current ||
+                            recordingSessionIdRef.current !==
+                                targetRecordingSessionId
+                        ) {
+                            return;
+                        }
+
                         if (appStateRef.current !== "active") {
                             return;
                         }
@@ -831,11 +886,70 @@ export function useForegroundLocationRecorder({
                     },
                 );
 
+                /*
+                 * watchPositionAsync() のawait中に
+                 *
+                 * ・stopRecording()
+                 * ・resetRecordingState()
+                 * ・別セッションへの切り替え
+                 * ・foreground watcherの再登録
+                 *
+                 * が行われていないか確認する。
+                 */
+                const isStillCurrentWatcher =
+                    recordingWatcherGenerationRef.current ===
+                        watcherGeneration &&
+                    isRecordingRef.current &&
+                    recordingSessionIdRef.current === targetRecordingSessionId;
+
+                if (!isStillCurrentWatcher) {
+                    /*
+                     * 古い非同期登録が遅れて完了したケース。
+                     *
+                     * recordingSubscriptionRef.currentへ保存せず、
+                     * Native側watcherも即座に破棄する。
+                     */
+                    subscription.remove();
+
+                    console.warn(
+                        "Discard stale foreground recording watcher:",
+                        {
+                            targetRecordingSessionId,
+                            currentRecordingSessionId:
+                                recordingSessionIdRef.current,
+                            watcherGeneration,
+                            currentWatcherGeneration:
+                                recordingWatcherGenerationRef.current,
+                            isRecording: isRecordingRef.current,
+                        },
+                    );
+
+                    await saveBackgroundLocationDebugLog({
+                        userId: recordingUserIdRef.current,
+                        recordingSessionId:
+                            recordingSessionIdRef.current ??
+                            targetRecordingSessionId,
+                        eventName: "foregroundRecordingWatcherDiscardedAsStale",
+                        details: {
+                            targetRecordingSessionId,
+                            currentRecordingSessionId:
+                                recordingSessionIdRef.current,
+                            watcherGeneration,
+                            currentWatcherGeneration:
+                                recordingWatcherGenerationRef.current,
+                            isRecording: isRecordingRef.current,
+                        },
+                    });
+
+                    return false;
+                }
+
                 recordingSubscriptionRef.current = subscription;
 
                 console.log("Foreground recording watcher registered:", {
-                    recordingSessionId: recordingSessionIdRef.current,
+                    recordingSessionId: targetRecordingSessionId,
                     forceRestart,
+                    watcherGeneration,
                 });
 
                 return true;
@@ -852,12 +966,18 @@ export function useForegroundLocationRecorder({
     );
 
     const resetRecordingState = useCallback(() => {
+        /*
+         * 現在登録中の非同期watcherも含めて無効化する。
+         */
+        recordingWatcherGenerationRef.current += 1;
+
         recordingSubscriptionRef.current?.remove();
         recordingSubscriptionRef.current = null;
 
         if (normalizedLiveShareOwnerValues.length === 0) {
             liveLocationIdRef.current = null;
         }
+
         recordingSessionIdRef.current = null;
         recordingUserIdRef.current = null;
         startLocationRef.current = null;
@@ -940,8 +1060,59 @@ export function useForegroundLocationRecorder({
 
     // 記録開始関数
     const startRecording = useCallback(async () => {
+        /*
+         * 前回停止時のraceによって、
+         *
+         * ・記録中ではない
+         * ・recordingSessionIdもない
+         * ・開始処理中でもない
+         *
+         * にもかかわらずforeground watcherだけ残っている場合は、
+         * stale watcherと判断して自動回収する。
+         */
+        const hasStaleRecordingSubscription =
+            !isRecording &&
+            !isRecordingRef.current &&
+            !recordingSessionIdRef.current &&
+            !isStartingRef.current &&
+            recordingSubscriptionRef.current !== null;
+
+        if (hasStaleRecordingSubscription) {
+            console.warn(
+                "Clean stale foreground recording watcher before recording start.",
+            );
+
+            /*
+             * 登録途中のwatcherも含めて無効化する。
+             */
+            recordingWatcherGenerationRef.current += 1;
+
+            recordingSubscriptionRef.current?.remove();
+            recordingSubscriptionRef.current = null;
+
+            await saveBackgroundLocationDebugLog({
+                userId: recordingUserIdRef.current,
+                recordingSessionId: null,
+                eventName: "recordingStartStaleForegroundWatcherCleaned",
+                details: {
+                    isRecording,
+                    isRecordingRef: isRecordingRef.current,
+                    hasRecordingSession: recordingSessionIdRef.current !== null,
+                    isStarting: isStartingRef.current,
+                },
+            });
+        }
+
+        /*
+         * 本当に記録中、または開始処理中なら二重開始を防止する。
+         *
+         * recordingSubscriptionRefだけが残っているケースは
+         * 上でstale cleanup済み。
+         */
         if (
             isRecording ||
+            isRecordingRef.current ||
+            recordingSessionIdRef.current ||
             recordingSubscriptionRef.current ||
             isStartingRef.current
         ) {
@@ -951,6 +1122,8 @@ export function useForegroundLocationRecorder({
                 eventName: "recordingStartSkipped",
                 details: {
                     isRecording,
+                    isRecordingRef: isRecordingRef.current,
+                    hasRecordingSession: recordingSessionIdRef.current !== null,
                     hasRecordingSubscription:
                         recordingSubscriptionRef.current !== null,
                     isStarting: isStartingRef.current,
@@ -1639,8 +1812,13 @@ export function useForegroundLocationRecorder({
 
             /*
              * foregroundの位置監視を先に止める。
-             * これ以降、新しいforeground callbackを発生させない。
+             *
+             * 既に登録済みのwatcherだけでなく、
+             * 現在watchPositionAsync()の完了待ちになっている
+             * 非同期登録処理も無効化する。
              */
+            recordingWatcherGenerationRef.current += 1;
+
             recordingSubscriptionRef.current?.remove();
             recordingSubscriptionRef.current = null;
 
@@ -2136,6 +2314,11 @@ export function useForegroundLocationRecorder({
 
     useEffect(() => {
         return () => {
+            /*
+             * unmount前に開始されていた非同期watcher登録も無効化する。
+             */
+            recordingWatcherGenerationRef.current += 1;
+
             recordingSubscriptionRef.current?.remove();
             recordingSubscriptionRef.current = null;
         };

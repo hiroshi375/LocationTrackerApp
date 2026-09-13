@@ -14,7 +14,7 @@ index 856c83d..8b0d25d 100644
    api "androidx.core:core:1.0.0"
  }
 diff --git a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
-index 2b6c2fa..b4f3bb8 100644
+index 2b6c2fa..2f9fa35 100644
 --- a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
 +++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
 @@ -1,31 +1,44 @@
@@ -102,7 +102,7 @@ index 2b6c2fa..b4f3bb8 100644
    // Map with task managers of running (foregrounded) apps. { "<appScopeKey>": WeakReference(TaskManagerInterface) }
    private static final Map<String, WeakReference<TaskManagerInterface>> sTaskManagers = new HashMap<>();
  
-@@ -63,11 +70,19 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -63,21 +70,63 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
    // { "<appScopeKey>": List(eventIds...) }
    private static final Map<String, List<String>> sEvents = new HashMap<>();
  
@@ -111,20 +111,72 @@ index 2b6c2fa..b4f3bb8 100644
    // Map of callbacks for task execution events. Schema: { "<eventId>": TaskExecutionCallback }
    private static final Map<String, TaskExecutionCallback> sTaskCallbacks = new HashMap<>();
  
+-  public TaskService(Context context) {
+-    super();
+-    mContextRef = new WeakReference<>(context);
+-    mTasksAndEventsRepository = TasksAndEventsRepository.create(context);
 +  // Background task実行中にJS timerを維持するために開始した
 +  // React Native Headless JS task IDをappScopeKeyごとに保持する。
 +  private static final Map<String, Integer> sHeadlessTaskIds = new HashMap<>();
-+
+ 
+-    if (!mTasksAndEventsRepository.tasksExist()) {
+-      mTasksAndEventsRepository.createTasks();
+-      restoreTasks();
+-    }
 +  private WeakReference<Context> mContextRef;
++
++  /*
++   * TaskService生成時のApplication Contextを強参照で保持する。
++   *
++   * mContextRefの参照先がGC等で失われても、
++   * TaskManagerの登録・永続化処理を継続できるようにする。
++   *
++   * Application ContextはActivity Contextではないため、
++   * Activity lifecycleを不要に保持し続けることはない。
++   */
++  private final Context mApplicationContext;
 +
 +  private TaskManagerUtilsInterface mTaskManagerUtils;
 +
 +  private TasksAndEventsRepository mTasksAndEventsRepository;
 +
-   public TaskService(Context context) {
-     super();
-     mContextRef = new WeakReference<>(context);
-@@ -203,9 +218,13 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
++public TaskService(Context context) {
++  super();
++
++  /*
++   * 元のContextはWeakReferenceとして維持する。
++   * 既存のexpo-task-managerの挙動をできるだけ変えないため。
++   */
++  mContextRef = new WeakReference<>(context);
++
++  /*
++   * 一方で、TaskServiceが長時間生存したあと
++   * WeakReference側のContextがGC等で失われても復旧できるよう、
++   * Application Contextを強参照で保持する。
++   */
++  Context applicationContext = context.getApplicationContext();
++
++  mApplicationContext =
++    applicationContext != null
++      ? applicationContext
++      : context;
++
++  /*
++   * RepositoryもActivity等の短寿命Contextではなく、
++   * Application Contextを使う。
++   */
++  mTasksAndEventsRepository =
++    TasksAndEventsRepository.create(mApplicationContext);
++
++  if (!mTasksAndEventsRepository.tasksExist()) {
++    mTasksAndEventsRepository.createTasks();
++    restoreTasks();
+   }
++}
+ 
+   public String getName() {
+     return "TaskService";
+@@ -203,9 +252,13 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
      if (appEvents != null) {
        appEvents.remove(eventId);
  
@@ -139,7 +191,7 @@ index 2b6c2fa..b4f3bb8 100644
          // Invalidate app record but after 2 seconds delay so we can still take batched events.
          Handler handler = new Handler();
          handler.postDelayed(new Runnable() {
-@@ -220,7 +239,7 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -220,7 +273,7 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
      }
  
      // Invoke task callback
@@ -148,7 +200,7 @@ index 2b6c2fa..b4f3bb8 100644
  
      if (taskCallback != null) {
        taskCallback.onFinished(response);
-@@ -232,6 +251,7 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -232,6 +285,7 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
      // It may be called with null when the host activity is destroyed.
      if (taskManager == null) {
        sTaskManagers.remove(appScopeKey);
@@ -156,7 +208,16 @@ index 2b6c2fa..b4f3bb8 100644
        return;
      }
  
-@@ -386,16 +406,36 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -307,7 +361,7 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+       Log.w(TAG, "Task or consumer not found.");
+ 
+       // Cancel pending intent.
+-      getTaskManagerUtils().cancelTaskIntent(mContextRef.get(), appScopeKey, taskName);
++      getTaskManagerUtils().cancelTaskIntent(getContextOrApplicationContext(), appScopeKey, taskName);
+       return;
+     }
+ 
+@@ -386,16 +440,36 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
        sTaskCallbacks.put(eventId, callback);
      }
  
@@ -195,30 +256,105 @@ index 2b6c2fa..b4f3bb8 100644
      if (taskManager != null) {
        taskManager.executeTaskWithBody(body);
        return;
-@@ -516,8 +556,20 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -409,7 +483,7 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+     mTasksAndEventsRepository.putEventForAppScopeKey(appScopeKey, body);
+ 
+     try {
+-      getAppLoader().loadApp(mContextRef.get(), new HeadlessAppLoader.Params(appScopeKey, task.getAppUrl()), () -> {
++      getAppLoader().loadApp(getContextOrApplicationContext(), new HeadlessAppLoader.Params(appScopeKey, task.getAppUrl()), () -> {
+       }, success -> {
+         if (!success) {
+           sEvents.remove(appScopeKey);
+@@ -434,21 +508,58 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+   //endregion
+   //region helpers
+ 
++  /*
++   * TaskServiceで使用するContextを安全に取得する。
++   *
++   * 通常時は従来どおりmContextRef側を優先する。
++   * WeakReferenceが失われている場合だけApplication Contextへfallbackする。
++   */
++  private Context getContextOrApplicationContext() {
++    Context context = mContextRef.get();
++
++    if (context != null) {
++      return context;
++    }
++
++    Log.w(
++      TAG,
++      "[ContextFallback] WeakReference context is null; using Application Context"
++    );
++
++    return mApplicationContext;
++  }
++
+   private HeadlessAppLoader getAppLoader() {
+-    if (mContextRef.get() != null) {
+-      return AppLoaderProvider.getLoader("react-native-headless", mContextRef.get());
+-    } else {
+-      return null;
++    Context context = getContextOrApplicationContext();
++
++    if (context != null) {
++      return AppLoaderProvider.getLoader(
++        "react-native-headless",
++        context
++      );
+     }
++
++    return null;
+   }
+ 
+   private void internalRegisterTask(String taskName, String appScopeKey, String appUrl, Class<TaskConsumerInterface> consumerClass, Map<String, Object> options) throws TaskRegisteringFailedException {
+     Constructor<?> consumerConstructor;
+     TaskConsumerInterface consumer;
+-    Context context = mContextRef.get();
++    Context context = getContextOrApplicationContext();
+ 
+     if (context == null) {
+-      return;
++      /*
++       * Application Contextまで取得できない場合は、
++       * silent returnせず登録失敗として扱う。
++       *
++       * startLocationUpdatesAsync()が成功扱いになるのを防ぐ。
++       */
++      throw new TaskRegisteringFailedException(
++        consumerClass,
++        new IllegalStateException(
++          "TaskService context is unavailable while registering task."
++        )
++      );
+     }
+ 
+     try {
+@@ -515,8 +626,21 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+   }
  
    private SharedPreferences getSharedPreferences() {
-     Context context = mContextRef.get();
+-    Context context = mContextRef.get();
 -    return context != null ? context.getSharedPreferences(SHARED_PREFERENCES_NAME, Context.MODE_PRIVATE) : null;
--  }
++    Context context = getContextOrApplicationContext();
 +
 +    if (context == null) {
-+        Log.e(
-+            TAG,
-+            "[ContextDebug] TaskService context is null in getSharedPreferences()"
-+        );
-+        return null;
++      Log.e(
++        TAG,
++        "[ContextFallback] TaskService context is unavailable in getSharedPreferences()"
++      );
++
++      return null;
 +    }
 +
 +    return context.getSharedPreferences(
-+        SHARED_PREFERENCES_NAME,
-+        Context.MODE_PRIVATE
++      SHARED_PREFERENCES_NAME,
++      Context.MODE_PRIVATE
 +    );
-+}
+   }
  
    private void maybeUpdateAppUrlForAppScopeKey(String appUrl, String appScopeKey) {
-     SharedPreferences preferences = getSharedPreferences();
-@@ -619,4 +671,363 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -619,4 +743,363 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
      }, timeout);
    }
  
@@ -233,12 +369,12 @@ index 2b6c2fa..b4f3bb8 100644
 +    );
 +
 +    try {
-+      Context context = mContextRef.get();
++      Context context = getContextOrApplicationContext();
 +
 +      if (context == null) {
 +        Log.w(
 +          TAG,
-+          "[HEADLESS_TIMER] context is null, appScopeKey=" + appScopeKey
++          "[HEADLESS_TIMER] context is unavailable, appScopeKey=" + appScopeKey
 +        );
 +        return;
 +      }
@@ -491,7 +627,7 @@ index 2b6c2fa..b4f3bb8 100644
 +    }
 +
 +    try {
-+      Context context = mContextRef.get();
++      Context context = getContextOrApplicationContext();
 +
 +      if (context == null) {
 +        Log.w(

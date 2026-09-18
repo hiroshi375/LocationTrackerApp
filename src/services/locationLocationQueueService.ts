@@ -32,6 +32,8 @@ export type EnqueueLocationBatchResult = {
     duplicateCount: number;
     invalidCount: number;
     queueCount: number | null;
+    preExistingDuplicateCount: number;
+    insertAttemptCount: number;
 
     /**
      * 今回のcallbackでdirect LocationLog処理へ流す地点。
@@ -104,6 +106,55 @@ export type CleanupProcessedLocationQueueResult = {
 };
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
+
+/*
+ * Background / Foreground から同時に巨大batchが入った場合でも、
+ * SQLite mirror処理を同時に複数実行しない。
+ *
+ * 重要：
+ * ・LocationLog.create全体を直列化するものではない。
+ * ・位置情報をskipするものではない。
+ * ・SQLiteへの投入処理だけを1本ずつ実行する。
+ *
+ * これにより累積batch
+ *   662件
+ *   663件
+ *   664件
+ *   ...
+ * が同時にSQLiteへ流れ込むことを防ぐ。
+ */
+let locationBatchEnqueueQueue: Promise<void> = Promise.resolve();
+
+async function runLocationBatchEnqueueSerially<T>(
+    operation: () => Promise<T>,
+): Promise<T> {
+    const previous = locationBatchEnqueueQueue;
+
+    let releaseCurrent!: () => void;
+
+    locationBatchEnqueueQueue = new Promise<void>((resolve) => {
+        releaseCurrent = resolve;
+    });
+
+    /*
+     * 直前処理が失敗していても、
+     * 次のbatchまで永久停止させない。
+     */
+    try {
+        await previous;
+    } catch {
+        // 前batch失敗は次batchの実行を妨げない。
+    }
+
+    try {
+        return await operation();
+    } finally {
+        /*
+         * 成功・失敗のどちらでも必ず次batchへ進める。
+         */
+        releaseCurrent();
+    }
+}
 
 /**
  * DB初期化処理を多重実行しないよう、Promiseを共有する。
@@ -229,8 +280,96 @@ async function ensureQueueColumn(
 export async function enqueueLocationBatchForAudit(
     input: EnqueueLocationBatchInput,
 ): Promise<EnqueueLocationBatchResult> {
-    const db = await getDatabase();
+    return runLocationBatchEnqueueSerially(() =>
+        enqueueLocationBatchForAuditInternal(input),
+    );
+}
 
+type ExistingLocationLogIdRow = {
+    location_log_id: string;
+};
+
+const EXISTING_LOCATION_ID_LOOKUP_CHUNK_SIZE = 200;
+
+/**
+ * SQLiteへ既に保存済みであることが確認できたLocationLog IDを取得する。
+ *
+ * SQLiteで存在確認できたIDだけを重複として除外する。
+ *
+ * 查询失敗時は空Setを返し、
+ * 従来どおり全地点をINSERT OR IGNOREへ流す。
+ *
+ * したがって、この最適化の失敗によって地点を失うことはない。
+ */
+async function getExistingLocationLogIds(
+    db: SQLite.SQLiteDatabase,
+    locationLogIds: string[],
+): Promise<Set<string>> {
+    const existingIds = new Set<string>();
+
+    if (locationLogIds.length === 0) {
+        return existingIds;
+    }
+
+    try {
+        for (
+            let startIndex = 0;
+            startIndex < locationLogIds.length;
+            startIndex += EXISTING_LOCATION_ID_LOOKUP_CHUNK_SIZE
+        ) {
+            const chunk = locationLogIds.slice(
+                startIndex,
+                startIndex + EXISTING_LOCATION_ID_LOOKUP_CHUNK_SIZE,
+            );
+
+            const params: Record<string, string> = {};
+
+            const placeholders = chunk.map((locationLogId, index) => {
+                const parameterName = `$locationLogId${index}`;
+
+                params[parameterName] = locationLogId;
+
+                return parameterName;
+            });
+
+            const rows = await db.getAllAsync<ExistingLocationLogIdRow>(
+                `
+                SELECT location_log_id
+                FROM ${TABLE_NAME}
+                WHERE location_log_id IN (${placeholders.join(", ")})
+                `,
+                params,
+            );
+
+            for (const row of rows) {
+                if (row.location_log_id) {
+                    existingIds.add(row.location_log_id);
+                }
+            }
+        }
+
+        return existingIds;
+    } catch (error) {
+        /*
+         * 最重要：
+         * 事前重複確認の失敗によって位置情報を捨てない。
+         *
+         * 空Setを返すことで従来のINSERT OR IGNOREへ
+         * 全地点を流す。
+         */
+        console.error(
+            "SQLite existing location lookup failed. Continue normal insert path:",
+            error,
+        );
+
+        return new Set<string>();
+    }
+}
+
+async function enqueueLocationBatchForAuditInternal(
+    input: EnqueueLocationBatchInput,
+): Promise<EnqueueLocationBatchResult> {
+    const db = await getDatabase();
     const sharedOwnersJson =
         input.sharedOwners && input.sharedOwners.length > 0
             ? JSON.stringify(
@@ -241,6 +380,7 @@ export async function enqueueLocationBatchForAudit(
     let insertedCount = 0;
     let duplicateCount = 0;
     let invalidCount = 0;
+    let insertAttemptCount = 0;
 
     /*
      * direct LocationLog保存へ流す必要がある地点だけを保持する。
@@ -249,9 +389,24 @@ export async function enqueueLocationBatchForAudit(
      */
     const locationsForDirectSave: Location.LocationObject[] = [];
 
+    type PreparedLocationQueueItem = {
+        location: Location.LocationObject;
+        latitude: number;
+        longitude: number;
+        recordedAtMs: number;
+        recordedAt: string;
+        accuracy: number | null;
+        locationUniqueKey: string;
+        locationLogId: string;
+    };
+
+    const preparedLocations: PreparedLocationQueueItem[] = [];
+
     /*
-     * 1件の不正データやINSERT失敗によって
-     * バッチ内の残り地点を失わないよう、地点単位で処理する。
+     * DBアクセス前に軽量なJavaScript処理だけで
+     * LocationLog IDを作る。
+     *
+     * この段階では地点をskipしない。
      */
     for (const location of input.locations) {
         const latitude = location.coords.latitude;
@@ -261,8 +416,8 @@ export async function enqueueLocationBatchForAudit(
             invalidCount += 1;
 
             /*
-             * 従来どおりbackgroundLocationTask側でも
-             * invalidCoordinateとして判定・集計できるようにする。
+             * 従来どおりbackgroundLocationTask側で
+             * invalidCoordinate判定させる。
              */
             locationsForDirectSave.push(location);
 
@@ -276,6 +431,7 @@ export async function enqueueLocationBatchForAudit(
                 : Date.now();
 
         const recordedAt = new Date(recordedAtMs).toISOString();
+
         const accuracy = normalizeNullableNumber(location.coords.accuracy);
 
         const locationUniqueKey = createLocationUniqueKey({
@@ -289,51 +445,107 @@ export async function enqueueLocationBatchForAudit(
 
         const locationLogId = createLocationLogId(locationUniqueKey);
 
+        preparedLocations.push({
+            location,
+            latitude,
+            longitude,
+            recordedAtMs,
+            recordedAt,
+            accuracy,
+            locationUniqueKey,
+            locationLogId,
+        });
+    }
+
+    const existingLocationLogIds = await getExistingLocationLogIds(
+        db,
+        preparedLocations.map((item) => item.locationLogId),
+    );
+
+    /*
+     * SQLite上ですでに存在していることを
+     * 事前SELECTで確認できた地点数。
+     */
+    const preExistingDuplicateCount = existingLocationLogIds.size;
+
+    /*
+     * 1件の不正データやINSERT失敗によって
+     * バッチ内の残り地点を失わないよう、地点単位で処理する。
+     */
+    for (const item of preparedLocations) {
+        const {
+            location,
+            latitude,
+            longitude,
+            recordedAtMs,
+            recordedAt,
+            accuracy,
+            locationUniqueKey,
+            locationLogId,
+        } = item;
+
+        /*
+         * SQLite自身が「既に存在する」と確認した地点だけ、
+         * INSERTを省略する。
+         *
+         * timestampや前回callbackのメモリ状態だけでは判断しないため、
+         * 未保存地点を誤って捨てない。
+         */
+        if (existingLocationLogIds.has(locationLogId)) {
+            duplicateCount += 1;
+            continue;
+        }
+
+        /*
+         * ここまで来た地点だけ実際にSQLite INSERTを試す。
+         */
+        insertAttemptCount += 1;
+
         try {
             const result = await db.runAsync(
                 `
-    INSERT OR IGNORE INTO ${TABLE_NAME} (
-        location_log_id,
-        location_unique_key,
-        user_id,
-        recording_session_id,
-        source,
-        recorded_at,
-        recorded_at_ms,
-        received_at,
-        latitude,
-        longitude,
-        accuracy,
-        altitude,
-        altitude_accuracy,
-        heading,
-        speed,
-        is_sent,
-        queue_status,
-        shared_owners_json,
-        created_at
-    ) VALUES (
-        $locationLogId,
-        $locationUniqueKey,
-        $userId,
-        $recordingSessionId,
-        $source,
-        $recordedAt,
-        $recordedAtMs,
-        $receivedAt,
-        $latitude,
-        $longitude,
-        $accuracy,
-        $altitude,
-        $altitudeAccuracy,
-        $heading,
-        $speed,
-        0,
-        'pending',
-        $sharedOwnersJson,
-        $createdAt
-    )
-    `,
+            INSERT OR IGNORE INTO ${TABLE_NAME} (
+                location_log_id,
+                location_unique_key,
+                user_id,
+                recording_session_id,
+                source,
+                recorded_at,
+                recorded_at_ms,
+                received_at,
+                latitude,
+                longitude,
+                accuracy,
+                altitude,
+                altitude_accuracy,
+                heading,
+                speed,
+                is_sent,
+                queue_status,
+                shared_owners_json,
+                created_at
+            ) VALUES (
+                $locationLogId,
+                $locationUniqueKey,
+                $userId,
+                $recordingSessionId,
+                $source,
+                $recordedAt,
+                $recordedAtMs,
+                $receivedAt,
+                $latitude,
+                $longitude,
+                $accuracy,
+                $altitude,
+                $altitudeAccuracy,
+                $heading,
+                $speed,
+                0,
+                'pending',
+                $sharedOwnersJson,
+                $createdAt
+            )
+            `,
                 {
                     $locationLogId: locationLogId,
                     $locationUniqueKey: locationUniqueKey,
@@ -365,16 +577,14 @@ export async function enqueueLocationBatchForAudit(
                 insertedCount += 1;
 
                 /*
-                 * 今回初めてSQLiteへ入った地点だけ、
-                 * direct LocationLog保存の対象にする。
+                 * SQLiteへ確実に新規保存された地点だけ
+                 * direct LocationLog保存へ進める。
                  */
                 locationsForDirectSave.push(location);
             } else {
                 /*
-                 * SQLite上にすでに存在する地点。
-                 *
-                 * 過去callbackで処理済み、または他callbackが先にINSERT済みなので、
-                 * direct LocationLog処理へは再度流さない。
+                 * 事前SELECT後に別callbackが先にINSERTした場合も、
+                 * INSERT OR IGNOREが最後の防御になる。
                  */
                 duplicateCount += 1;
             }
@@ -388,10 +598,10 @@ export async function enqueueLocationBatchForAudit(
             invalidCount += 1;
 
             /*
-             * SQLite保存に失敗した地点までdirect保存対象から外すと、
-             * LocationLog欠落につながる。
+             * 現行仕様を絶対に維持する。
              *
-             * そのためSQLite失敗時は従来のdirect保存経路へfallbackする。
+             * SQLite INSERT失敗地点は捨てず、
+             * direct LocationLog保存へfallbackする。
              */
             locationsForDirectSave.push(location);
         }
@@ -405,6 +615,8 @@ export async function enqueueLocationBatchForAudit(
         duplicateCount,
         invalidCount,
         queueCount,
+        preExistingDuplicateCount,
+        insertAttemptCount,
         locationsForDirectSave,
     };
 }

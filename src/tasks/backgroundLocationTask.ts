@@ -777,6 +777,8 @@ TaskManager.defineTask(
         let sqliteMirrorInsertedCount = 0;
         let sqliteMirrorDuplicateCount = 0;
         let sqliteMirrorInvalidCount = 0;
+        let sqliteMirrorPreExistingDuplicateCount = 0;
+        let sqliteMirrorInsertAttemptCount = 0;
         /*
          * direct LocationLog保存へ実際に流す地点。
          *
@@ -982,6 +984,10 @@ TaskManager.defineTask(
                     sqliteMirrorInsertedCount = sqliteResult.insertedCount;
                     sqliteMirrorDuplicateCount = sqliteResult.duplicateCount;
                     sqliteMirrorInvalidCount = sqliteResult.invalidCount;
+                    sqliteMirrorPreExistingDuplicateCount =
+                        sqliteResult.preExistingDuplicateCount;
+                    sqliteMirrorInsertAttemptCount =
+                        sqliteResult.insertAttemptCount;
                     sqliteMirrorQueueCount = sqliteResult.queueCount;
                     /*
                      * SQLiteへ今回新規投入された地点、
@@ -995,6 +1001,9 @@ TaskManager.defineTask(
                         {
                             recordingSessionId: state.recordingSessionId,
                             receivedCount: sqliteResult.receivedCount,
+                            preExistingDuplicateCount:
+                                sqliteResult.preExistingDuplicateCount,
+                            insertAttemptCount: sqliteResult.insertAttemptCount,
                             insertedCount: sqliteResult.insertedCount,
                             duplicateCount: sqliteResult.duplicateCount,
                             invalidCount: sqliteResult.invalidCount,
@@ -1444,6 +1453,8 @@ TaskManager.defineTask(
                     sqliteMirrorInsertedCount,
                     sqliteMirrorDuplicateCount,
                     sqliteMirrorInvalidCount,
+                    sqliteMirrorPreExistingDuplicateCount,
+                    sqliteMirrorInsertAttemptCount,
                     sqliteMirrorQueueCount,
                     sqliteMirrorErrorMessage,
                     sqliteQueueUploadEnabled:

@@ -64,6 +64,15 @@ const FOREGROUND_LAST_SAVED_LOCATION_KEY =
 export const BACKGROUND_LOCATION_TASK_HEARTBEAT_KEY =
     "location-tracker-background-location-task-heartbeat";
 
+/*
+ * 1callbackで大量地点が再配送された場合は、
+ * SQLite mirror / direct LocationLog保存を優先し、
+ * SQLite queue uploadは後続callbackへ回す。
+ *
+ * この値は距離(m)ではなく「地点数」。
+ */
+const BACKGROUND_QUEUE_UPLOAD_DEFER_BATCH_SIZE = 50;
+
 export type BackgroundLocationTaskHeartbeat = {
     /**
      * タスクコールバックが開始された端末時刻。
@@ -1031,42 +1040,47 @@ TaskManager.defineTask(
             }
 
             if (activeRecordingSessionId) {
-                try {
-                    const {
-                        getLocationQueueStatusSummary,
-                        cleanupProcessedLocationQueue,
-                    } =
-                        await import("../services/locationLocationQueueService");
+                /*
+                 * SQLiteキューの集計・cleanupは、
+                 * Background callbackごとには実行しない。
+                 *
+                 * 位置情報保存を優先し、
+                 * maintenanceは一定callback数ごとにまとめて行う。
+                 */
+                backgroundQueueMaintenanceCounter += 1;
 
-                    const queueSummary = await getLocationQueueStatusSummary({
-                        userId: state.userId,
-                        recordingSessionId: activeRecordingSessionId,
-                    });
+                if (
+                    backgroundQueueMaintenanceCounter >=
+                    BACKGROUND_QUEUE_MAINTENANCE_INTERVAL
+                ) {
+                    backgroundQueueMaintenanceCounter = 0;
 
-                    sqliteQueueTotalCount = queueSummary.totalCount;
-                    sqliteQueuePendingCount = queueSummary.pendingCount;
-                    sqliteQueueSentStatusCount = queueSummary.sentCount;
-                    sqliteQueueDuplicateStatusCount =
-                        queueSummary.duplicateCount;
-                    sqliteQueueSkippedStatusCount = queueSummary.skippedCount;
-                    sqliteQueueFailedPendingCount =
-                        queueSummary.failedPendingCount;
-                    sqliteQueueOldestPendingRecordedAt =
-                        queueSummary.oldestPendingRecordedAt;
-                    sqliteQueueLatestPendingRecordedAt =
-                        queueSummary.latestPendingRecordedAt;
+                    try {
+                        const {
+                            getLocationQueueStatusSummary,
+                            cleanupProcessedLocationQueue,
+                        } =
+                            await import("../services/locationLocationQueueService");
 
-                    /*
-                     * cleanupは毎callbackでは実行せず、
-                     * 60 callbackごとに1回だけ実行する。
-                     */
-                    backgroundQueueMaintenanceCounter += 1;
+                        const queueSummary =
+                            await getLocationQueueStatusSummary({
+                                userId: state.userId,
+                                recordingSessionId: activeRecordingSessionId,
+                            });
 
-                    if (
-                        backgroundQueueMaintenanceCounter >=
-                        BACKGROUND_QUEUE_MAINTENANCE_INTERVAL
-                    ) {
-                        backgroundQueueMaintenanceCounter = 0;
+                        sqliteQueueTotalCount = queueSummary.totalCount;
+                        sqliteQueuePendingCount = queueSummary.pendingCount;
+                        sqliteQueueSentStatusCount = queueSummary.sentCount;
+                        sqliteQueueDuplicateStatusCount =
+                            queueSummary.duplicateCount;
+                        sqliteQueueSkippedStatusCount =
+                            queueSummary.skippedCount;
+                        sqliteQueueFailedPendingCount =
+                            queueSummary.failedPendingCount;
+                        sqliteQueueOldestPendingRecordedAt =
+                            queueSummary.oldestPendingRecordedAt;
+                        sqliteQueueLatestPendingRecordedAt =
+                            queueSummary.latestPendingRecordedAt;
 
                         const cleanupResult =
                             await cleanupProcessedLocationQueue({
@@ -1080,15 +1094,15 @@ TaskManager.defineTask(
                                 cleanupResult,
                             );
                         }
-                    }
-                } catch (queueSummaryError) {
-                    sqliteQueueSummaryErrorMessage =
-                        getErrorMessage(queueSummaryError);
+                    } catch (queueSummaryError) {
+                        sqliteQueueSummaryErrorMessage =
+                            getErrorMessage(queueSummaryError);
 
-                    console.error(
-                        "Read background SQLite queue summary error:",
-                        queueSummaryError,
-                    );
+                        console.error(
+                            "Background SQLite queue maintenance error:",
+                            queueSummaryError,
+                        );
+                    }
                 }
             }
 
@@ -1323,12 +1337,46 @@ TaskManager.defineTask(
 
             const nowMs = Date.now();
 
+            /*
+             * Expo / Android側から過去地点を含む大量batchが
+             * 一度に再配送された場合は、
+             *
+             * ・SQLite mirror
+             * ・direct LocationLog保存
+             *
+             * を優先する。
+             *
+             * SQLite queue uploadは後続callbackまたはForeground復帰時に
+             * 実行できるため、このcallbackでは後回しにする。
+             *
+             * Raw地点やLocationLog候補を捨てる処理ではない。
+             */
+            const shouldDeferSQLiteQueueUpload =
+                locations.length >= BACKGROUND_QUEUE_UPLOAD_DEFER_BATCH_SIZE;
+
             const shouldDrainSQLiteQueue =
                 ENABLE_LOCATION_SQLITE_QUEUE_UPLOAD &&
                 Boolean(activeRecordingSessionId) &&
                 currentState.isRecording &&
+                !shouldDeferSQLiteQueueUpload &&
                 nowMs - lastBackgroundQueueDrainAtMs >=
                     BACKGROUND_QUEUE_DRAIN_INTERVAL_MS;
+
+            if (
+                ENABLE_LOCATION_SQLITE_QUEUE_UPLOAD &&
+                activeRecordingSessionId &&
+                currentState.isRecording &&
+                shouldDeferSQLiteQueueUpload
+            ) {
+                console.log(
+                    "Defer background SQLite queue upload for large batch:",
+                    {
+                        recordingSessionId: activeRecordingSessionId,
+                        locationsLength: locations.length,
+                        threshold: BACKGROUND_QUEUE_UPLOAD_DEFER_BATCH_SIZE,
+                    },
+                );
+            }
 
             if (shouldDrainSQLiteQueue && activeRecordingSessionId) {
                 /*
@@ -1459,9 +1507,11 @@ TaskManager.defineTask(
                     sqliteMirrorErrorMessage,
                     sqliteQueueUploadEnabled:
                         ENABLE_LOCATION_SQLITE_QUEUE_UPLOAD,
-
                     keepDirectLocationLogSave: KEEP_DIRECT_LOCATION_LOG_SAVE,
-
+                    sqliteQueueUploadDeferredForLargeBatch:
+                        shouldDeferSQLiteQueueUpload,
+                    sqliteQueueUploadDeferThreshold:
+                        BACKGROUND_QUEUE_UPLOAD_DEFER_BATCH_SIZE,
                     sqliteQueueUploadAttempted,
                     sqliteQueueUploadSucceeded,
                     sqliteQueueUploadDurationMs,

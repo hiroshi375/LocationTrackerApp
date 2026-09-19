@@ -117,6 +117,21 @@ export function useForegroundLocationRecorder({
         useRef<Location.LocationSubscription | null>(null);
 
     /*
+     * 自動記録開始時の記録条件をセッション終了まで固定する。
+     *
+     * LocationHomeScreen側の設定値やsubscriptionTierが途中で変化しても、
+     * 進行中のセッションの保存条件には反映しない。
+     */
+    const sessionIntervalMsRef = useRef<number | null>(null);
+    const sessionDistanceMetersRef = useRef<number | null>(null);
+
+    const getActiveRecordingSettings = useCallback(() => {
+        return {
+            intervalMs: sessionIntervalMsRef.current ?? intervalMs,
+            distanceMeters: sessionDistanceMetersRef.current ?? distanceMeters,
+        };
+    }, [intervalMs, distanceMeters]);
+    /*
      * Foreground recording watcher の世代番号。
      *
      * watchPositionAsync() の登録中に停止・再登録が行われた場合、
@@ -205,16 +220,26 @@ export function useForegroundLocationRecorder({
                 longitude,
             );
 
+            const {
+                intervalMs: activeIntervalMs,
+                distanceMeters: activeDistanceMeters,
+            } = getActiveRecordingSettings();
             /*
-             * 保存条件は従来と同じ。
+             * 保存条件：
              *
              * 指定時間以上経過
              * OR
              * 指定距離以上移動
+             *
+             * 進行中のセッションでは開始時の設定値を固定して使用する。
              */
-            return elapsedMs >= intervalMs || distance >= distanceMeters;
+
+            return (
+                elapsedMs >= activeIntervalMs ||
+                distance >= activeDistanceMeters
+            );
         },
-        [intervalMs, distanceMeters],
+        [getActiveRecordingSettings],
     );
 
     //
@@ -842,6 +867,9 @@ export function useForegroundLocationRecorder({
 
             recordingWatcherGenerationRef.current = watcherGeneration;
 
+            const { intervalMs: activeIntervalMs } =
+                getActiveRecordingSettings();
+
             try {
                 const subscription = await Location.watchPositionAsync(
                     {
@@ -851,7 +879,9 @@ export function useForegroundLocationRecorder({
                          * 現在と同じ位置取得方法を維持する。
                          */
                         timeInterval:
-                            getForegroundLocationSampleIntervalMs(intervalMs),
+                            getForegroundLocationSampleIntervalMs(
+                                activeIntervalMs,
+                            ),
 
                         distanceInterval: 0,
                     },
@@ -962,7 +992,7 @@ export function useForegroundLocationRecorder({
                 return false;
             }
         },
-        [intervalMs, saveLocationLog],
+        [getActiveRecordingSettings, saveLocationLog],
     );
 
     const resetRecordingState = useCallback(() => {
@@ -982,6 +1012,13 @@ export function useForegroundLocationRecorder({
         recordingUserIdRef.current = null;
         startLocationRef.current = null;
         lastSavedLocationRef.current = null;
+
+        /*
+         * セッション終了時だけ固定した記録条件を破棄する。
+         */
+        sessionIntervalMsRef.current = null;
+        sessionDistanceMetersRef.current = null;
+
         isRecordingRef.current = false;
 
         setActiveRecordingSessionId(null);
@@ -1039,6 +1076,22 @@ export function useForegroundLocationRecorder({
                 return;
             }
 
+            /*
+             * 復元された記録セッションでは、
+             * Background stateに保存されている開始時設定を復元する。
+             */
+            sessionIntervalMsRef.current =
+                typeof state.intervalMs === "number" &&
+                Number.isFinite(state.intervalMs)
+                    ? state.intervalMs
+                    : intervalMs;
+
+            sessionDistanceMetersRef.current =
+                typeof state.distanceMeters === "number" &&
+                Number.isFinite(state.distanceMeters)
+                    ? state.distanceMeters
+                    : distanceMeters;
+
             recordingSessionIdRef.current = state.recordingSessionId;
             recordingUserIdRef.current = state.userId;
             liveLocationIdRef.current = state.liveLocationId ?? null;
@@ -1056,7 +1109,7 @@ export function useForegroundLocationRecorder({
         } catch (error) {
             console.error("Restore recording state error:", error);
         }
-    }, [isRecording, resetRecordingState]);
+    }, [intervalMs, distanceMeters, isRecording, resetRecordingState]);
 
     // 記録開始関数
     const startRecording = useCallback(async () => {
@@ -1188,6 +1241,15 @@ export function useForegroundLocationRecorder({
 
                 throw error;
             }
+
+            /*
+             * このセッションで使用する記録条件をここで固定する。
+             *
+             * 記録開始後にsubscriptionTierや画面stateが変化しても、
+             * このセッションには影響させない。
+             */
+            sessionIntervalMsRef.current = intervalMs;
+            sessionDistanceMetersRef.current = distanceMeters;
 
             const newSessionId = createRecordingSessionId();
 
@@ -1408,13 +1470,19 @@ export function useForegroundLocationRecorder({
                     eventName: "recordingStartCurrentUserRequestCompleted",
                 });
 
+                const {
+                    intervalMs: sessionIntervalMs,
+                    distanceMeters: sessionDistanceMeters,
+                } = getActiveRecordingSettings();
+
                 await saveBackgroundLocationDebugLog({
                     userId: currentUser.userId,
                     recordingSessionId: newSessionId,
                     eventName: "recordingStartBackgroundStartRequested",
+                    taskFiredAt: new Date().toISOString(),
                     details: {
-                        intervalMs,
-                        distanceMeters,
+                        intervalMs: sessionIntervalMs,
+                        distanceMeters: sessionDistanceMeters,
                         liveShareOwnerCount:
                             normalizedLiveShareOwnerValues.length,
                         liveLocationId: liveLocationIdRef.current,
@@ -1426,8 +1494,8 @@ export function useForegroundLocationRecorder({
                     recordingSessionId: newSessionId,
                     startedAt,
                     recordingExpiresAt: null,
-                    intervalMs,
-                    distanceMeters,
+                    intervalMs: sessionIntervalMs,
+                    distanceMeters: sessionDistanceMeters,
                     liveShareOwnerValues: normalizedLiveShareOwnerValues,
                     liveLocationId: liveLocationIdRef.current,
                     lastSavedLocation: {
@@ -1545,6 +1613,7 @@ export function useForegroundLocationRecorder({
         normalizedLiveShareOwnerValues,
         resetRecordingState,
         ensureForegroundRecordingWatcher,
+        getActiveRecordingSettings,
         subscriptionTier,
     ]);
 
@@ -1630,16 +1699,18 @@ export function useForegroundLocationRecorder({
                 const { drainLocationQueueRepeatedly } =
                     await import("../services/locationQueueUploadService");
 
+                const {
+                    intervalMs: activeIntervalMs,
+                    distanceMeters: activeDistanceMeters,
+                } = getActiveRecordingSettings();
+
                 const result = await drainLocationQueueRepeatedly({
                     userId,
                     recordingSessionId,
-                    intervalMs,
-                    distanceMeters,
+                    intervalMs: activeIntervalMs,
+                    distanceMeters: activeDistanceMeters,
                     fallbackSharedOwners: normalizedLiveShareOwnerValues,
 
-                    /*
-                     * foregroundではbackground callbackより積極的に回収する。
-                     */
                     maxItems: 10,
                     maxIterations: 50,
                 });
@@ -1733,7 +1804,7 @@ export function useForegroundLocationRecorder({
             } finally {
                 foregroundQueueDrainRunningRef.current = false;
             }
-        }, [intervalMs, distanceMeters, normalizedLiveShareOwnerValues]);
+        }, [getActiveRecordingSettings, normalizedLiveShareOwnerValues]);
 
     const drainSQLiteQueueBeforeStop = useCallback(
         async (input: {
@@ -1751,11 +1822,16 @@ export function useForegroundLocationRecorder({
                  * ただし現在のキュー取得には60秒条件があるため、
                  * 後述のforceIncludeRecentが必要。
                  */
+                const {
+                    intervalMs: activeIntervalMs,
+                    distanceMeters: activeDistanceMeters,
+                } = getActiveRecordingSettings();
+
                 const result = await drainLocationQueueRepeatedly({
                     userId: input.userId,
                     recordingSessionId: input.recordingSessionId,
-                    intervalMs,
-                    distanceMeters,
+                    intervalMs: activeIntervalMs,
+                    distanceMeters: activeDistanceMeters,
                     fallbackSharedOwners: normalizedLiveShareOwnerValues,
 
                     maxItems: 10,
@@ -1796,7 +1872,7 @@ export function useForegroundLocationRecorder({
                 console.error("Stop SQLite queue drain error:", error);
             }
         },
-        [intervalMs, distanceMeters, normalizedLiveShareOwnerValues],
+        [getActiveRecordingSettings, normalizedLiveShareOwnerValues],
     );
 
     // 記録停止関数

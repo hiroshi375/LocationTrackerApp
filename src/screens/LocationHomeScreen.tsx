@@ -174,6 +174,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
     const [recordIntervalMs, setRecordIntervalMs] = useState(30 * 1000);
     const [recordDistanceMeters, setRecordDistanceMeters] = useState(50);
+    /*
+     * subscription再評価によって記録中の設定値を書き換えないためのref。
+     *
+     * 実際の値はuseForegroundLocationRecorder()呼び出し後に同期する。
+     */
+    const recordingActiveRef = useRef(false);
     const [hasLoadedSavedHomeSettings, setHasLoadedSavedHomeSettings] =
         useState(false);
 
@@ -371,6 +377,24 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
     useEffect(() => {
         if (subscriptionLoading) {
+            return;
+        }
+
+        /*
+         * 自動記録中は記録設定を変更しない。
+         *
+         * subscriptionTierが途中で再評価されても、
+         * 現在のセッションの設定値やUI設定値を
+         * 20m→50m等へ変更しない。
+         */
+        if (recordingActiveRef.current) {
+            console.log(
+                "[Subscription] Skip recording settings reload while recording",
+                {
+                    subscriptionTier,
+                },
+            );
+
             return;
         }
 
@@ -598,6 +622,13 @@ export default function LocationHomeScreen({ navigation }: Props) {
         // 現在のコードで既に指定している場合はそのまま維持
         subscriptionTier,
     });
+    /*
+     * 同じrender中に最新値を反映する。
+     *
+     * subscription設定復元Effectが実行される時点では、
+     * 現在記録中かどうかをこのrefから判定できる。
+     */
+    recordingActiveRef.current = isRecording;
 
     const recordingBlinkAnim = useRef(new Animated.Value(1)).current;
     const [elapsedSeconds, setElapsedSeconds] = useState(0);

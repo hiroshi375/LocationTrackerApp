@@ -29,8 +29,6 @@ import {
     getSubscriptionPlanLimits,
     isRecordingDistanceAllowed,
     isRecordingIntervalAllowed,
-    sanitizeRecordingDistance,
-    sanitizeRecordingInterval,
 } from "../config/subscriptionPlan";
 import { useSubscription } from "../hooks/useSubscription";
 import { client } from "../lib/client";
@@ -152,8 +150,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
     );
     const [isAdmin, setIsAdmin] = useState(false);
 
-    const { tier: subscriptionTier, loading: subscriptionLoading } =
-        useSubscription();
+    const { tier: subscriptionTier } = useSubscription();
     const monthlyActivityLimit =
         getSubscriptionPlanLimits(subscriptionTier).maxMonthlyActivities;
 
@@ -179,7 +176,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
      *
      * 実際の値はuseForegroundLocationRecorder()呼び出し後に同期する。
      */
-    const recordingActiveRef = useRef(false);
     const [hasLoadedSavedHomeSettings, setHasLoadedSavedHomeSettings] =
         useState(false);
 
@@ -376,28 +372,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
     }, []);
 
     useEffect(() => {
-        if (subscriptionLoading) {
-            return;
-        }
-
-        /*
-         * 自動記録中は記録設定を変更しない。
-         *
-         * subscriptionTierが途中で再評価されても、
-         * 現在のセッションの設定値やUI設定値を
-         * 20m→50m等へ変更しない。
-         */
-        if (recordingActiveRef.current) {
-            console.log(
-                "[Subscription] Skip recording settings reload while recording",
-                {
-                    subscriptionTier,
-                },
-            );
-
-            return;
-        }
-
         const loadSavedHomeSettings = async () => {
             try {
                 const raw = await AsyncStorage.getItem(
@@ -418,25 +392,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         savedSettings.recordIntervalMs,
                     )
                 ) {
-                    const sanitizedIntervalMs = sanitizeRecordingInterval(
-                        subscriptionTier,
-                        savedSettings.recordIntervalMs,
-                    );
-
-                    setRecordIntervalMs(sanitizedIntervalMs);
-
-                    if (
-                        sanitizedIntervalMs !== savedSettings.recordIntervalMs
-                    ) {
-                        console.log(
-                            "[Subscription] Recording interval sanitized:",
-                            {
-                                subscriptionTier,
-                                savedValue: savedSettings.recordIntervalMs,
-                                sanitizedValue: sanitizedIntervalMs,
-                            },
-                        );
-                    }
+                    setRecordIntervalMs(savedSettings.recordIntervalMs);
                 }
 
                 if (savedSettings.version === LOCATION_HOME_SETTINGS_VERSION) {
@@ -447,36 +403,12 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             savedSettings.recordDistanceMeters,
                         )
                     ) {
-                        const sanitizedDistanceMeters =
-                            sanitizeRecordingDistance(
-                                subscriptionTier,
-                                savedSettings.recordDistanceMeters,
-                            );
-
-                        setRecordDistanceMeters(sanitizedDistanceMeters);
-
-                        if (
-                            sanitizedDistanceMeters !==
-                            savedSettings.recordDistanceMeters
-                        ) {
-                            console.log(
-                                "[Subscription] Recording distance sanitized:",
-                                {
-                                    subscriptionTier,
-                                    savedValue:
-                                        savedSettings.recordDistanceMeters,
-                                    sanitizedValue: sanitizedDistanceMeters,
-                                },
-                            );
-                        }
+                        setRecordDistanceMeters(
+                            savedSettings.recordDistanceMeters,
+                        );
                     }
                 } else {
-                    setRecordDistanceMeters(
-                        sanitizeRecordingDistance(
-                            subscriptionTier,
-                            DEFAULT_RECORD_DISTANCE_METERS,
-                        ),
-                    );
+                    setRecordDistanceMeters(DEFAULT_RECORD_DISTANCE_METERS);
                 }
 
                 if (Array.isArray(savedSettings.selectedLiveShareUsers)) {
@@ -506,7 +438,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
         };
 
         void loadSavedHomeSettings();
-    }, [subscriptionLoading, subscriptionTier]);
+    }, []);
 
     useEffect(() => {
         if (!hasLoadedSavedHomeSettings) {
@@ -622,13 +554,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
         // 現在のコードで既に指定している場合はそのまま維持
         subscriptionTier,
     });
-    /*
-     * 同じrender中に最新値を反映する。
-     *
-     * subscription設定復元Effectが実行される時点では、
-     * 現在記録中かどうかをこのrefから判定できる。
-     */
-    recordingActiveRef.current = isRecording;
 
     const recordingBlinkAnim = useRef(new Animated.Value(1)).current;
     const [elapsedSeconds, setElapsedSeconds] = useState(0);

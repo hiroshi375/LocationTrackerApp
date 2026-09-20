@@ -63,6 +63,7 @@ import {
     getCurrentUserProfile,
 } from "../services/userProfileService";
 import { createMonthKey } from "../services/userActivityAggregationService";
+import { exportHeadlessDiagnosticLog } from "../services/headlessDiagnosticExportService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationHome">;
 
@@ -198,6 +199,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [openingSharedLiveMap, setOpeningSharedLiveMap] = useState(false);
     const [backfillingSessions, setBackfillingSessions] = useState(false);
     const [forcingEasUpdate, setForcingEasUpdate] = useState(false);
+    const [exportingHeadlessDiagnostic, setExportingHeadlessDiagnostic] =
+        useState(false);
     const [backfillProgress, setBackfillProgress] =
         useState<RecordingSessionBackfillProgress | null>(null);
     const [
@@ -1651,6 +1654,30 @@ export default function LocationHomeScreen({ navigation }: Props) {
             stoppingRecording,
         ]);
 
+    const handleExportHeadlessDiagnostic = async (): Promise<void> => {
+        if (exportingHeadlessDiagnostic) {
+            return;
+        }
+
+        try {
+            setExportingHeadlessDiagnostic(true);
+
+            await exportHeadlessDiagnosticLog();
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+
+            console.error("Headless diagnostic export error:", error);
+
+            Alert.alert(
+                "診断ログ出力エラー",
+                `Headless診断ログを出力できませんでした。\n\n${message}`,
+            );
+        } finally {
+            setExportingHeadlessDiagnostic(false);
+        }
+    };
+
     const handleDebugSQLiteSkipReasons = async () => {
         try {
             const recordingSessionId = "session-1786392243158-zldkkj1c";
@@ -2944,6 +2971,23 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         <AppButton
                             title="SQLite skip理由を確認"
                             onPress={handleDebugSQLiteSkipReasons}
+                            backgroundColor="#27445c"
+                        />
+                        <AppButton
+                            title={
+                                exportingHeadlessDiagnostic
+                                    ? "Headless診断ログを出力中..."
+                                    : "Headless診断ログを出力"
+                            }
+                            onPress={() => {
+                                void handleExportHeadlessDiagnostic();
+                            }}
+                            disabled={
+                                exportingHeadlessDiagnostic ||
+                                isRecording ||
+                                startingRecording ||
+                                stoppingRecording
+                            }
                             backgroundColor="#27445c"
                         />
                         <AppButton

@@ -702,11 +702,14 @@ let hasRunBackgroundKeepAliveTimerTest = false;
 
 TaskManager.defineTask(
     BACKGROUND_LOCATION_TASK_NAME,
-    async ({ data, error }) => {
+    async ({ data, error, executionInfo }) => {
         const taskStartedAtMs = Date.now();
         const taskFiredAt = new Date(taskStartedAtMs).toISOString();
+
         console.log("[BG_TASK_ENTRY]", {
             runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
+            eventId: executionInfo?.eventId ?? null,
+            taskName: executionInfo?.taskName ?? null,
             taskStartedAtMs,
             taskFiredAt,
         });

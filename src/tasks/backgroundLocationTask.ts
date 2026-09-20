@@ -64,6 +64,100 @@ const FOREGROUND_LAST_SAVED_LOCATION_KEY =
 export const BACKGROUND_LOCATION_TASK_HEARTBEAT_KEY =
     "location-tracker-background-location-task-heartbeat";
 
+/**
+ * Background task が最後にどの処理段階まで進んだかを
+ * eventId単位で端末内へ保存する診断用キー。
+ *
+ * 重要：
+ * 診断保存そのものがBackground taskをブロックしないよう、
+ * AsyncStorage.setItem() は await しない。
+ */
+export const BACKGROUND_LOCATION_TASK_STAGE_PREFIX =
+    "location-tracker-background-location-task-stage:";
+
+type BackgroundLocationTaskStage =
+    | "TASK_ENTRY"
+    | "KEEPALIVE_TIMER_SCHEDULED"
+    | "STATE_LOAD_START"
+    | "STATE_LOAD_END"
+    | "HEARTBEAT_SAVE_START"
+    | "HEARTBEAT_SAVE_END"
+    | "SQLITE_MIRROR_IMPORT_START"
+    | "SQLITE_MIRROR_IMPORT_END"
+    | "SQLITE_MIRROR_START"
+    | "SQLITE_MIRROR_END"
+    | "QUEUE_MAINTENANCE_IMPORT_START"
+    | "QUEUE_MAINTENANCE_IMPORT_END"
+    | "QUEUE_SUMMARY_START"
+    | "QUEUE_SUMMARY_END"
+    | "QUEUE_CLEANUP_START"
+    | "QUEUE_CLEANUP_END"
+    | "AUTH_START"
+    | "AUTH_END"
+    | "DIRECT_SAVE_LOOP_START"
+    | "DIRECT_SAVE_LOCATION_START"
+    | "DIRECT_SAVE_LOCATION_END"
+    | "DIRECT_SAVE_LOOP_END"
+    | "LIVE_LOCATION_START"
+    | "LIVE_LOCATION_END"
+    | "QUEUE_UPLOAD_IMPORT_START"
+    | "QUEUE_UPLOAD_IMPORT_END"
+    | "QUEUE_UPLOAD_START"
+    | "QUEUE_UPLOAD_END"
+    | "BATCH_DEBUG_LOG_START"
+    | "BATCH_DEBUG_LOG_END"
+    | "TASK_RETURNING"
+    | "TASK_ERROR"
+    | "UNEXPECTED_DEBUG_LOG_START"
+    | "UNEXPECTED_DEBUG_LOG_END"
+    | "TASK_FINALLY";
+
+type BackgroundTaskStageContext = {
+    eventId: string;
+    taskName: string | null;
+    taskStartedAtMs: number;
+};
+
+function recordBackgroundTaskStage(
+    context: BackgroundTaskStageContext,
+    stage: BackgroundLocationTaskStage,
+    details?: Record<string, unknown>,
+): void {
+    const stageAtMs = Date.now();
+
+    const payload = {
+        runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
+        eventId: context.eventId,
+        taskName: context.taskName,
+        taskStartedAtMs: context.taskStartedAtMs,
+        stage,
+        stageAtMs,
+        stageAt: new Date(stageAtMs).toISOString(),
+        elapsedMs: stageAtMs - context.taskStartedAtMs,
+        ...(details ?? {}),
+    };
+
+    console.log("[BG_TASK_STAGE]", payload);
+
+    /*
+     * 非常に重要：
+     * 診断保存のためにBackground task本体をawaitしない。
+     *
+     * 保存に失敗してもLocation記録処理へ影響させない。
+     */
+    void AsyncStorage.setItem(
+        `${BACKGROUND_LOCATION_TASK_STAGE_PREFIX}${context.eventId}`,
+        JSON.stringify(payload),
+    ).catch((stageLogError) => {
+        console.error("[BG_TASK_STAGE_SAVE_FAILED]", {
+            runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
+            eventId: context.eventId,
+            stage,
+            error: getErrorMessage(stageLogError),
+        });
+    });
+}
+
 /*
  * 1callbackで大量地点が再配送された場合は、
  * SQLite mirror / direct LocationLog保存を優先し、
@@ -706,13 +800,25 @@ TaskManager.defineTask(
         const taskStartedAtMs = Date.now();
         const taskFiredAt = new Date(taskStartedAtMs).toISOString();
 
+        const eventId =
+            executionInfo?.eventId ??
+            `unknown-${taskStartedAtMs}-${Math.random().toString(36).slice(2)}`;
+
+        const stageContext: BackgroundTaskStageContext = {
+            eventId,
+            taskName: executionInfo?.taskName ?? null,
+            taskStartedAtMs,
+        };
+
         console.log("[BG_TASK_ENTRY]", {
             runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
-            eventId: executionInfo?.eventId ?? null,
+            eventId,
             taskName: executionInfo?.taskName ?? null,
             taskStartedAtMs,
             taskFiredAt,
         });
+
+        recordBackgroundTaskStage(stageContext, "TASK_ENTRY");
 
         /*
          * Headless JS keep-alive中に
@@ -726,8 +832,18 @@ TaskManager.defineTask(
             const timerTestScheduledAtMs = Date.now();
             const timerTestExpectedFireAtMs = timerTestScheduledAtMs + 5_000;
 
+            recordBackgroundTaskStage(
+                stageContext,
+                "KEEPALIVE_TIMER_SCHEDULED",
+                {
+                    timerTestScheduledAtMs,
+                    timerTestExpectedFireAtMs,
+                },
+            );
+
             console.log("[BG_KEEPALIVE_TIMER_TEST_SCHEDULED]", {
                 runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
+                eventId,
                 scheduledAtMs: timerTestScheduledAtMs,
                 scheduledAt: new Date(timerTestScheduledAtMs).toISOString(),
                 expectedFireAtMs: timerTestExpectedFireAtMs,
@@ -736,27 +852,23 @@ TaskManager.defineTask(
                 ).toISOString(),
             });
 
-            await new Promise<void>((resolve) => {
-                setTimeout(() => {
-                    const actuallyFiredAtMs = Date.now();
+            /*
+             * このtimer診断はawaitしない。
+             */
+            setTimeout(() => {
+                const actuallyFiredAtMs = Date.now();
 
-                    console.log("[BG_KEEPALIVE_TIMER_TEST_FIRED]", {
-                        runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
-                        scheduledAtMs: timerTestScheduledAtMs,
-                        expectedFireAtMs: timerTestExpectedFireAtMs,
-                        actuallyFiredAtMs,
-                        actuallyFiredAt: new Date(
-                            actuallyFiredAtMs,
-                        ).toISOString(),
-                        timerDriftMs:
-                            actuallyFiredAtMs - timerTestExpectedFireAtMs,
-                        actualElapsedMs:
-                            actuallyFiredAtMs - timerTestScheduledAtMs,
-                    });
-
-                    resolve();
-                }, 5_000);
-            });
+                console.log("[BG_KEEPALIVE_TIMER_TEST_FIRED]", {
+                    runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
+                    eventId,
+                    scheduledAtMs: timerTestScheduledAtMs,
+                    expectedFireAtMs: timerTestExpectedFireAtMs,
+                    actuallyFiredAtMs,
+                    actuallyFiredAt: new Date(actuallyFiredAtMs).toISOString(),
+                    timerDriftMs: actuallyFiredAtMs - timerTestExpectedFireAtMs,
+                    actualElapsedMs: actuallyFiredAtMs - timerTestScheduledAtMs,
+                });
+            }, 5_000);
         }
         /*
          * 後続処理より前に、OSから渡された地点数を取得する。
@@ -840,7 +952,19 @@ TaskManager.defineTask(
         let backgroundAuthSessionDurationMs = 0;
 
         try {
+            recordBackgroundTaskStage(stageContext, "STATE_LOAD_START");
+
             const state = await getBackgroundRecordingState();
+
+            recordBackgroundTaskStage(stageContext, "STATE_LOAD_END", {
+                hasState: Boolean(state),
+                isRecording: state?.isRecording ?? false,
+                recordingSessionId: state?.recordingSessionId ?? null,
+            });
+
+            recordBackgroundTaskStage(stageContext, "HEARTBEAT_SAVE_START", {
+                locationsLength,
+            });
 
             /*
              * LocationLog保存、SQLite処理、認証処理などより前にheartbeatを保存する。
@@ -857,6 +981,8 @@ TaskManager.defineTask(
                 userId: state?.userId ?? null,
                 hasTaskError: Boolean(error),
             });
+
+            recordBackgroundTaskStage(stageContext, "HEARTBEAT_SAVE_END");
 
             /*
              * TaskManagerからerrorが渡された場合は、
@@ -980,8 +1106,29 @@ TaskManager.defineTask(
                 const sqliteMirrorStartedAtMs = Date.now();
 
                 try {
+                    recordBackgroundTaskStage(
+                        stageContext,
+                        "SQLITE_MIRROR_IMPORT_START",
+                        {
+                            locationsLength: locations.length,
+                        },
+                    );
+
                     const { enqueueLocationBatchForAudit } =
                         await import("../services/locationLocationQueueService");
+
+                    recordBackgroundTaskStage(
+                        stageContext,
+                        "SQLITE_MIRROR_IMPORT_END",
+                    );
+
+                    recordBackgroundTaskStage(
+                        stageContext,
+                        "SQLITE_MIRROR_START",
+                        {
+                            locationsLength: locations.length,
+                        },
+                    );
 
                     const sqliteResult = await enqueueLocationBatchForAudit({
                         userId: state.userId,
@@ -991,6 +1138,19 @@ TaskManager.defineTask(
                         receivedAt: taskFiredAt,
                         sharedOwners: state.liveShareOwnerValues,
                     });
+
+                    recordBackgroundTaskStage(
+                        stageContext,
+                        "SQLITE_MIRROR_END",
+                        {
+                            insertedCount: sqliteResult.insertedCount,
+                            preExistingDuplicateCount:
+                                sqliteResult.preExistingDuplicateCount,
+                            insertAttemptCount: sqliteResult.insertAttemptCount,
+                            directSaveCount:
+                                sqliteResult.locationsForDirectSave.length,
+                        },
+                    );
 
                     sqliteMirrorSucceeded = true;
                     sqliteMirrorInsertedCount = sqliteResult.insertedCount;
@@ -1059,17 +1219,41 @@ TaskManager.defineTask(
                     backgroundQueueMaintenanceCounter = 0;
 
                     try {
+                        recordBackgroundTaskStage(
+                            stageContext,
+                            "QUEUE_MAINTENANCE_IMPORT_START",
+                        );
+
                         const {
                             getLocationQueueStatusSummary,
                             cleanupProcessedLocationQueue,
                         } =
                             await import("../services/locationLocationQueueService");
 
+                        recordBackgroundTaskStage(
+                            stageContext,
+                            "QUEUE_MAINTENANCE_IMPORT_END",
+                        );
+
+                        recordBackgroundTaskStage(
+                            stageContext,
+                            "QUEUE_SUMMARY_START",
+                        );
+
                         const queueSummary =
                             await getLocationQueueStatusSummary({
                                 userId: state.userId,
                                 recordingSessionId: activeRecordingSessionId,
                             });
+
+                        recordBackgroundTaskStage(
+                            stageContext,
+                            "QUEUE_SUMMARY_END",
+                            {
+                                totalCount: queueSummary.totalCount,
+                                pendingCount: queueSummary.pendingCount,
+                            },
+                        );
 
                         sqliteQueueTotalCount = queueSummary.totalCount;
                         sqliteQueuePendingCount = queueSummary.pendingCount;
@@ -1085,11 +1269,24 @@ TaskManager.defineTask(
                         sqliteQueueLatestPendingRecordedAt =
                             queueSummary.latestPendingRecordedAt;
 
+                        recordBackgroundTaskStage(
+                            stageContext,
+                            "QUEUE_CLEANUP_START",
+                        );
+
                         const cleanupResult =
                             await cleanupProcessedLocationQueue({
                                 retentionDays: 1,
                                 maxProcessedRows: 2_000,
                             });
+
+                        recordBackgroundTaskStage(
+                            stageContext,
+                            "QUEUE_CLEANUP_END",
+                            {
+                                deletedCount: cleanupResult.deletedCount,
+                            },
+                        );
 
                         if (cleanupResult.deletedCount > 0) {
                             console.log(
@@ -1111,7 +1308,17 @@ TaskManager.defineTask(
 
             const backgroundAuthSessionStartedAtMs = Date.now();
 
+            recordBackgroundTaskStage(stageContext, "AUTH_START");
+
             backgroundAuthSession = await prepareBackgroundAuthSession();
+
+            recordBackgroundTaskStage(stageContext, "AUTH_END", {
+                durationMs: Date.now() - backgroundAuthSessionStartedAtMs,
+                available: backgroundAuthSession.available,
+                refreshed: backgroundAuthSession.refreshed,
+                hasIdToken: backgroundAuthSession.hasIdToken,
+                hasAccessToken: backgroundAuthSession.hasAccessToken,
+            });
 
             backgroundAuthSessionDurationMs =
                 Date.now() - backgroundAuthSessionStartedAtMs;
@@ -1196,12 +1403,51 @@ TaskManager.defineTask(
                 currentState.isRecording &&
                 currentState.recordingSessionId
             ) {
-                for (const location of sortedDirectSaveLocations) {
+                recordBackgroundTaskStage(
+                    stageContext,
+                    "DIRECT_SAVE_LOOP_START",
+                    {
+                        directSaveLocationsLength:
+                            sortedDirectSaveLocations.length,
+                    },
+                );
+
+                for (
+                    let locationIndex = 0;
+                    locationIndex < sortedDirectSaveLocations.length;
+                    locationIndex += 1
+                ) {
+                    const location = sortedDirectSaveLocations[locationIndex];
+
+                    recordBackgroundTaskStage(
+                        stageContext,
+                        "DIRECT_SAVE_LOCATION_START",
+                        {
+                            locationIndex,
+                            locationCount: sortedDirectSaveLocations.length,
+                            recordedAt: new Date(
+                                getLocationRecordedAtMs(location),
+                            ).toISOString(),
+                        },
+                    );
+
                     const result = await saveBackgroundLocation(
                         location,
                         currentState,
                         taskFiredAt,
                         processingTimings,
+                    );
+
+                    recordBackgroundTaskStage(
+                        stageContext,
+                        "DIRECT_SAVE_LOCATION_END",
+                        {
+                            locationIndex,
+                            locationCount: sortedDirectSaveLocations.length,
+                            saved: result.saved,
+                            skippedReason: result.skippedReason ?? null,
+                            hasError: Boolean(result.errorMessage),
+                        },
                     );
 
                     if (result.saved) {
@@ -1283,6 +1529,14 @@ TaskManager.defineTask(
                         break;
                     }
                 }
+                recordBackgroundTaskStage(
+                    stageContext,
+                    "DIRECT_SAVE_LOOP_END",
+                    {
+                        saveSuccessCount,
+                        saveFailureCount,
+                    },
+                );
             }
 
             /*
@@ -1319,12 +1573,28 @@ TaskManager.defineTask(
                      */
                     lastBackgroundLiveLocationUpdateAtMs = nowMs;
 
+                    recordBackgroundTaskStage(
+                        stageContext,
+                        "LIVE_LOCATION_START",
+                    );
+
                     const liveLocationResult =
                         await updateBackgroundLiveLocation(
                             latestLocation,
                             currentState,
                             taskFiredAt,
                         );
+
+                    recordBackgroundTaskStage(
+                        stageContext,
+                        "LIVE_LOCATION_END",
+                        {
+                            attempted: liveLocationResult.attempted,
+                            succeeded: liveLocationResult.succeeded,
+                            timedOut: liveLocationResult.timedOut,
+                            operation: liveLocationResult.operation,
+                        },
+                    );
 
                     currentState = liveLocationResult.nextState;
                     liveLocationUpdateAttempted = liveLocationResult.attempted;
@@ -1395,8 +1665,23 @@ TaskManager.defineTask(
                 const queueUploadStartedAtMs = Date.now();
 
                 try {
+                    recordBackgroundTaskStage(
+                        stageContext,
+                        "QUEUE_UPLOAD_IMPORT_START",
+                    );
+
                     const { drainLocationQueueSafely } =
                         await import("../services/locationQueueUploadService");
+
+                    recordBackgroundTaskStage(
+                        stageContext,
+                        "QUEUE_UPLOAD_IMPORT_END",
+                    );
+
+                    recordBackgroundTaskStage(
+                        stageContext,
+                        "QUEUE_UPLOAD_START",
+                    );
 
                     const uploadResult = await drainLocationQueueSafely({
                         userId: state.userId,
@@ -1405,6 +1690,18 @@ TaskManager.defineTask(
                         distanceMeters: state.distanceMeters,
                         fallbackSharedOwners: state.liveShareOwnerValues,
                     });
+
+                    recordBackgroundTaskStage(
+                        stageContext,
+                        "QUEUE_UPLOAD_END",
+                        {
+                            processedCount: uploadResult.processedCount,
+                            sentCount: uploadResult.sentCount,
+                            failedCount: uploadResult.failedCount,
+                            timedOutCount: uploadResult.timedOutCount,
+                            stopReason: uploadResult.stopReason,
+                        },
+                    );
 
                     /*
                      * alreadyRunningはクラウド送信エラーではない。
@@ -1469,6 +1766,21 @@ TaskManager.defineTask(
              * デバッグログ保存関数内で例外は握りつぶされるため、
              * デバッグログ失敗がLocationLog処理を失敗させることはない。
              */
+
+            /*
+             * 追加：
+             * BackgroundLocationDebugLog のCloud保存開始。
+             *
+             * このSTARTは出ているのにENDが出ない場合、
+             * saveBackgroundLocationDebugLog() 内で停止していると判断できる。
+             */
+            recordBackgroundTaskStage(stageContext, "BATCH_DEBUG_LOG_START", {
+                batchDebugLogStartedAt,
+                locationsLength,
+                saveSuccessCount,
+                saveFailureCount,
+            });
+
             await safeSaveBackgroundLocationDebugLog({
                 userId: state.userId,
                 recordingSessionId: state.recordingSessionId,
@@ -1631,7 +1943,44 @@ TaskManager.defineTask(
                         processingTimings.continuationUpdateMaxDurationMs,
                 },
             });
+
+            /*
+             * 追加：
+             * BackgroundLocationDebugLog 保存が戻ってきたことを示す。
+             */
+            recordBackgroundTaskStage(stageContext, "BATCH_DEBUG_LOG_END", {
+                durationMs:
+                    Date.now() - new Date(batchDebugLogStartedAt).getTime(),
+            });
+            /*
+             * 追加：
+             * tryブロック内の通常処理がすべて完了した。
+             *
+             * この後はTaskManager callbackからreturnするだけ。
+             */
+            recordBackgroundTaskStage(stageContext, "TASK_RETURNING", {
+                processingDurationMs: Date.now() - taskStartedAtMs,
+                locationsLength,
+                saveSuccessCount,
+                saveFailureCount,
+            });
         } catch (taskError) {
+            /*
+             * 追加：
+             * try内で予期しない例外が発生した地点。
+             */
+            recordBackgroundTaskStage(stageContext, "TASK_ERROR", {
+                errorMessage: getErrorMessage(taskError),
+                processingDurationMs: Date.now() - taskStartedAtMs,
+            });
+
+            recordBackgroundTaskStage(
+                stageContext,
+                "UNEXPECTED_DEBUG_LOG_START",
+                {
+                    errorMessage: getErrorMessage(taskError),
+                },
+            );
             /*
              * 予期しない例外でも、ここまでの集計値を1件にまとめる。
              */
@@ -1763,10 +2112,25 @@ TaskManager.defineTask(
                 },
             });
 
+            recordBackgroundTaskStage(stageContext, "UNEXPECTED_DEBUG_LOG_END");
+
             console.error(
                 "Background location task unexpected error:",
                 taskError,
             );
+        } finally {
+            /*
+             * try成功でもcatchでも必ず通る。
+             *
+             * これが出なければ、
+             * どこかのawaitが返ってきていない可能性が高い。
+             */
+            recordBackgroundTaskStage(stageContext, "TASK_FINALLY", {
+                totalDurationMs: Date.now() - taskStartedAtMs,
+                locationsLength,
+                saveSuccessCount,
+                saveFailureCount,
+            });
         }
     },
 );

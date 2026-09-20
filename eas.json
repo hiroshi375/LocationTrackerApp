@@ -1,30 +1,33 @@
 {
-  "cli": {
-    "version": ">= 20.1.0",
-    "appVersionSource": "remote"
-  },
-  "build": {
-    "development": {
-      "developmentClient": true,
-      "distribution": "internal",
-      "channel": "development"
+    "cli": {
+        "version": ">= 20.1.0",
+        "appVersionSource": "remote"
     },
-    "preview": {
-      "distribution": "internal",
-      "android": {
-        "buildType": "apk"
-      },
-      "channel": "preview"
+    "build": {
+        "development": {
+            "developmentClient": true,
+            "distribution": "internal",
+            "channel": "development"
+        },
+        "preview": {
+            "distribution": "internal",
+            "android": {
+                "buildType": "apk"
+            },
+            "env": {
+                "ORG_GRADLE_PROJECT_reactNativeArchitectures": "arm64-v8a"
+            },
+            "channel": "preview"
+        },
+        "production": {
+            "autoIncrement": true,
+            "android": {
+                "buildType": "app-bundle"
+            },
+            "channel": "production"
+        }
     },
-    "production": {
-      "autoIncrement": true,
-      "android": {
-        "buildType": "app-bundle"
-      },
-      "channel": "production"
+    "submit": {
+        "production": {}
     }
-  },
-  "submit": {
-    "production": {}
-  }
 }

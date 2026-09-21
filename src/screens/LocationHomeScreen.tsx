@@ -2916,7 +2916,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
                 <View style={styles.buttonSpace}>
                     <AppButton
-                        title="アクティビティ履歴を見る"
+                        title="アクティビティ履歴"
                         onPress={() => navigation.navigate("LocationLog")}
                     />
                 </View>
@@ -2928,7 +2928,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 </View>
                 <View style={styles.buttonSpace}>
                     <AppButton
-                        title="アクティビティランキングを見る"
+                        title="アクティビティランキング"
                         onPress={() => navigation.navigate("ActivityRanking")}
                     />
                 </View>

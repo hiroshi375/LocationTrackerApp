@@ -27,6 +27,13 @@ import {
     getCurrentUserProfile,
     updateUserProfileDisplayName,
 } from "../services/userProfileService";
+import {
+    getPremiumPackage,
+    getRevenueCatCustomerInfo,
+    hasPremiumEntitlement,
+    purchasePremium,
+    restorePremiumPurchases,
+} from "../services/revenueCatService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Profile">;
 
@@ -43,7 +50,17 @@ export default function ProfileScreen({ navigation }: Props) {
     const [iconImageUrl, setIconImageUrl] = useState<string | null>(null);
     const [uploadingIcon, setUploadingIcon] = useState(false);
     const [selectedIconUri, setSelectedIconUri] = useState<string | null>(null);
-    const isProcessing = saving || uploadingIcon || deletingAccount;
+    const [premiumPurchased, setPremiumPurchased] = useState(false);
+    const [premiumPriceText, setPremiumPriceText] = useState("");
+    const [purchasingPremium, setPurchasingPremium] = useState(false);
+    const [restoringPremium, setRestoringPremium] = useState(false);
+
+    const isProcessing =
+        saving ||
+        uploadingIcon ||
+        deletingAccount ||
+        purchasingPremium ||
+        restoringPremium;
 
     const loadProfile = useCallback(async () => {
         try {
@@ -79,6 +96,86 @@ export default function ProfileScreen({ navigation }: Props) {
             setLoading(false);
         }
     }, []);
+
+    const loadPremiumPurchaseStatus = useCallback(async (): Promise<void> => {
+        try {
+            const [customerInfo, premiumPackage] = await Promise.all([
+                getRevenueCatCustomerInfo(),
+                getPremiumPackage(),
+            ]);
+
+            const purchased = hasPremiumEntitlement(customerInfo);
+
+            setPremiumPurchased(purchased);
+
+            setPremiumPriceText(premiumPackage?.product.priceString ?? "");
+
+            console.log("[Profile] Premium status:", {
+                purchased,
+                price: premiumPackage?.product.priceString ?? null,
+            });
+        } catch (error) {
+            console.error("[Profile] Premium status load error:", error);
+
+            setPremiumPurchased(false);
+            setPremiumPriceText("");
+        }
+    }, []);
+
+    const handlePurchasePremium = async (): Promise<void> => {
+        if (purchasingPremium) {
+            return;
+        }
+
+        try {
+            setPurchasingPremium(true);
+
+            const result = await purchasePremium();
+
+            if (result.status === "CANCELLED") {
+                return;
+            }
+
+            setPremiumPurchased(true);
+
+            Alert.alert("購入完了", "Premium機能が利用可能になりました。");
+        } catch (error) {
+            console.error("[Profile] Premium purchase error:", error);
+
+            Alert.alert("購入エラー", "Premiumの購入に失敗しました。");
+        } finally {
+            setPurchasingPremium(false);
+        }
+    };
+
+    const handleRestorePremium = async (): Promise<void> => {
+        if (restoringPremium) {
+            return;
+        }
+
+        try {
+            setRestoringPremium(true);
+
+            const customerInfo = await restorePremiumPurchases();
+
+            const purchased = hasPremiumEntitlement(customerInfo);
+
+            setPremiumPurchased(purchased);
+
+            Alert.alert(
+                purchased ? "復元完了" : "購入情報なし",
+                purchased
+                    ? "Premium購入情報を復元しました。"
+                    : "復元できるPremium購入情報はありませんでした。",
+            );
+        } catch (error) {
+            console.error("[Profile] Premium restore error:", error);
+
+            Alert.alert("復元エラー", "購入情報の復元に失敗しました。");
+        } finally {
+            setRestoringPremium(false);
+        }
+    };
 
     const saveProfile = async () => {
         const trimmedDisplayName = displayName.trim();
@@ -291,7 +388,8 @@ export default function ProfileScreen({ navigation }: Props) {
     useFocusEffect(
         useCallback(() => {
             void loadProfile();
-        }, [loadProfile]),
+            void loadPremiumPurchaseStatus();
+        }, [loadProfile, loadPremiumPurchaseStatus]),
     );
 
     if (loading) {
@@ -391,6 +489,59 @@ export default function ProfileScreen({ navigation }: Props) {
                             {saving || uploadingIcon ? "保存中..." : "保存"}
                         </Text>
                     </Pressable>
+
+                    <View style={styles.premiumBox}>
+                        <Text style={styles.premiumTitle}>Premium</Text>
+
+                        {premiumPurchased ? (
+                            <Text style={styles.premiumActiveText}>
+                                Premium購入済み
+                            </Text>
+                        ) : (
+                            <>
+                                <Text style={styles.premiumDescription}>
+                                    買い切りでPremium機能を利用できます。
+                                </Text>
+
+                                <Pressable
+                                    style={[
+                                        styles.premiumPurchaseButton,
+                                        purchasingPremium &&
+                                            styles.disabledButton,
+                                    ]}
+                                    disabled={isProcessing}
+                                    onPress={() => {
+                                        void handlePurchasePremium();
+                                    }}
+                                >
+                                    <Text
+                                        style={styles.premiumPurchaseButtonText}
+                                    >
+                                        {purchasingPremium
+                                            ? "購入処理中..."
+                                            : premiumPriceText
+                                              ? `Premiumを購入 ${premiumPriceText}`
+                                              : "Premiumを購入"}
+                                    </Text>
+                                </Pressable>
+                            </>
+                        )}
+
+                        <Pressable
+                            style={[
+                                styles.premiumRestoreButton,
+                                restoringPremium && styles.disabledButton,
+                            ]}
+                            disabled={isProcessing}
+                            onPress={() => {
+                                void handleRestorePremium();
+                            }}
+                        >
+                            <Text style={styles.premiumRestoreButtonText}>
+                                {restoringPremium ? "復元中..." : "購入を復元"}
+                            </Text>
+                        </Pressable>
+                    </View>
 
                     <Pressable
                         style={[
@@ -625,6 +776,65 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         paddingBottom: 40,
+    },
+
+    premiumBox: {
+        marginTop: 20,
+        marginBottom: 16,
+        padding: 16,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: "#d7dee5",
+        backgroundColor: "#f8fafc",
+    },
+
+    premiumTitle: {
+        fontSize: 18,
+        fontWeight: "bold",
+        color: "#333",
+    },
+
+    premiumDescription: {
+        marginTop: 8,
+        fontSize: 13,
+        lineHeight: 20,
+        color: "#666",
+    },
+
+    premiumActiveText: {
+        marginTop: 10,
+        fontSize: 15,
+        fontWeight: "bold",
+        color: "#2e7d32",
+    },
+
+    premiumPurchaseButton: {
+        marginTop: 14,
+        minHeight: 46,
+        borderRadius: 8,
+        backgroundColor: "#4b6f8f",
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 16,
+    },
+
+    premiumPurchaseButtonText: {
+        color: "#ffffff",
+        fontSize: 15,
+        fontWeight: "bold",
+    },
+
+    premiumRestoreButton: {
+        marginTop: 10,
+        minHeight: 40,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    premiumRestoreButtonText: {
+        color: "#4b6f8f",
+        fontSize: 14,
+        fontWeight: "bold",
     },
 
     dangerZone: {

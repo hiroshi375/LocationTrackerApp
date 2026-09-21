@@ -1,8 +1,15 @@
 import type { SubscriptionTier } from "../config/subscriptionPlan";
+import {
+    getRevenueCatCustomerInfo,
+    hasPremiumEntitlement,
+} from "./revenueCatService";
 import { getCurrentUserProfile } from "./userProfileService";
 
 /*
  * RevenueCatで使用するEntitlement ID。
+ *
+ * revenueCatService.ts側でも "premium" を使用しているため、
+ * 判定はhasPremiumEntitlement()へ集約する。
  */
 export const PREMIUM_ENTITLEMENT_ID = "premium";
 
@@ -15,14 +22,35 @@ export async function getCurrentSubscriptionTier(): Promise<SubscriptionTier> {
 
     if (profile.role === "admin") {
         console.log("[Subscription] Admin user -> PREMIUM");
+
         return "PREMIUM";
     }
 
     /*
-     * 現時点ではRevenueCat未接続のため、
-     * 一般ユーザーはFREEとして扱う。
-     *
-     * Phase 5でRevenueCat判定へ置き換える。
+     * 一般ユーザーはRevenueCatの
+     * premium EntitlementでPremium判定する。
      */
-    return "FREE";
+    try {
+        const customerInfo = await getRevenueCatCustomerInfo();
+
+        const isPremium = hasPremiumEntitlement(customerInfo);
+
+        console.log("[Subscription] RevenueCat tier:", {
+            isPremium,
+            activeEntitlements: Object.keys(customerInfo.entitlements.active),
+        });
+
+        return isPremium ? "PREMIUM" : "FREE";
+    } catch (error) {
+        /*
+         * RevenueCatへ接続できない場合、
+         * 誤ってPremium機能を開放しない。
+         *
+         * useSubscription側でもcatchしてFREEにするが、
+         * service単体で使われても安全なようにFREEへ倒す。
+         */
+        console.error("[Subscription] RevenueCat check error:", error);
+
+        return "FREE";
+    }
 }

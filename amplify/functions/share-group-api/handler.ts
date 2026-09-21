@@ -43,6 +43,20 @@ type BackendSubscriptionLimits = {
     maxUsersPerShareGroup: number | null;
 };
 
+type RevenueCatEntitlement = {
+    expires_date?: string | null;
+    purchase_date?: string | null;
+    product_identifier?: string | null;
+};
+
+type RevenueCatSubscriber = {
+    entitlements?: Record<string, RevenueCatEntitlement | undefined>;
+};
+
+type RevenueCatCustomerResponse = {
+    subscriber?: RevenueCatSubscriber;
+};
+
 const BACKEND_SUBSCRIPTION_LIMITS: Record<
     BackendSubscriptionTier,
     BackendSubscriptionLimits
@@ -56,6 +70,110 @@ const BACKEND_SUBSCRIPTION_LIMITS: Record<
         maxUsersPerShareGroup: 20,
     },
 };
+
+async function hasRevenueCatPremiumEntitlement(
+    userId: string,
+): Promise<boolean> {
+    const apiKey = env.REVENUECAT_SECRET_API_KEY;
+
+    const entitlementId = env.REVENUECAT_ENTITLEMENT_ID || "premium";
+
+    if (!apiKey) {
+        console.error(
+            "[ShareGroup] RevenueCat secret API key is not configured.",
+        );
+
+        return false;
+    }
+
+    const url =
+        "https://api.revenuecat.com/v1/subscribers/" +
+        encodeURIComponent(userId);
+
+    try {
+        const response = await fetch(url, {
+            method: "GET",
+            headers: {
+                Accept: "application/json",
+                Authorization: `Bearer ${apiKey}`,
+            },
+
+            /*
+             * RevenueCat側で通信障害が発生しても、
+             * Lambda処理を長時間止めない。
+             */
+            signal: AbortSignal.timeout(5000),
+        });
+
+        if (!response.ok) {
+            console.error("[ShareGroup] RevenueCat request failed:", {
+                userId,
+                status: response.status,
+                statusText: response.statusText,
+            });
+
+            return false;
+        }
+
+        const customer = (await response.json()) as RevenueCatCustomerResponse;
+
+        const entitlement = customer.subscriber?.entitlements?.[entitlementId];
+
+        if (!entitlement) {
+            console.log("[ShareGroup] RevenueCat entitlement not found:", {
+                userId,
+                entitlementId,
+            });
+
+            return false;
+        }
+
+        /*
+         * 今回のpremium_lifetimeは買い切り商品のため、
+         * expires_dateがnullなら有効と判定する。
+         *
+         * 将来サブスクリプションを追加した場合も、
+         * 有効期限が未来ならPremiumとして扱える。
+         */
+        if (!entitlement.expires_date) {
+            console.log(
+                "[ShareGroup] RevenueCat lifetime entitlement active:",
+                {
+                    userId,
+                    entitlementId,
+                    productIdentifier: entitlement.product_identifier ?? null,
+                },
+            );
+
+            return true;
+        }
+
+        const expiresAtMs = new Date(entitlement.expires_date).getTime();
+
+        const isActive =
+            Number.isFinite(expiresAtMs) && expiresAtMs > Date.now();
+
+        console.log("[ShareGroup] RevenueCat entitlement result:", {
+            userId,
+            entitlementId,
+            expiresDate: entitlement.expires_date,
+            isActive,
+        });
+
+        return isActive;
+    } catch (error) {
+        console.error("[ShareGroup] RevenueCat request error:", {
+            userId,
+            error,
+        });
+
+        /*
+         * RevenueCatの確認に失敗した場合は、
+         * Premium機能を誤って開放しないようFREEへ倒す。
+         */
+        return false;
+    }
+}
 
 /*
  * 現時点ではRevenueCat未導入のため、
@@ -82,12 +200,19 @@ async function getSubscriptionTierForUser(
     }
 
     /*
-     * 現時点ではRevenueCat未接続のため、
-     * 一般ユーザーはFREEとして扱う。
-     *
-     * Phase 5でRevenueCat / entitlement判定へ置き換える。
+     * 一般ユーザーはRevenueCatの
+     * premium Entitlementで判定する。
      */
-    return "FREE";
+    const hasPremium = await hasRevenueCatPremiumEntitlement(userId);
+
+    const tier: BackendSubscriptionTier = hasPremium ? "PREMIUM" : "FREE";
+
+    console.log("[ShareGroup] RevenueCat subscription tier:", {
+        userId,
+        tier,
+    });
+
+    return tier;
 }
 
 function getBackendSubscriptionLimits(

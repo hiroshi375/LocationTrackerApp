@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import Purchases from "react-native-purchases";
 
 import type { SubscriptionTier } from "../config/subscriptionPlan";
 import { getCurrentSubscriptionTier } from "../services/subscriptionService";
@@ -27,8 +28,36 @@ export function useSubscription() {
         }
     }, []);
 
+    /*
+     * 初回表示時に現在のPremium状態を取得する。
+     */
     useEffect(() => {
         void refresh();
+    }, [refresh]);
+
+    /*
+     * RevenueCatのCustomerInfoが更新された場合、
+     * FREE / PREMIUM判定を再取得する。
+     *
+     * purchasePackage()
+     * restorePurchases()
+     * getCustomerInfo()
+     * などでCustomerInfoが更新された際に呼ばれる。
+     */
+    useEffect(() => {
+        const handleCustomerInfoUpdated = () => {
+            console.log("[Subscription] CustomerInfo updated -> refresh");
+
+            void refresh();
+        };
+
+        Purchases.addCustomerInfoUpdateListener(handleCustomerInfoUpdated);
+
+        return () => {
+            Purchases.removeCustomerInfoUpdateListener(
+                handleCustomerInfoUpdated,
+            );
+        };
     }, [refresh]);
 
     return {

@@ -7,7 +7,10 @@
         "development": {
             "developmentClient": true,
             "distribution": "internal",
-            "channel": "development"
+            "channel": "development",
+            "env": {
+                "ORG_GRADLE_PROJECT_reactNativeArchitectures": "arm64-v8a"
+            }
         },
         "preview": {
             "distribution": "internal",

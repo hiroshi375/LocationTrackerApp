@@ -3695,6 +3695,7 @@ const styles = StyleSheet.create({
         color: "#2f4f66",
     },
     liveShareSelectButton: {
+        marginTop: 8,
         minHeight: 44,
         borderWidth: 1,
         borderColor: "#c8d6e0",

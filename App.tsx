@@ -4,7 +4,7 @@ import "./src/tasks/backgroundLocationTask";
 import { Authenticator } from "@aws-amplify/ui-react-native";
 import { Amplify } from "aws-amplify";
 import { Hub } from "aws-amplify/utils";
-import { signOut } from "aws-amplify/auth";
+import { getCurrentUser, signOut } from "aws-amplify/auth";
 import { StatusBar } from "expo-status-bar";
 import {
     ActivityIndicator,
@@ -24,6 +24,11 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import outputs from "./amplify_outputs.json";
 import RootNavigator from "./src/navigation/RootNavigator";
+import {
+    configureRevenueCat,
+    identifyRevenueCatUser,
+    logoutRevenueCatUser,
+} from "./src/services/revenueCatService";
 import {
     checkCurrentDeviceSession,
     clearLocalDeviceSessionRegistration,
@@ -82,6 +87,37 @@ function SingleDeviceSessionGuard({ children }: { children: ReactNode }) {
             try {
                 setChecking(true);
 
+                /*
+                 * RevenueCat SDKはアプリライフサイクル中に
+                 * 1回だけconfigureする。
+                 */
+                configureRevenueCat();
+
+                /*
+                 * Cognitoの認証済みユーザーを取得する。
+                 *
+                 * userIdをRevenueCat App User IDとして利用する。
+                 */
+                try {
+                    const currentUser = await getCurrentUser();
+
+                    await identifyRevenueCatUser(currentUser.userId);
+
+                    console.log(
+                        "[RevenueCat] Cognito user linked:",
+                        currentUser.userId,
+                    );
+                } catch (error) {
+                    /*
+                     * RevenueCat側の障害だけで
+                     * LocationTrackerAppへのログインを失敗させない。
+                     */
+                    console.error("[RevenueCat] Initialize user error:", error);
+                }
+
+                /*
+                 * 既存の1アカウント1端末制御。
+                 */
                 const isActive = await initializeCurrentDeviceSession();
 
                 if (cancelled) {
@@ -95,9 +131,8 @@ function SingleDeviceSessionGuard({ children }: { children: ReactNode }) {
                 }
             } catch (error) {
                 /*
-                 * 通信障害だけでユーザーをログアウトさせない。
-                 *
-                 * セッション確認失敗時はfail-openとする。
+                 * SingleDeviceSession確認失敗時は
+                 * これまでどおりfail-open。
                  */
                 console.error("[SingleDeviceSession] Initialize error:", error);
             } finally {
@@ -168,9 +203,20 @@ function SingleDeviceSessionGuard({ children }: { children: ReactNode }) {
      */
     useEffect(() => {
         const unsubscribe = Hub.listen("auth", ({ payload }) => {
-            if (payload.event === "signedOut") {
-                void clearLocalDeviceSessionRegistration();
+            if (payload.event !== "signedOut") {
+                return;
             }
+
+            void clearLocalDeviceSessionRegistration();
+
+            /*
+             * Cognitoログアウト時はRevenueCat側もログアウトする。
+             *
+             * RevenueCatのlogOut()後は匿名ユーザーに戻る。
+             * 次回ログイン時にidentifyRevenueCatUser()で
+             * Cognito userIdへ再度紐付ける。
+             */
+            void logoutRevenueCatUser();
         });
 
         return unsubscribe;

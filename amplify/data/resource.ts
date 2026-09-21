@@ -315,10 +315,21 @@ const schema = a
             email: a.email(),
             iconImagePath: a.string(),
         }),
+        ShareGroupMemberSummary: a.customType({
+            userId: a.string().required(),
+            displayName: a.string(),
+            iconImagePath: a.string(),
+            role: a.string().required(),
+        }),
+
         ShareGroupSummary: a.customType({
             groupId: a.id().required(),
             name: a.string().required(),
             role: a.string().required(),
+            /*
+             * このグループに所属しているメンバー。
+             */
+            members: a.ref("ShareGroupMemberSummary").array(),
         }),
         createShareGroupWithInviteCode: a
             .mutation()

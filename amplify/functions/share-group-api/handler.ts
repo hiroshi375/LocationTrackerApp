@@ -885,6 +885,9 @@ async function listMyShareGroups(
 
     const groups = await Promise.all(
         memberships.map(async (membership) => {
+            /*
+             * グループ本体を取得する。
+             */
             const groupResult = await client.models.ShareGroup.get({
                 groupId: membership.groupId,
             });
@@ -907,10 +910,110 @@ async function listMyShareGroups(
                 return null;
             }
 
+            /*
+             * グループに所属している全メンバーを取得する。
+             */
+            const groupMembersResult =
+                await client.models.ShareGroupMember.listShareGroupMembersByGroup(
+                    {
+                        groupId: membership.groupId,
+                    },
+                    {
+                        limit: 1000,
+                    },
+                );
+
+            if (groupMembersResult.errors) {
+                console.error(
+                    "[ShareGroup] Group members query errors:",
+                    groupMembersResult.errors,
+                    {
+                        groupId: membership.groupId,
+                    },
+                );
+
+                throw new Error(
+                    `「${group.name}」のメンバーを取得できませんでした。`,
+                );
+            }
+
+            /*
+             * グループメンバーごとに最新のUserProfileを取得する。
+             *
+             * ShareGroupMemberのdisplayName / iconImagePathは、
+             * グループ参加時点のコピーなので、
+             * プロフィール変更後も最新情報を表示できるよう
+             * UserProfile側を優先する。
+             */
+            const members = await Promise.all(
+                (groupMembersResult.data ?? []).map(async (member) => {
+                    const profileResult =
+                        await client.models.UserProfile.listUserProfilesByUserId(
+                            {
+                                userId: member.userId,
+                            },
+                            {
+                                limit: 1,
+                            },
+                        );
+
+                    if (profileResult.errors) {
+                        console.error(
+                            "[ShareGroup] Member profile query errors:",
+                            profileResult.errors,
+                            {
+                                groupId: membership.groupId,
+                                userId: member.userId,
+                            },
+                        );
+                    }
+
+                    const profile = profileResult.data?.[0];
+
+                    return {
+                        userId: member.userId,
+
+                        /*
+                         * 最新UserProfileを優先する。
+                         *
+                         * UserProfileを取得できなかった場合は、
+                         * ShareGroupMemberに保存されている値へfallbackする。
+                         */
+                        displayName:
+                            profile?.displayName ??
+                            member.displayName ??
+                            undefined,
+
+                        iconImagePath:
+                            profile?.iconImagePath ??
+                            member.iconImagePath ??
+                            undefined,
+
+                        role: member.role === "OWNER" ? "OWNER" : "MEMBER",
+                    };
+                }),
+            );
+
+            /*
+             * OWNERを先頭に表示し、
+             * 同じrole内ではdisplayName順に並べる。
+             */
+            members.sort((a, b) => {
+                if (a.role !== b.role) {
+                    return a.role === "OWNER" ? -1 : 1;
+                }
+
+                return (a.displayName ?? "").localeCompare(
+                    b.displayName ?? "",
+                    "ja",
+                );
+            });
+
             return {
                 groupId: group.groupId,
                 name: group.name,
                 role: membership.role === "OWNER" ? "OWNER" : "MEMBER",
+                members,
             };
         }),
     );
@@ -923,6 +1026,12 @@ async function listMyShareGroups(
                 groupId: string;
                 name: string;
                 role: string;
+                members: {
+                    userId: string;
+                    displayName: string | undefined;
+                    iconImagePath: string | undefined;
+                    role: string;
+                }[];
             } => group !== null,
         )
         .sort((a, b) => a.name.localeCompare(b.name, "ja"));

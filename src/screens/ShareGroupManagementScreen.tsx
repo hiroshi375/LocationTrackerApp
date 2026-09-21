@@ -3,6 +3,7 @@ import { useCallback, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
+    Image,
     Pressable,
     ScrollView,
     Share,
@@ -11,6 +12,8 @@ import {
     TextInput,
     View,
 } from "react-native";
+
+import { getUrl } from "aws-amplify/storage";
 
 import { client } from "../lib/client";
 
@@ -21,10 +24,18 @@ import {
 
 import { useSubscription } from "../hooks/useSubscription";
 
+type ShareGroupMemberSummaryItem = {
+    userId: string;
+    displayName?: string | null;
+    iconImagePath?: string | null;
+    role: string;
+};
+
 type ShareGroupSummaryItem = {
     groupId: string;
     name: string;
     role: string;
+    members?: (ShareGroupMemberSummaryItem | null)[] | null;
 };
 
 type ShareGroupQueryResult = {
@@ -70,6 +81,15 @@ function getFirstGraphQLErrorMessage(
 export default function ShareGroupManagementScreen() {
     const [groups, setGroups] = useState<ShareGroupSummaryItem[]>([]);
     const [loadingGroups, setLoadingGroups] = useState(false);
+    /*
+     * iconImagePath → 一時URL
+     *
+     * 同じユーザーが複数グループに所属していても
+     * 同一pathは1回だけgetUrlする。
+     */
+    const [memberIconUrls, setMemberIconUrls] = useState<
+        Record<string, string>
+    >({});
     const [groupName, setGroupName] = useState("");
     const [creatingGroup, setCreatingGroup] = useState(false);
     const [inviteCodeInput, setInviteCodeInput] = useState("");
@@ -120,6 +140,67 @@ export default function ShareGroupManagementScreen() {
                 (item): item is ShareGroupSummaryItem => item !== null,
             );
 
+            /*
+             * 全グループからプロフィール画像pathを集める。
+             *
+             * Setを使い、同じユーザーが複数グループに所属していても
+             * 同じ画像を重複してgetUrlしない。
+             */
+            const iconPaths = [
+                ...new Set(
+                    items.flatMap((group) =>
+                        (group.members ?? [])
+                            .filter(
+                                (
+                                    member,
+                                ): member is ShareGroupMemberSummaryItem =>
+                                    member !== null,
+                            )
+                            .map((member) => member.iconImagePath)
+                            .filter((path): path is string => Boolean(path)),
+                    ),
+                ),
+            ];
+
+            const iconUrlEntries = await Promise.all(
+                iconPaths.map(async (path) => {
+                    try {
+                        const urlResult = await getUrl({
+                            path,
+                            options: {
+                                expiresIn: 3600,
+                            },
+                        });
+
+                        return [path, urlResult.url.toString()] as const;
+                    } catch (error) {
+                        /*
+                         * 1人のアイコン取得に失敗しても
+                         * グループ一覧全体は表示する。
+                         */
+                        console.error("Load share group member icon error:", {
+                            path,
+                            error,
+                        });
+
+                        return null;
+                    }
+                }),
+            );
+
+            const nextMemberIconUrls: Record<string, string> = {};
+
+            for (const entry of iconUrlEntries) {
+                if (!entry) {
+                    continue;
+                }
+
+                const [path, url] = entry;
+
+                nextMemberIconUrls[path] = url;
+            }
+
+            setMemberIconUrls(nextMemberIconUrls);
             setGroups(items);
         } catch (error) {
             console.error("Load share groups error:", error);
@@ -587,6 +668,92 @@ export default function ShareGroupManagementScreen() {
                                     <Text style={styles.groupRoleText}>
                                         {isOwner ? "作成者" : "メンバー"}
                                     </Text>
+                                    <View style={styles.groupMembersArea}>
+                                        <Text style={styles.groupMembersTitle}>
+                                            メンバー
+                                        </Text>
+
+                                        <View style={styles.groupMembersList}>
+                                            {(group.members ?? [])
+                                                .filter(
+                                                    (
+                                                        member,
+                                                    ): member is ShareGroupMemberSummaryItem =>
+                                                        member !== null,
+                                                )
+                                                .map((member) => {
+                                                    const displayName =
+                                                        member.displayName?.trim() ||
+                                                        "ユーザー";
+
+                                                    const iconUrl =
+                                                        member.iconImagePath
+                                                            ? memberIconUrls[
+                                                                  member
+                                                                      .iconImagePath
+                                                              ]
+                                                            : undefined;
+
+                                                    return (
+                                                        <View
+                                                            key={member.userId}
+                                                            style={
+                                                                styles.groupMemberItem
+                                                            }
+                                                        >
+                                                            {iconUrl ? (
+                                                                <Image
+                                                                    source={{
+                                                                        uri: iconUrl,
+                                                                    }}
+                                                                    style={
+                                                                        styles.groupMemberIcon
+                                                                    }
+                                                                />
+                                                            ) : (
+                                                                <View
+                                                                    style={
+                                                                        styles.groupMemberIconPlaceholder
+                                                                    }
+                                                                >
+                                                                    <Text
+                                                                        style={
+                                                                            styles.groupMemberIconPlaceholderText
+                                                                        }
+                                                                    >
+                                                                        {displayName.charAt(
+                                                                            0,
+                                                                        )}
+                                                                    </Text>
+                                                                </View>
+                                                            )}
+
+                                                            <Text
+                                                                style={
+                                                                    styles.groupMemberName
+                                                                }
+                                                                numberOfLines={
+                                                                    1
+                                                                }
+                                                            >
+                                                                {displayName}
+                                                            </Text>
+
+                                                            {member.role ===
+                                                                "OWNER" && (
+                                                                <Text
+                                                                    style={
+                                                                        styles.groupMemberOwnerText
+                                                                    }
+                                                                >
+                                                                    作成者
+                                                                </Text>
+                                                            )}
+                                                        </View>
+                                                    );
+                                                })}
+                                        </View>
+                                    </View>
                                 </View>
 
                                 {isOwner && (
@@ -820,5 +987,65 @@ const styles = StyleSheet.create({
     disabledInput: {
         backgroundColor: "#f1f3f5",
         color: "#999",
+    },
+
+    groupMembersArea: {
+        marginTop: 12,
+        gap: 8,
+    },
+
+    groupMembersTitle: {
+        fontSize: 13,
+        fontWeight: "bold",
+        color: "#555",
+    },
+
+    groupMembersList: {
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: 12,
+    },
+
+    groupMemberItem: {
+        width: 64,
+        alignItems: "center",
+    },
+
+    groupMemberIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: "#e6edf3",
+    },
+
+    groupMemberIconPlaceholder: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: "#e6edf3",
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    groupMemberIconPlaceholderText: {
+        fontSize: 17,
+        fontWeight: "bold",
+        color: "#4b6f8f",
+    },
+
+    groupMemberName: {
+        marginTop: 4,
+        width: 64,
+        fontSize: 11,
+        color: "#444",
+        textAlign: "center",
+    },
+
+    groupMemberOwnerText: {
+        marginTop: 2,
+        fontSize: 9,
+        color: "#777",
     },
 });

@@ -2609,21 +2609,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
                     <Pressable
                         style={[
-                            styles.liveShareGroupManageButton,
-                            startingRecording && styles.appButtonDisabled,
-                        ]}
-                        disabled={startingRecording}
-                        onPress={() => {
-                            navigation.navigate("ShareGroupManagement");
-                        }}
-                    >
-                        <Text style={styles.liveShareGroupManageButtonText}>
-                            共有グループを管理
-                        </Text>
-                    </Pressable>
-
-                    <Pressable
-                        style={[
                             styles.liveShareSelectButton,
                             recordingControlsLocked && styles.appButtonDisabled,
                         ]}
@@ -2925,256 +2910,72 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         </View>
                     </View>
 
-                    <View style={styles.backgroundHeartbeatBox}>
-                        <Text style={styles.backgroundHeartbeatTitle}>
-                            バックグラウンドタスク診断
-                        </Text>
-
-                        <Pressable
-                            style={({ pressed }) => [
-                                styles.backgroundHeartbeatButton,
-                                pressed &&
-                                    !checkingBackgroundHeartbeat &&
-                                    styles.buttonPressed,
-                                checkingBackgroundHeartbeat &&
-                                    styles.appButtonDisabled,
-                            ]}
-                            onPress={() => {
-                                void handleCheckBackgroundHeartbeat();
-                            }}
-                            disabled={checkingBackgroundHeartbeat}
-                        >
-                            <Text style={styles.backgroundHeartbeatButtonText}>
-                                {checkingBackgroundHeartbeat
-                                    ? "heartbeat確認中..."
-                                    : "heartbeatを確認"}
+                    {isAdmin && (
+                        <View style={styles.backgroundHeartbeatBox}>
+                            <Text style={styles.backgroundHeartbeatTitle}>
+                                バックグラウンドタスク診断
                             </Text>
-                        </Pressable>
 
-                        {backgroundHeartbeatDisplay && (
-                            <View style={styles.backgroundHeartbeatResult}>
-                                <Text
-                                    style={styles.backgroundHeartbeatStatusText}
-                                >
-                                    {backgroundHeartbeatDisplay.statusText}
-                                </Text>
-
-                                {backgroundHeartbeatDisplay.detailLines.map(
-                                    (line) => (
-                                        <Text
-                                            key={line}
-                                            style={
-                                                styles.backgroundHeartbeatDetailText
-                                            }
-                                        >
-                                            {line}
-                                        </Text>
-                                    ),
-                                )}
-
-                                {backgroundHeartbeatCheckedAtText && (
-                                    <Text
-                                        style={
-                                            styles.backgroundHeartbeatCheckedText
-                                        }
-                                    >
-                                        確認時刻:{" "}
-                                        {backgroundHeartbeatCheckedAtText}
-                                    </Text>
-                                )}
-                            </View>
-                        )}
-
-                        {/* EAS Update診断 */}
-                        <Pressable
-                            style={({ pressed }) => [
-                                styles.easUpdateButton,
-                                pressed &&
-                                    !checkingEasUpdateInfo &&
-                                    styles.buttonPressed,
-                                checkingEasUpdateInfo &&
-                                    styles.appButtonDisabled,
-                            ]}
-                            onPress={() => {
-                                void handleCheckEasUpdateInfo();
-                            }}
-                            disabled={checkingEasUpdateInfo}
-                        >
-                            <Text style={styles.easUpdateButtonText}>
-                                {checkingEasUpdateInfo
-                                    ? "Update確認中..."
-                                    : "Update情報を確認"}
-                            </Text>
-                        </Pressable>
-
-                        <Pressable
-                            style={({ pressed }) => [
-                                styles.easUpdateButton,
-                                pressed &&
-                                    !easUpdateApplyDisabled &&
-                                    styles.buttonPressed,
-                                easUpdateApplyDisabled &&
-                                    styles.appButtonDisabled,
-                            ]}
-                            onPress={() => {
-                                void handleForceEasUpdate();
-                            }}
-                            disabled={easUpdateApplyDisabled}
-                        >
-                            <Text style={styles.easUpdateButtonText}>
-                                {forcingEasUpdate
-                                    ? "最新Updateを確認中..."
-                                    : "最新Updateを適用"}
-                            </Text>
-                        </Pressable>
-
-                        {easUpdateBackgroundDebug && (
-                            <View
-                                style={styles.easUpdateBackgroundDebugContainer}
+                            <Pressable
+                                style={({ pressed }) => [
+                                    styles.backgroundHeartbeatButton,
+                                    pressed &&
+                                        !checkingBackgroundHeartbeat &&
+                                        styles.buttonPressed,
+                                    checkingBackgroundHeartbeat &&
+                                        styles.appButtonDisabled,
+                                ]}
+                                onPress={() => {
+                                    void handleCheckBackgroundHeartbeat();
+                                }}
+                                disabled={checkingBackgroundHeartbeat}
                             >
                                 <Text
-                                    style={styles.easUpdateBackgroundDebugTitle}
+                                    style={styles.backgroundHeartbeatButtonText}
                                 >
-                                    EAS Update Background state
+                                    {checkingBackgroundHeartbeat
+                                        ? "heartbeat確認中..."
+                                        : "heartbeatを確認"}
                                 </Text>
+                            </Pressable>
 
-                                <Text
-                                    style={styles.easUpdateBackgroundDebugText}
-                                >
-                                    判定段階: {easUpdateBackgroundDebug.phase}
-                                </Text>
+                            {backgroundHeartbeatDisplay && (
+                                <View style={styles.backgroundHeartbeatResult}>
+                                    <Text
+                                        style={
+                                            styles.backgroundHeartbeatStatusText
+                                        }
+                                    >
+                                        {backgroundHeartbeatDisplay.statusText}
+                                    </Text>
 
-                                <Text
-                                    style={styles.easUpdateBackgroundDebugText}
-                                >
-                                    hasStarted:{" "}
-                                    {String(
-                                        easUpdateBackgroundDebug.hasStarted,
+                                    {backgroundHeartbeatDisplay.detailLines.map(
+                                        (line) => (
+                                            <Text
+                                                key={line}
+                                                style={
+                                                    styles.backgroundHeartbeatDetailText
+                                                }
+                                            >
+                                                {line}
+                                            </Text>
+                                        ),
                                     )}
-                                </Text>
 
-                                <Text
-                                    style={styles.easUpdateBackgroundDebugText}
-                                >
-                                    isRecording:{" "}
-                                    {easUpdateBackgroundDebug.isRecording ===
-                                    null
-                                        ? "null"
-                                        : String(
-                                              easUpdateBackgroundDebug.isRecording,
-                                          )}
-                                </Text>
-
-                                <Text
-                                    style={styles.easUpdateBackgroundDebugText}
-                                    selectable
-                                >
-                                    recordingSessionId:{" "}
-                                    {easUpdateBackgroundDebug.recordingSessionId ??
-                                        "null"}
-                                </Text>
-
-                                <Text
-                                    style={styles.easUpdateBackgroundDebugText}
-                                    selectable
-                                >
-                                    liveLocationId:{" "}
-                                    {easUpdateBackgroundDebug.liveLocationId ??
-                                        "null"}
-                                </Text>
-
-                                <Text
-                                    style={styles.easUpdateBackgroundDebugText}
-                                    selectable
-                                >
-                                    liveShareOwnerValues:{" "}
-                                    {easUpdateBackgroundDebug
-                                        .liveShareOwnerValues.length > 0
-                                        ? JSON.stringify(
-                                              easUpdateBackgroundDebug.liveShareOwnerValues,
-                                          )
-                                        : "[]"}
-                                </Text>
-
-                                <Text
-                                    style={styles.easUpdateBackgroundDebugText}
-                                >
-                                    Background task残留:{" "}
-                                    {easUpdateBackgroundDebug.staleBackgroundTaskStateDetected
-                                        ? "あり"
-                                        : "なし"}
-                                </Text>
-
-                                <Text
-                                    style={styles.easUpdateBackgroundDebugText}
-                                >
-                                    現在地共有state残留:{" "}
-                                    {easUpdateBackgroundDebug.staleLiveSharingStateDetected
-                                        ? "あり"
-                                        : "なし"}
-                                </Text>
-
-                                <Text
-                                    style={
-                                        styles.easUpdateBackgroundDebugCheckedText
-                                    }
-                                >
-                                    確認時刻:{" "}
-                                    {formatEasUpdateDateTime(
-                                        easUpdateBackgroundDebug.checkedAt,
+                                    {backgroundHeartbeatCheckedAtText && (
+                                        <Text
+                                            style={
+                                                styles.backgroundHeartbeatCheckedText
+                                            }
+                                        >
+                                            確認時刻:{" "}
+                                            {backgroundHeartbeatCheckedAtText}
+                                        </Text>
                                     )}
-                                </Text>
-                            </View>
-                        )}
-
-                        {easUpdateInfo && (
-                            <View style={styles.easUpdateInfoContainer}>
-                                <Text style={styles.easUpdateInfoTitle}>
-                                    EAS Update情報
-                                </Text>
-
-                                <Text style={styles.easUpdateInfoText}>
-                                    適用状態:{" "}
-                                    {easUpdateInfo.isEmbeddedLaunch
-                                        ? "ビルド内蔵版"
-                                        : "EAS Update適用済み"}
-                                </Text>
-
-                                <Text style={styles.easUpdateInfoText}>
-                                    Channel:{" "}
-                                    {easUpdateInfo.channel ?? "取得不可"}
-                                </Text>
-
-                                <Text style={styles.easUpdateInfoText}>
-                                    Runtime Version:{" "}
-                                    {easUpdateInfo.runtimeVersion ?? "取得不可"}
-                                </Text>
-
-                                <Text
-                                    style={styles.easUpdateInfoText}
-                                    selectable
-                                >
-                                    Update ID:{" "}
-                                    {easUpdateInfo.updateId ?? "取得不可"}
-                                </Text>
-
-                                <Text style={styles.easUpdateInfoText}>
-                                    Update作成日時:{" "}
-                                    {easUpdateInfo.createdAt
-                                        ? formatEasUpdateDateTime(
-                                              easUpdateInfo.createdAt,
-                                          )
-                                        : "取得不可"}
-                                </Text>
-
-                                <Text style={styles.easUpdateInfoText}>
-                                    expo-updates:{" "}
-                                    {easUpdateInfo.isEnabled ? "有効" : "無効"}
-                                </Text>
-                            </View>
-                        )}
-                    </View>
-
+                                </View>
+                            )}
+                        </View>
+                    )}
                     <View style={styles.autoRecordMapButtonSpace}>
                         <AppButton
                             title="地図で見る"
@@ -3312,6 +3113,16 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         }
                         onPress={handleOpenSharedLiveLocationMap}
                         disabled={openingSharedLiveMap}
+                    />
+                </View>
+
+                <View style={styles.buttonSpace}>
+                    <AppButton
+                        title="共有グループを管理"
+                        onPress={() =>
+                            navigation.navigate("ShareGroupManagement")
+                        }
+                        disabled={startingRecording}
                     />
                 </View>
 

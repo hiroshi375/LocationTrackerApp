@@ -136,6 +136,8 @@ type EasUpdateBackgroundDebug = {
     liveLocationId: string | null;
     liveShareOwnerValues: string[];
     staleStateDetected: boolean;
+    staleBackgroundTaskStateDetected?: boolean;
+    staleLiveSharingStateDetected?: boolean;
 };
 
 type ShareCandidateItem = {
@@ -255,9 +257,31 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 initialIsRecording === true ||
                 initialLiveShareOwnerValues.length > 0;
 
-            const staleStateDetected =
+            /*
+             * Background stateの残留判定。
+             *
+             * 1. Background Location taskが停止済みなのに
+             *    保存stateだけ記録/共有中
+             *
+             * または
+             *
+             * 2. UI上は共有先なしなのに、
+             *    Background側だけ共有先が残っている
+             *
+             * 場合は残留stateと判断する。
+             */
+            const staleBackgroundTaskStateDetected =
                 hasStoredBackgroundUsage &&
                 initialBackgroundStatus.hasStarted === false;
+
+            const staleLiveSharingStateDetected =
+                initialIsRecording !== true &&
+                initialLiveShareOwnerValues.length > 0 &&
+                selectedLiveShareUsers.length === 0;
+
+            const staleStateDetected =
+                staleBackgroundTaskStateDetected ||
+                staleLiveSharingStateDetected;
 
             /*
              * まず取得した状態を画面へ表示する。
@@ -274,66 +298,22 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 staleStateDetected,
             });
 
-            /*
-             * NativeのBackground Location taskは停止済みなのに、
-             * 保存済みstateだけ「記録中 / 共有中」の場合は
-             * 残留stateとして完全停止処理を行う。
-             */
-            if (staleStateDetected) {
-                await stopBackgroundLocationRecording({
-                    continueLiveSharing: false,
-                });
-
-                /*
-                 * クリア後の状態を再取得する。
-                 */
-                const clearedBackgroundStatus =
-                    await getBackgroundRecordingStatus();
-
-                const clearedBackgroundState = clearedBackgroundStatus.state;
-
-                setEasUpdateBackgroundDebug({
-                    checkedAt: new Date().toISOString(),
-                    phase: "残留stateクリア後",
-                    hasStarted: clearedBackgroundStatus.hasStarted,
-                    isRecording: clearedBackgroundState?.isRecording ?? null,
-                    recordingSessionId:
-                        clearedBackgroundState?.recordingSessionId ?? null,
-                    liveLocationId:
-                        clearedBackgroundState?.liveLocationId ?? null,
-                    liveShareOwnerValues:
-                        clearedBackgroundState?.liveShareOwnerValues ?? [],
-                    staleStateDetected: false,
-                });
-            }
-
-            /*
-             * 残留stateクリア後の最新状態で
-             * Update可否を判定する。
-             */
-            const backgroundStatusAfterCleanup =
-                await getBackgroundRecordingStatus();
-
-            const backgroundStateAfterCleanup =
-                backgroundStatusAfterCleanup.state;
-
             const isBackgroundLocationAlreadyInUse =
-                backgroundStateAfterCleanup?.isRecording === true ||
-                (backgroundStateAfterCleanup?.liveShareOwnerValues?.length ??
-                    0) > 0;
+                initialBackgroundState?.isRecording === true ||
+                initialLiveShareOwnerValues.length > 0;
 
             setEasUpdateBackgroundDebug({
                 checkedAt: new Date().toISOString(),
                 phase: "Update可否判定",
-                hasStarted: backgroundStatusAfterCleanup.hasStarted,
-                isRecording: backgroundStateAfterCleanup?.isRecording ?? null,
+                hasStarted: initialBackgroundStatus.hasStarted,
+                isRecording: initialIsRecording,
                 recordingSessionId:
-                    backgroundStateAfterCleanup?.recordingSessionId ?? null,
-                liveLocationId:
-                    backgroundStateAfterCleanup?.liveLocationId ?? null,
-                liveShareOwnerValues:
-                    backgroundStateAfterCleanup?.liveShareOwnerValues ?? [],
+                    initialBackgroundState?.recordingSessionId ?? null,
+                liveLocationId: initialBackgroundState?.liveLocationId ?? null,
+                liveShareOwnerValues: initialLiveShareOwnerValues,
                 staleStateDetected,
+                staleBackgroundTaskStateDetected,
+                staleLiveSharingStateDetected,
             });
 
             if (isBackgroundLocationAlreadyInUse) {
@@ -497,7 +477,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
         } finally {
             setForcingEasUpdate(false);
         }
-    }, [forcingEasUpdate]);
+    }, [forcingEasUpdate, selectedLiveShareUsers]);
 
     useEffect(() => {
         void debugPrintLocationQueueRecoverySummary();
@@ -712,6 +692,11 @@ export default function LocationHomeScreen({ navigation }: Props) {
     );
     const [easUpdateBackgroundDebug, setEasUpdateBackgroundDebug] =
         useState<EasUpdateBackgroundDebug | null>(null);
+    const [hasStaleLiveSharingState, setHasStaleLiveSharingState] =
+        useState(false);
+
+    const [clearingStaleLiveSharing, setClearingStaleLiveSharing] =
+        useState(false);
     const continuationAlertKeyRef = useRef<string | null>(null);
     const handledAutoStoppedSessionIdRef = useRef<string | null>(null);
     const handledPlanLimitAutoStopKeyRef = useRef<string | null>(null);
@@ -805,8 +790,15 @@ export default function LocationHomeScreen({ navigation }: Props) {
                  * プライバシー優先で共有先を空にする。
                  */
                 setLiveShareUsers([]);
-                setSelectedLiveShareUsers([]);
-                setDraftLiveShareUsers([]);
+                /*
+                 * 共有候補の取得失敗だけを理由に、
+                 * 現在の共有状態を変更しない。
+                 *
+                 * Background側では共有が継続している可能性があるため、
+                 * selectedLiveShareUsersを勝手に空にすると
+                 * UIとBackground stateが不整合になる。
+                 */
+                setDraftLiveShareUsers(selectedLiveShareUsers);
 
                 Alert.alert(
                     "取得エラー",
@@ -885,7 +877,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
              * エラー時はfail closedとする。
              */
             setLiveShareUsers([]);
-            setSelectedLiveShareUsers([]);
             setDraftLiveShareUsers([]);
 
             Alert.alert(
@@ -958,6 +949,131 @@ export default function LocationHomeScreen({ navigation }: Props) {
             );
         }
     };
+
+    const refreshStaleLiveSharingState =
+        useCallback(async (): Promise<void> => {
+            try {
+                const backgroundStatus = await getBackgroundRecordingStatus();
+
+                const backgroundState = backgroundStatus.state;
+
+                const hasStaleSharing =
+                    backgroundState?.isRecording !== true &&
+                    (backgroundState?.liveShareOwnerValues?.length ?? 0) > 0 &&
+                    selectedLiveShareUsers.length === 0;
+
+                setHasStaleLiveSharingState(hasStaleSharing);
+            } catch (error) {
+                console.error("Check stale live sharing state error:", error);
+
+                /*
+                 * 確認に失敗した場合は、
+                 * 誤って停止操作を出さない。
+                 */
+                setHasStaleLiveSharingState(false);
+            }
+        }, [selectedLiveShareUsers]);
+
+    const handleClearStaleLiveSharing = useCallback(async (): Promise<void> => {
+        if (clearingStaleLiveSharing) {
+            return;
+        }
+
+        try {
+            setClearingStaleLiveSharing(true);
+
+            /*
+             * ボタン表示後に状態が変化している可能性があるため、
+             * 停止直前にBackground stateを再確認する。
+             */
+            const backgroundStatus = await getBackgroundRecordingStatus();
+
+            const backgroundState = backgroundStatus.state;
+
+            const hasStaleSharing =
+                backgroundState?.isRecording !== true &&
+                (backgroundState?.liveShareOwnerValues?.length ?? 0) > 0 &&
+                selectedLiveShareUsers.length === 0;
+
+            if (!hasStaleSharing) {
+                setHasStaleLiveSharingState(false);
+
+                Alert.alert(
+                    "現在地共有",
+                    "残留している現在地共有状態はありません。",
+                );
+                return;
+            }
+
+            Alert.alert(
+                "残留している現在地共有を停止しますか？",
+                "画面上では共有していませんが、Background側に現在地共有状態が残っています。\n\n停止するとBackground Location taskも停止します。",
+                [
+                    {
+                        text: "キャンセル",
+                        style: "cancel",
+                    },
+                    {
+                        text: "停止する",
+                        style: "destructive",
+                        onPress: () => {
+                            void (async () => {
+                                try {
+                                    /*
+                                     * ユーザーが明示的に停止を選択した場合だけ
+                                     * Background taskを停止する。
+                                     */
+                                    await stopBackgroundLocationRecording({
+                                        continueLiveSharing: false,
+                                    });
+
+                                    setSelectedLiveShareUsers([]);
+                                    setDraftLiveShareUsers([]);
+                                    setLiveShareStatusMessage("");
+                                    setHasStaleLiveSharingState(false);
+
+                                    Alert.alert(
+                                        "現在地共有",
+                                        "残留していた現在地共有を停止しました。",
+                                    );
+                                } catch (error) {
+                                    console.error(
+                                        "Clear stale live sharing error:",
+                                        error,
+                                    );
+
+                                    Alert.alert(
+                                        "停止エラー",
+                                        "残留している現在地共有を停止できませんでした。",
+                                    );
+                                } finally {
+                                    setClearingStaleLiveSharing(false);
+                                }
+                            })();
+                        },
+                    },
+                ],
+                {
+                    cancelable: true,
+                    onDismiss: () => {
+                        setClearingStaleLiveSharing(false);
+                    },
+                },
+            );
+        } catch (error) {
+            console.error(
+                "Check stale live sharing before clear error:",
+                error,
+            );
+
+            Alert.alert(
+                "確認エラー",
+                "現在地共有の状態を確認できませんでした。",
+            );
+
+            setClearingStaleLiveSharing(false);
+        }
+    }, [clearingStaleLiveSharing, selectedLiveShareUsers]);
 
     const toggleLiveShareUser = (user: UserProfileItem) => {
         setDraftLiveShareUsers((currentUsers) => {
@@ -1431,12 +1547,18 @@ export default function LocationHomeScreen({ navigation }: Props) {
             void loadLoginUserName();
             void loadLiveShareUsers();
             void loadCurrentMonthActivityUsage();
+            void refreshStaleLiveSharingState();
         }, [
             loadLoginUserName,
             loadLiveShareUsers,
             loadCurrentMonthActivityUsage,
+            refreshStaleLiveSharingState,
         ]),
     );
+
+    useEffect(() => {
+        void refreshStaleLiveSharingState();
+    }, [refreshStaleLiveSharingState]);
 
     useEffect(() => {
         if (!isRecording) {
@@ -2598,6 +2720,37 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         </Pressable>
                     )}
 
+                    {hasStaleLiveSharingState &&
+                        selectedLiveShareUsers.length === 0 && (
+                            <View style={styles.staleLiveSharingBox}>
+                                <Text style={styles.staleLiveSharingText}>
+                                    画面上では共有していませんが、
+                                    Background側に現在地共有状態が残っています。
+                                </Text>
+
+                                <Pressable
+                                    style={({ pressed }) => [
+                                        styles.liveShareClearButton,
+                                        pressed && styles.buttonPressed,
+                                        clearingStaleLiveSharing &&
+                                            styles.appButtonDisabled,
+                                    ]}
+                                    onPress={() => {
+                                        void handleClearStaleLiveSharing();
+                                    }}
+                                    disabled={clearingStaleLiveSharing}
+                                >
+                                    <Text
+                                        style={styles.liveShareClearButtonText}
+                                    >
+                                        {clearingStaleLiveSharing
+                                            ? "停止処理中..."
+                                            : "残留している現在地共有を停止"}
+                                    </Text>
+                                </Pressable>
+                            </View>
+                        )}
+
                     {selectedLiveShareUsers.length > 0 && (
                         <View style={styles.liveShareStatusActiveBox}>
                             <Text style={styles.liveShareStatusActiveText}>
@@ -2958,8 +3111,17 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 <Text
                                     style={styles.easUpdateBackgroundDebugText}
                                 >
-                                    残留state判定:{" "}
-                                    {easUpdateBackgroundDebug.staleStateDetected
+                                    Background task残留:{" "}
+                                    {easUpdateBackgroundDebug.staleBackgroundTaskStateDetected
+                                        ? "あり"
+                                        : "なし"}
+                                </Text>
+
+                                <Text
+                                    style={styles.easUpdateBackgroundDebugText}
+                                >
+                                    現在地共有state残留:{" "}
+                                    {easUpdateBackgroundDebug.staleLiveSharingStateDetected
                                         ? "あり"
                                         : "なし"}
                                 </Text>
@@ -4386,5 +4548,21 @@ const styles = StyleSheet.create({
         fontSize: 17,
         fontWeight: "bold",
         color: "#333",
+    },
+
+    staleLiveSharingBox: {
+        marginTop: 10,
+        padding: 10,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: "#d7a84a",
+        backgroundColor: "#fff8e8",
+    },
+
+    staleLiveSharingText: {
+        color: "#6b5520",
+        fontSize: 12,
+        lineHeight: 18,
+        marginBottom: 8,
     },
 });

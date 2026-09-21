@@ -786,19 +786,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
                 console.error("listMyShareCandidates errors:", result.errors);
 
                 /*
-                 * 取得失敗時に古い共有先をそのまま使わない。
-                 * プライバシー優先で共有先を空にする。
+                 * 共有候補一覧の取得に失敗しても、
+                 * 現在の共有状態やModal内の選択状態は変更しない。
                  */
                 setLiveShareUsers([]);
-                /*
-                 * 共有候補の取得失敗だけを理由に、
-                 * 現在の共有状態を変更しない。
-                 *
-                 * Background側では共有が継続している可能性があるため、
-                 * selectedLiveShareUsersを勝手に空にすると
-                 * UIとBackground stateが不整合になる。
-                 */
-                setDraftLiveShareUsers(selectedLiveShareUsers);
 
                 Alert.alert(
                     "取得エラー",
@@ -877,7 +868,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
              * エラー時はfail closedとする。
              */
             setLiveShareUsers([]);
-            setDraftLiveShareUsers([]);
 
             Alert.alert(
                 "取得エラー",
@@ -1547,12 +1537,10 @@ export default function LocationHomeScreen({ navigation }: Props) {
             void loadLoginUserName();
             void loadLiveShareUsers();
             void loadCurrentMonthActivityUsage();
-            void refreshStaleLiveSharingState();
         }, [
             loadLoginUserName,
             loadLiveShareUsers,
             loadCurrentMonthActivityUsage,
-            refreshStaleLiveSharingState,
         ]),
     );
 

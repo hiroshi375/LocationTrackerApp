@@ -1,4 +1,5 @@
 import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
+import { deviceSessionApi } from "../functions/device-session-api/resource";
 import { shareGroupApi } from "../functions/share-group-api/resource";
 /*== STEP 1 ===============================================================
 The section below creates a Todo database table with a "content" field. Try
@@ -89,6 +90,31 @@ const schema = a
                 allow.owner(),
                 allow.ownersDefinedIn("sharedOwners").to(["read"]),
             ]),
+        UserDeviceSession: a
+            .model({
+                /*
+                 * Cognito user sub。
+                 * 1ユーザーにつき1レコード。
+                 */
+                userId: a.string().required(),
+
+                /*
+                 * 現在ログインを許可している端末ID。
+                 */
+                activeDeviceId: a.string().required(),
+
+                /*
+                 * この端末を有効化した日時。
+                 */
+                lastLoginAt: a.datetime().required(),
+
+                /*
+                 * 最後に有効端末チェックを行った日時。
+                 */
+                lastCheckedAt: a.datetime(),
+            })
+            .identifier(["userId"])
+            .authorization((allow) => [allow.ownerDefinedIn("userId")]),
         UserProfile: a
             .model({
                 userId: a.string().required(),
@@ -307,6 +333,11 @@ const schema = a
              */
             inviteCode: a.string(),
         }),
+        DeviceSessionResult: a.customType({
+            success: a.boolean().required(),
+            isActive: a.boolean().required(),
+            message: a.string().required(),
+        }),
         ShareCandidate: a.customType({
             userId: a.string().required(),
             ownerValue: a.string().required(),
@@ -367,6 +398,32 @@ const schema = a
             .returns(a.ref("ShareGroupSummary").array())
             .authorization((allow) => [allow.authenticated()])
             .handler(a.handler.function(shareGroupApi)),
+        activateMyDeviceSession: a
+            .mutation()
+            .arguments({
+                deviceId: a.string().required(),
+            })
+            .returns(a.ref("DeviceSessionResult"))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(deviceSessionApi)),
+
+        checkMyDeviceSession: a
+            .query()
+            .arguments({
+                deviceId: a.string().required(),
+            })
+            .returns(a.ref("DeviceSessionResult"))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(deviceSessionApi)),
+
+        releaseMyDeviceSession: a
+            .mutation()
+            .arguments({
+                deviceId: a.string().required(),
+            })
+            .returns(a.ref("DeviceSessionResult"))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(deviceSessionApi)),
         BackgroundLocationDebugLog: a
             .model({
                 userId: a.string().required(),
@@ -405,7 +462,10 @@ const schema = a
             })
             .authorization((allow) => [allow.owner()]),
     })
-    .authorization((allow) => [allow.resource(shareGroupApi)]);
+    .authorization((allow) => [
+        allow.resource(shareGroupApi),
+        allow.resource(deviceSessionApi),
+    ]);
 
 export type Schema = ClientSchema<typeof schema>;
 

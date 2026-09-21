@@ -833,6 +833,14 @@ export default function LocationMapScreen({ route }: Props) {
         void saveMapLayerMode();
     }, [hasLoadedMapLayerMode, mapLayerMode]);
 
+    // ドット絵風ではMapViewを表示しないため、
+    // 以前の地図上の現在地表示位置をクリアする
+    useEffect(() => {
+        if (mapLayerMode === "pixel") {
+            setCurrentLocationScreenPoint(null);
+        }
+    }, [mapLayerMode]);
+
     useEffect(() => {
         if (!isOwnLiveRecordingMap) {
             return;
@@ -1617,274 +1625,298 @@ export default function LocationMapScreen({ route }: Props) {
                 translucent={false}
             />
 
-            <MapView
-                ref={mapRef}
-                provider={PROVIDER_GOOGLE}
-                style={styles.map}
-                mapType={selectedMapType}
-                customMapStyle={selectedCustomMapStyle}
-                onMapReady={() => setMapReady(true)}
-                onRegionChangeComplete={() => {
-                    void updateCurrentLocationScreenPoint();
-                }}
-                initialRegion={{
-                    latitude: adjustedInitialCenter.latitude,
-                    longitude: adjustedInitialCenter.longitude,
-                    latitudeDelta: DEFAULT_LATITUDE_DELTA,
-                    longitudeDelta: DEFAULT_LONGITUDE_DELTA,
-                }}
-            >
-                {isPixelMapLayer && mapTilerPixelTileUrl && (
-                    <UrlTile
-                        urlTemplate={mapTilerPixelTileUrl}
-                        maximumZ={20}
-                        flipY={false}
-                        zIndex={-1}
-                    />
-                )}
+            {isPixelMapLayer ? (
+                <View style={styles.pixelMapUnderConstruction}>
+                    <Text style={styles.pixelMapUnderConstructionIcon}>🚧</Text>
 
-                {!isSharedCurrentLocationOnlyMap &&
-                    routeCoordinates.length >= 2 && (
-                        <Polyline
-                            coordinates={routeCoordinates}
-                            strokeColor="rgba(22, 91, 112, 0.85)"
-                            strokeWidth={6}
-                        />
-                    )}
+                    <Text style={styles.pixelMapUnderConstructionTitle}>
+                        ドット絵風マップは工事中です
+                    </Text>
 
-                {!isSharedCurrentLocationOnlyMap &&
-                    currentLocationLineCoordinates.length === 2 && (
-                        <Polyline
-                            coordinates={currentLocationLineCoordinates}
-                            strokeColor="rgba(22, 91, 112, 0.85)"
-                            strokeWidth={6}
-                            lineDashPattern={[8, 6]}
-                        />
-                    )}
+                    <Text style={styles.pixelMapUnderConstructionText}>
+                        現在準備中です。
+                        {"\n"}
+                        今後のアップデートで提供予定です。
+                    </Text>
+                </View>
+            ) : (
+                <MapView
+                    ref={mapRef}
+                    provider={PROVIDER_GOOGLE}
+                    style={styles.map}
+                    mapType={selectedMapType}
+                    customMapStyle={selectedCustomMapStyle}
+                    onMapReady={() => setMapReady(true)}
+                    onRegionChangeComplete={() => {
+                        void updateCurrentLocationScreenPoint();
+                    }}
+                    initialRegion={{
+                        latitude: adjustedInitialCenter.latitude,
+                        longitude: adjustedInitialCenter.longitude,
+                        latitudeDelta: DEFAULT_LATITUDE_DELTA,
+                        longitudeDelta: DEFAULT_LONGITUDE_DELTA,
+                    }}
+                >
+                    {!isSharedCurrentLocationOnlyMap &&
+                        routeCoordinates.length >= 2 && (
+                            <Polyline
+                                coordinates={routeCoordinates}
+                                strokeColor="rgba(22, 91, 112, 0.85)"
+                                strokeWidth={6}
+                            />
+                        )}
 
-                {!isSharedCurrentLocationOnlyMap &&
-                    showPoints &&
-                    routeLogs.map((log) => {
-                        const isSelected = selectedLocation?.id === log.id;
-                        const isStartOrEnd =
-                            log.id === startLog?.id || log.id === endLog?.id;
+                    {!isSharedCurrentLocationOnlyMap &&
+                        currentLocationLineCoordinates.length === 2 && (
+                            <Polyline
+                                coordinates={currentLocationLineCoordinates}
+                                strokeColor="rgba(22, 91, 112, 0.85)"
+                                strokeWidth={6}
+                                lineDashPattern={[8, 6]}
+                            />
+                        )}
 
-                        if (isStartOrEnd) {
-                            return null;
-                        }
+                    {!isSharedCurrentLocationOnlyMap &&
+                        showPoints &&
+                        routeLogs.map((log) => {
+                            const isSelected = selectedLocation?.id === log.id;
+                            const isStartOrEnd =
+                                log.id === startLog?.id ||
+                                log.id === endLog?.id;
 
-                        return (
-                            <Marker
-                                key={log.id}
-                                coordinate={{
-                                    latitude: log.latitude,
-                                    longitude: log.longitude,
-                                }}
-                                title={isSelected ? "記録サマリー" : "記録地点"}
-                                description={buildMarkerDescription(log)}
-                                anchor={{ x: 0.5, y: 0.5 }}
-                                centerOffset={{ x: 0, y: 0 }}
-                                zIndex={10}
-                            >
-                                <View
-                                    collapsable={false}
-                                    style={styles.pointMarkerContainer}
+                            if (isStartOrEnd) {
+                                return null;
+                            }
+
+                            return (
+                                <Marker
+                                    key={log.id}
+                                    coordinate={{
+                                        latitude: log.latitude,
+                                        longitude: log.longitude,
+                                    }}
+                                    title={
+                                        isSelected ? "記録サマリー" : "記録地点"
+                                    }
+                                    description={buildMarkerDescription(log)}
+                                    anchor={{ x: 0.5, y: 0.5 }}
+                                    centerOffset={{ x: 0, y: 0 }}
+                                    zIndex={10}
                                 >
                                     <View
                                         collapsable={false}
-                                        style={[
-                                            styles.logPointMarker,
+                                        style={styles.pointMarkerContainer}
+                                    >
+                                        <View
+                                            collapsable={false}
+                                            style={[
+                                                styles.logPointMarker,
 
-                                            log.source === "background"
-                                                ? styles.backgroundLogPointMarker
-                                                : styles.foregroundLogPointMarker,
+                                                log.source === "background"
+                                                    ? styles.backgroundLogPointMarker
+                                                    : styles.foregroundLogPointMarker,
 
-                                            isSelected &&
-                                                styles.selectedPointMarker,
-                                        ]}
-                                    />
-                                </View>
-                            </Marker>
-                        );
-                    })}
+                                                isSelected &&
+                                                    styles.selectedPointMarker,
+                                            ]}
+                                        />
+                                    </View>
+                                </Marker>
+                            );
+                        })}
 
-                {!isSharedCurrentLocationOnlyMap && startLog && (
-                    <Marker
-                        coordinate={{
-                            latitude: startLog.latitude,
-                            longitude: startLog.longitude,
-                        }}
-                        title="開始位置"
-                        description={buildMarkerDescription(startLog)}
-                        anchor={{ x: 0.5, y: 0.5 }}
-                        centerOffset={{ x: 0, y: 0 }}
-                        zIndex={100}
-                    >
-                        <View
-                            collapsable={false}
-                            style={styles.endpointMarkerContainer}
-                        >
-                            <View
-                                collapsable={false}
-                                style={styles.startPointMarker}
-                            >
-                                <Text style={styles.endpointMarkerText}>S</Text>
-                            </View>
-                        </View>
-                    </Marker>
-                )}
-
-                {!isSharedCurrentLocationOnlyMap && endLog && (
-                    <Marker
-                        coordinate={{
-                            latitude: endLog.latitude,
-                            longitude: endLog.longitude,
-                        }}
-                        title="終了位置"
-                        description={buildMarkerDescription(endLog)}
-                        anchor={{ x: 0.5, y: 0.5 }}
-                        centerOffset={{ x: 0, y: 0 }}
-                        zIndex={100}
-                    >
-                        <View
-                            collapsable={false}
-                            style={styles.endpointMarkerContainer}
-                        >
-                            <View
-                                collapsable={false}
-                                style={styles.endPointMarker}
-                            >
-                                <Text style={styles.endpointMarkerText}>G</Text>
-                            </View>
-                        </View>
-                    </Marker>
-                )}
-
-                {!isSharedCurrentLocationOnlyMap &&
-                    showPoints &&
-                    selectedLocation &&
-                    !routeLogs.some(
-                        (log) => log.id === selectedLocation.id,
-                    ) && (
+                    {!isSharedCurrentLocationOnlyMap && startLog && (
                         <Marker
                             coordinate={{
-                                latitude: selectedLocation.latitude,
-                                longitude: selectedLocation.longitude,
+                                latitude: startLog.latitude,
+                                longitude: startLog.longitude,
                             }}
-                            title="記録サマリー"
-                            description={buildMarkerDescription(
-                                selectedLocation,
-                            )}
+                            title="開始位置"
+                            description={buildMarkerDescription(startLog)}
                             anchor={{ x: 0.5, y: 0.5 }}
-                            tracksViewChanges={false}
-                        >
-                            <View
-                                style={[
-                                    styles.logPointMarker,
-
-                                    selectedLocation.source === "background"
-                                        ? styles.backgroundLogPointMarker
-                                        : styles.foregroundLogPointMarker,
-
-                                    styles.selectedPointMarker,
-                                ]}
-                            />
-                        </Marker>
-                    )}
-                {isActivityHistoryMap && selectedEditableLog && (
-                    <Marker
-                        coordinate={{
-                            latitude: selectedEditableLog.latitude,
-                            longitude: selectedEditableLog.longitude,
-                        }}
-                        title="選択中の記録地点"
-                        description={buildMarkerDescription(
-                            selectedEditableLog,
-                        )}
-                        anchor={{ x: 0.5, y: 0.5 }}
-                        centerOffset={{ x: 0, y: 0 }}
-                        zIndex={300}
-                        tracksViewChanges
-                    >
-                        <View
-                            collapsable={false}
-                            style={styles.selectedLocationMarkerContainer}
+                            centerOffset={{ x: 0, y: 0 }}
+                            zIndex={100}
                         >
                             <View
                                 collapsable={false}
-                                style={styles.selectedLocationMarker}
+                                style={styles.endpointMarkerContainer}
                             >
                                 <View
-                                    style={styles.selectedLocationMarkerCenter}
-                                />
+                                    collapsable={false}
+                                    style={styles.startPointMarker}
+                                >
+                                    <Text style={styles.endpointMarkerText}>
+                                        S
+                                    </Text>
+                                </View>
                             </View>
-                        </View>
-                    </Marker>
-                )}
-            </MapView>
-
-            {shouldShowLiveCurrentLocation && currentLocationScreenPoint && (
-                <Animated.View
-                    pointerEvents="none"
-                    style={[
-                        styles.currentUserOverlayMarker,
-                        {
-                            left: currentLocationScreenPoint.x - 35,
-                            top: currentLocationScreenPoint.y - 35,
-                            opacity: currentLocationOpacity,
-                        },
-                    ]}
-                >
-                    {currentUserIconUrl ? (
-                        <Image
-                            source={{ uri: currentUserIconUrl }}
-                            style={styles.currentUserOverlayMarkerImage}
-                            resizeMode="cover"
-                            fadeDuration={0}
-                        />
-                    ) : (
-                        <View style={styles.currentUserOverlayMarkerFallback}>
-                            <Text
-                                style={
-                                    styles.currentUserOverlayMarkerFallbackText
-                                }
-                            >
-                                自
-                            </Text>
-                        </View>
+                        </Marker>
                     )}
-                </Animated.View>
+
+                    {!isSharedCurrentLocationOnlyMap && endLog && (
+                        <Marker
+                            coordinate={{
+                                latitude: endLog.latitude,
+                                longitude: endLog.longitude,
+                            }}
+                            title="終了位置"
+                            description={buildMarkerDescription(endLog)}
+                            anchor={{ x: 0.5, y: 0.5 }}
+                            centerOffset={{ x: 0, y: 0 }}
+                            zIndex={100}
+                        >
+                            <View
+                                collapsable={false}
+                                style={styles.endpointMarkerContainer}
+                            >
+                                <View
+                                    collapsable={false}
+                                    style={styles.endPointMarker}
+                                >
+                                    <Text style={styles.endpointMarkerText}>
+                                        G
+                                    </Text>
+                                </View>
+                            </View>
+                        </Marker>
+                    )}
+
+                    {!isSharedCurrentLocationOnlyMap &&
+                        showPoints &&
+                        selectedLocation &&
+                        !routeLogs.some(
+                            (log) => log.id === selectedLocation.id,
+                        ) && (
+                            <Marker
+                                coordinate={{
+                                    latitude: selectedLocation.latitude,
+                                    longitude: selectedLocation.longitude,
+                                }}
+                                title="記録サマリー"
+                                description={buildMarkerDescription(
+                                    selectedLocation,
+                                )}
+                                anchor={{ x: 0.5, y: 0.5 }}
+                                tracksViewChanges={false}
+                            >
+                                <View
+                                    style={[
+                                        styles.logPointMarker,
+
+                                        selectedLocation.source === "background"
+                                            ? styles.backgroundLogPointMarker
+                                            : styles.foregroundLogPointMarker,
+
+                                        styles.selectedPointMarker,
+                                    ]}
+                                />
+                            </Marker>
+                        )}
+                    {isActivityHistoryMap && selectedEditableLog && (
+                        <Marker
+                            coordinate={{
+                                latitude: selectedEditableLog.latitude,
+                                longitude: selectedEditableLog.longitude,
+                            }}
+                            title="選択中の記録地点"
+                            description={buildMarkerDescription(
+                                selectedEditableLog,
+                            )}
+                            anchor={{ x: 0.5, y: 0.5 }}
+                            centerOffset={{ x: 0, y: 0 }}
+                            zIndex={300}
+                            tracksViewChanges
+                        >
+                            <View
+                                collapsable={false}
+                                style={styles.selectedLocationMarkerContainer}
+                            >
+                                <View
+                                    collapsable={false}
+                                    style={styles.selectedLocationMarker}
+                                >
+                                    <View
+                                        style={
+                                            styles.selectedLocationMarkerCenter
+                                        }
+                                    />
+                                </View>
+                            </View>
+                        </Marker>
+                    )}
+                </MapView>
             )}
 
-            {shouldShowLiveCurrentLocation && currentLocationScreenPoint && (
-                <View
-                    pointerEvents="none"
-                    style={[
-                        styles.currentAddressBubble,
-                        {
-                            left: Math.max(
-                                currentLocationScreenPoint.x - 120,
-                                16,
-                            ),
-                            top: Math.max(
-                                currentLocationScreenPoint.y - 105,
-                                16,
-                            ),
-                        },
-                    ]}
-                >
-                    <Text style={styles.currentAddressBubbleTitle}>現在地</Text>
-                    <Text
-                        style={styles.currentAddressBubbleText}
-                        numberOfLines={2}
+            {!isPixelMapLayer &&
+                shouldShowLiveCurrentLocation &&
+                currentLocationScreenPoint && (
+                    <Animated.View
+                        pointerEvents="none"
+                        style={[
+                            styles.currentUserOverlayMarker,
+                            {
+                                left: currentLocationScreenPoint.x - 35,
+                                top: currentLocationScreenPoint.y - 35,
+                                opacity: currentLocationOpacity,
+                            },
+                        ]}
                     >
-                        {addressLoading
-                            ? "住所を取得中..."
-                            : currentAddress || "住所未取得"}
-                    </Text>
-                    <View style={styles.currentAddressBubbleArrow} />
-                </View>
-            )}
+                        {currentUserIconUrl ? (
+                            <Image
+                                source={{ uri: currentUserIconUrl }}
+                                style={styles.currentUserOverlayMarkerImage}
+                                resizeMode="cover"
+                                fadeDuration={0}
+                            />
+                        ) : (
+                            <View
+                                style={styles.currentUserOverlayMarkerFallback}
+                            >
+                                <Text
+                                    style={
+                                        styles.currentUserOverlayMarkerFallbackText
+                                    }
+                                >
+                                    自
+                                </Text>
+                            </View>
+                        )}
+                    </Animated.View>
+                )}
+
+            {!isPixelMapLayer &&
+                shouldShowLiveCurrentLocation &&
+                currentLocationScreenPoint && (
+                    <View
+                        pointerEvents="none"
+                        style={[
+                            styles.currentAddressBubble,
+                            {
+                                left: Math.max(
+                                    currentLocationScreenPoint.x - 120,
+                                    16,
+                                ),
+                                top: Math.max(
+                                    currentLocationScreenPoint.y - 105,
+                                    16,
+                                ),
+                            },
+                        ]}
+                    >
+                        <Text style={styles.currentAddressBubbleTitle}>
+                            現在地
+                        </Text>
+                        <Text
+                            style={styles.currentAddressBubbleText}
+                            numberOfLines={2}
+                        >
+                            {addressLoading
+                                ? "住所を取得中..."
+                                : currentAddress || "住所未取得"}
+                        </Text>
+                        <View style={styles.currentAddressBubbleArrow} />
+                    </View>
+                )}
 
             {!showLocationLogList && (
                 <View style={styles.infoBox}>
@@ -3268,5 +3300,33 @@ const styles = StyleSheet.create({
 
     locationLogFlatList: {
         flex: 1,
+    },
+
+    pixelMapUnderConstruction: {
+        flex: 1,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 32,
+        backgroundColor: "#f5f5f5",
+    },
+
+    pixelMapUnderConstructionIcon: {
+        fontSize: 56,
+        marginBottom: 16,
+    },
+
+    pixelMapUnderConstructionTitle: {
+        fontSize: 20,
+        fontWeight: "bold",
+        color: "#333",
+        textAlign: "center",
+    },
+
+    pixelMapUnderConstructionText: {
+        marginTop: 10,
+        fontSize: 14,
+        lineHeight: 22,
+        color: "#666",
+        textAlign: "center",
     },
 });

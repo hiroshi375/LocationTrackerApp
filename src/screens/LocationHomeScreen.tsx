@@ -4323,6 +4323,7 @@ const styles = StyleSheet.create({
 
     autoRecordMapButtonSpace: {
         marginTop: 10,
+        marginBottom: 24,
     },
 
     stoppingRecordingBox: {

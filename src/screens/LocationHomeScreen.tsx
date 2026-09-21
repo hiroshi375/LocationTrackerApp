@@ -2730,8 +2730,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         >
                             <Text style={styles.easUpdateButtonText}>
                                 {checkingEasUpdateInfo
-                                    ? "EAS Update確認中..."
-                                    : "EAS Update情報を確認"}
+                                    ? "Update確認中..."
+                                    : "Update情報を確認"}
                             </Text>
                         </Pressable>
 
@@ -2751,8 +2751,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         >
                             <Text style={styles.easUpdateButtonText}>
                                 {forcingEasUpdate
-                                    ? "最新EAS Updateを確認中..."
-                                    : "最新EAS Updateを適用【20260906】"}
+                                    ? "最新Updateを確認中..."
+                                    : "最新Updateを適用"}
                             </Text>
                         </Pressable>
 

@@ -127,6 +127,17 @@ type EasUpdateInfo = {
     isEnabled: boolean;
 };
 
+type EasUpdateBackgroundDebug = {
+    checkedAt: string;
+    phase: string;
+    hasStarted: boolean;
+    isRecording: boolean | null;
+    recordingSessionId: string | null;
+    liveLocationId: string | null;
+    liveShareOwnerValues: string[];
+    staleStateDetected: boolean;
+};
+
 type ShareCandidateItem = {
     userId: string;
     ownerValue: string;
@@ -234,9 +245,96 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
             const initialBackgroundState = initialBackgroundStatus.state;
 
+            const initialIsRecording =
+                initialBackgroundState?.isRecording ?? null;
+
+            const initialLiveShareOwnerValues =
+                initialBackgroundState?.liveShareOwnerValues ?? [];
+
+            const hasStoredBackgroundUsage =
+                initialIsRecording === true ||
+                initialLiveShareOwnerValues.length > 0;
+
+            const staleStateDetected =
+                hasStoredBackgroundUsage &&
+                initialBackgroundStatus.hasStarted === false;
+
+            /*
+             * まず取得した状態を画面へ表示する。
+             */
+            setEasUpdateBackgroundDebug({
+                checkedAt: new Date().toISOString(),
+                phase: "Update確認前",
+                hasStarted: initialBackgroundStatus.hasStarted,
+                isRecording: initialIsRecording,
+                recordingSessionId:
+                    initialBackgroundState?.recordingSessionId ?? null,
+                liveLocationId: initialBackgroundState?.liveLocationId ?? null,
+                liveShareOwnerValues: initialLiveShareOwnerValues,
+                staleStateDetected,
+            });
+
+            /*
+             * NativeのBackground Location taskは停止済みなのに、
+             * 保存済みstateだけ「記録中 / 共有中」の場合は
+             * 残留stateとして完全停止処理を行う。
+             */
+            if (staleStateDetected) {
+                await stopBackgroundLocationRecording({
+                    continueLiveSharing: false,
+                });
+
+                /*
+                 * クリア後の状態を再取得する。
+                 */
+                const clearedBackgroundStatus =
+                    await getBackgroundRecordingStatus();
+
+                const clearedBackgroundState = clearedBackgroundStatus.state;
+
+                setEasUpdateBackgroundDebug({
+                    checkedAt: new Date().toISOString(),
+                    phase: "残留stateクリア後",
+                    hasStarted: clearedBackgroundStatus.hasStarted,
+                    isRecording: clearedBackgroundState?.isRecording ?? null,
+                    recordingSessionId:
+                        clearedBackgroundState?.recordingSessionId ?? null,
+                    liveLocationId:
+                        clearedBackgroundState?.liveLocationId ?? null,
+                    liveShareOwnerValues:
+                        clearedBackgroundState?.liveShareOwnerValues ?? [],
+                    staleStateDetected: false,
+                });
+            }
+
+            /*
+             * 残留stateクリア後の最新状態で
+             * Update可否を判定する。
+             */
+            const backgroundStatusAfterCleanup =
+                await getBackgroundRecordingStatus();
+
+            const backgroundStateAfterCleanup =
+                backgroundStatusAfterCleanup.state;
+
             const isBackgroundLocationAlreadyInUse =
-                initialBackgroundState?.isRecording === true ||
-                (initialBackgroundState?.liveShareOwnerValues?.length ?? 0) > 0;
+                backgroundStateAfterCleanup?.isRecording === true ||
+                (backgroundStateAfterCleanup?.liveShareOwnerValues?.length ??
+                    0) > 0;
+
+            setEasUpdateBackgroundDebug({
+                checkedAt: new Date().toISOString(),
+                phase: "Update可否判定",
+                hasStarted: backgroundStatusAfterCleanup.hasStarted,
+                isRecording: backgroundStateAfterCleanup?.isRecording ?? null,
+                recordingSessionId:
+                    backgroundStateAfterCleanup?.recordingSessionId ?? null,
+                liveLocationId:
+                    backgroundStateAfterCleanup?.liveLocationId ?? null,
+                liveShareOwnerValues:
+                    backgroundStateAfterCleanup?.liveShareOwnerValues ?? [],
+                staleStateDetected,
+            });
 
             if (isBackgroundLocationAlreadyInUse) {
                 Alert.alert(
@@ -285,6 +383,17 @@ export default function LocationHomeScreen({ navigation }: Props) {
              */
             const backgroundStatus = await getBackgroundRecordingStatus();
             const backgroundState = backgroundStatus.state;
+            setEasUpdateBackgroundDebug({
+                checkedAt: new Date().toISOString(),
+                phase: "Update取得後",
+                hasStarted: backgroundStatus.hasStarted,
+                isRecording: backgroundState?.isRecording ?? null,
+                recordingSessionId: backgroundState?.recordingSessionId ?? null,
+                liveLocationId: backgroundState?.liveLocationId ?? null,
+                liveShareOwnerValues:
+                    backgroundState?.liveShareOwnerValues ?? [],
+                staleStateDetected: false,
+            });
 
             const isBackgroundLocationInUse =
                 backgroundState?.isRecording === true ||
@@ -322,6 +431,26 @@ export default function LocationHomeScreen({ navigation }: Props) {
 
                                     const latestBackgroundState =
                                         latestBackgroundStatus.state;
+
+                                    setEasUpdateBackgroundDebug({
+                                        checkedAt: new Date().toISOString(),
+                                        phase: "reload直前",
+                                        hasStarted:
+                                            latestBackgroundStatus.hasStarted,
+                                        isRecording:
+                                            latestBackgroundState?.isRecording ??
+                                            null,
+                                        recordingSessionId:
+                                            latestBackgroundState?.recordingSessionId ??
+                                            null,
+                                        liveLocationId:
+                                            latestBackgroundState?.liveLocationId ??
+                                            null,
+                                        liveShareOwnerValues:
+                                            latestBackgroundState?.liveShareOwnerValues ??
+                                            [],
+                                        staleStateDetected: false,
+                                    });
 
                                     const isLatestBackgroundLocationInUse =
                                         latestBackgroundState?.isRecording ===
@@ -581,6 +710,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [easUpdateInfo, setEasUpdateInfo] = useState<EasUpdateInfo | null>(
         null,
     );
+    const [easUpdateBackgroundDebug, setEasUpdateBackgroundDebug] =
+        useState<EasUpdateBackgroundDebug | null>(null);
     const continuationAlertKeyRef = useRef<string | null>(null);
     const handledAutoStoppedSessionIdRef = useRef<string | null>(null);
     const handledPlanLimitAutoStopKeyRef = useRef<string | null>(null);
@@ -2756,6 +2887,96 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             </Text>
                         </Pressable>
 
+                        {easUpdateBackgroundDebug && (
+                            <View
+                                style={styles.easUpdateBackgroundDebugContainer}
+                            >
+                                <Text
+                                    style={styles.easUpdateBackgroundDebugTitle}
+                                >
+                                    EAS Update Background state
+                                </Text>
+
+                                <Text
+                                    style={styles.easUpdateBackgroundDebugText}
+                                >
+                                    判定段階: {easUpdateBackgroundDebug.phase}
+                                </Text>
+
+                                <Text
+                                    style={styles.easUpdateBackgroundDebugText}
+                                >
+                                    hasStarted:{" "}
+                                    {String(
+                                        easUpdateBackgroundDebug.hasStarted,
+                                    )}
+                                </Text>
+
+                                <Text
+                                    style={styles.easUpdateBackgroundDebugText}
+                                >
+                                    isRecording:{" "}
+                                    {easUpdateBackgroundDebug.isRecording ===
+                                    null
+                                        ? "null"
+                                        : String(
+                                              easUpdateBackgroundDebug.isRecording,
+                                          )}
+                                </Text>
+
+                                <Text
+                                    style={styles.easUpdateBackgroundDebugText}
+                                    selectable
+                                >
+                                    recordingSessionId:{" "}
+                                    {easUpdateBackgroundDebug.recordingSessionId ??
+                                        "null"}
+                                </Text>
+
+                                <Text
+                                    style={styles.easUpdateBackgroundDebugText}
+                                    selectable
+                                >
+                                    liveLocationId:{" "}
+                                    {easUpdateBackgroundDebug.liveLocationId ??
+                                        "null"}
+                                </Text>
+
+                                <Text
+                                    style={styles.easUpdateBackgroundDebugText}
+                                    selectable
+                                >
+                                    liveShareOwnerValues:{" "}
+                                    {easUpdateBackgroundDebug
+                                        .liveShareOwnerValues.length > 0
+                                        ? JSON.stringify(
+                                              easUpdateBackgroundDebug.liveShareOwnerValues,
+                                          )
+                                        : "[]"}
+                                </Text>
+
+                                <Text
+                                    style={styles.easUpdateBackgroundDebugText}
+                                >
+                                    残留state判定:{" "}
+                                    {easUpdateBackgroundDebug.staleStateDetected
+                                        ? "あり"
+                                        : "なし"}
+                                </Text>
+
+                                <Text
+                                    style={
+                                        styles.easUpdateBackgroundDebugCheckedText
+                                    }
+                                >
+                                    確認時刻:{" "}
+                                    {formatEasUpdateDateTime(
+                                        easUpdateBackgroundDebug.checkedAt,
+                                    )}
+                                </Text>
+                            </View>
+                        )}
+
                         {easUpdateInfo && (
                             <View style={styles.easUpdateInfoContainer}>
                                 <Text style={styles.easUpdateInfoTitle}>
@@ -3898,6 +4119,35 @@ const styles = StyleSheet.create({
         color: "#fff",
         fontSize: 14,
         fontWeight: "bold",
+    },
+
+    easUpdateBackgroundDebugContainer: {
+        marginTop: 10,
+        padding: 10,
+        borderRadius: 8,
+        backgroundColor: "#fff8e8",
+        borderWidth: 1,
+        borderColor: "#e0c97f",
+    },
+
+    easUpdateBackgroundDebugTitle: {
+        color: "#705a20",
+        fontSize: 13,
+        fontWeight: "bold",
+        marginBottom: 4,
+    },
+
+    easUpdateBackgroundDebugText: {
+        marginTop: 4,
+        color: "#444",
+        fontSize: 12,
+        lineHeight: 18,
+    },
+
+    easUpdateBackgroundDebugCheckedText: {
+        marginTop: 8,
+        color: "#777",
+        fontSize: 11,
     },
 
     easUpdateInfoContainer: {

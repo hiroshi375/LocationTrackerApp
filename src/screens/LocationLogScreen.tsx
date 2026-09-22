@@ -1649,11 +1649,10 @@ export default function LocationLogScreen({ navigation, route }: Props) {
     useFocusEffect(
         useCallback(() => {
             /*
-             * 共有履歴表示中は共有されたRecordingSessionを再取得する。
+             * 共有履歴表示中は、従来どおり共有履歴を再取得する。
              */
             if (historyViewMode === "shared") {
                 returnAnchorSessionRef.current = null;
-
                 shouldScrollToReturnAnchorRef.current = false;
 
                 void loadSharedRecordingSessions();
@@ -1666,48 +1665,97 @@ export default function LocationLogScreen({ navigation, route }: Props) {
 
             /*
              * 一度だけ使用する。
-             * 次に通常focusしたときまで残さない。
              */
             returnAnchorSessionRef.current = null;
 
-            setRecordingSessionNextToken(null);
-
+            /*
+             * 地図から戻った場合。
+             *
+             * LocationLogScreen自体はNavigation Stack上に残っているため、
+             * 地図を開く前のrecordingSessionsとスクロール位置は保持されている。
+             *
+             * そのため、
+             *
+             *   ・RecordingSession 15件の再取得
+             *   ・各sessionのLocationLogポイント数再取得
+             *   ・総件数の再取得
+             *   ・UserProfileの再取得
+             *
+             * は行わない。
+             *
+             * 地図画面でポイントを削除した可能性だけを考慮し、
+             * 表示していたsession 1件のポイント数だけを更新する。
+             */
             if (returnAnchorSession) {
-                /*
-                 * データ取得完了後に、
-                 * 参照していたアクティビティ（先頭）まで戻す。
-                 */
-                shouldScrollToReturnAnchorRef.current = true;
-                /*
-                 * 地図から戻った場合。
-                 *
-                 * 選択sessionを先頭に置き、
-                 * それより古い14件をGSIで取得する。
-                 */
-                setRecordingSessionBeforeEndAt(returnAnchorSession.endAt);
-
-                void loadRecordingSessions({
-                    reset: true,
-                    nextToken: null,
-                    beforeEndAt: returnAnchorSession.endAt,
-                    prependSession: returnAnchorSession,
-                });
-            } else {
                 shouldScrollToReturnAnchorRef.current = false;
-                /*
-                 * 通常の画面表示。
-                 *
-                 * 最新15件を表示する。
-                 */
-                setRecordingSessionBeforeEndAt(null);
 
-                void loadRecordingSessions({
-                    reset: true,
-                    nextToken: null,
-                    beforeEndAt: null,
-                    prependSession: null,
-                });
+                void (async () => {
+                    try {
+                        const pointCounts = await loadSessionPointCounts(
+                            returnAnchorSession.recordingSessionId,
+                        );
+
+                        setRecordingSessions((currentSessions) =>
+                            currentSessions.map((session) => {
+                                if (session.id !== returnAnchorSession.id) {
+                                    return session;
+                                }
+
+                                return {
+                                    ...session,
+                                    pointCount: pointCounts.pointCount,
+                                    foregroundPointCount:
+                                        pointCounts.foregroundPointCount,
+                                    backgroundPointCount:
+                                        pointCounts.backgroundPointCount,
+                                };
+                            }),
+                        );
+
+                        console.log(
+                            "[LocationLogScreen] Refreshed return session only:",
+                            {
+                                recordingSessionId:
+                                    returnAnchorSession.recordingSessionId,
+                                oldPointCount: returnAnchorSession.pointCount,
+                                newPointCount: pointCounts.pointCount,
+                                foregroundPointCount:
+                                    pointCounts.foregroundPointCount,
+                                backgroundPointCount:
+                                    pointCounts.backgroundPointCount,
+                            },
+                        );
+                    } catch (error) {
+                        /*
+                         * 地図から戻る操作自体は成功させる。
+                         * ポイント数更新失敗だけで一覧画面をエラーにしない。
+                         */
+                        console.error(
+                            "[LocationLogScreen] Return session point count refresh error:",
+                            error,
+                        );
+                    }
+                })();
+
+                return;
             }
+
+            /*
+             * 地図から戻った場合ではない通常focus。
+             *
+             * 初回表示などでは従来どおり最新15件を取得する。
+             */
+            shouldScrollToReturnAnchorRef.current = false;
+
+            setRecordingSessionNextToken(null);
+            setRecordingSessionBeforeEndAt(null);
+
+            void loadRecordingSessions({
+                reset: true,
+                nextToken: null,
+                beforeEndAt: null,
+                prependSession: null,
+            });
 
             void loadRecordingSessionTotalCount();
             void loadUserProfiles();

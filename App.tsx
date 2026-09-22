@@ -73,6 +73,36 @@ const appTours: TourDefinition[] = [
             },
         ],
     },
+    {
+        id: "activity-history-tutorial",
+        showOnce: true,
+        steps: [
+            {
+                id: "activity-history-search",
+                title: "アクティビティ検索",
+                body: "アクティビティ名を入力すると、保存済みの履歴を絞り込んで検索できます。",
+                placement: "auto",
+            },
+            {
+                id: "activity-history-list",
+                title: "アクティビティ履歴",
+                body: "記録したアクティビティが新しい順に表示されます。期間、距離、記録ポイント数などを確認できます。",
+                placement: "auto",
+            },
+            {
+                id: "activity-history-card",
+                title: "アクティビティの詳細",
+                body: "アクティビティを選ぶと、記録条件や移動情報、アクティビティ区分などを確認できます。",
+                placement: "auto",
+            },
+            {
+                id: "activity-history-actions",
+                title: "アクティビティの操作",
+                body: "地図表示、タイトル変更、共有、削除などの操作を行えます。",
+                placement: "auto",
+            },
+        ],
+    },
 ];
 /*
  * Amplify Authenticatorを日本語表示にする。

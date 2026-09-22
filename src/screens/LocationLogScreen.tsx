@@ -1,5 +1,6 @@
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { useTour, useTourTarget } from "guideway";
 import { getCurrentUser } from "aws-amplify/auth";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -114,6 +115,15 @@ type HistoryViewMode = "mine" | "shared";
 const SESSION_PAGE_SIZE = 15;
 
 export default function LocationLogScreen({ navigation }: Props) {
+    const { start: startTour } = useTour();
+    const activityHistorySearchTourRef = useTourTarget(
+        "activity-history-search",
+    );
+    const activityHistoryListTourRef = useTourTarget("activity-history-list");
+    const activityHistoryCardTourRef = useTourTarget("activity-history-card");
+    const activityHistoryActionsTourRef = useTourTarget(
+        "activity-history-actions",
+    );
     const [loading, setLoading] = useState(false);
     const [historyViewMode, setHistoryViewMode] =
         useState<HistoryViewMode>("mine");
@@ -209,6 +219,12 @@ export default function LocationLogScreen({ navigation }: Props) {
      * 先頭へスクロールする必要があるかを保持する。
      */
     const shouldScrollToReturnAnchorRef = useRef(false);
+
+    /*
+     * アクティビティ履歴画面のGuidewayを
+     * 同じ画面表示中に複数回開始しないためのref。
+     */
+    const activityHistoryTourStartedRef = useRef(false);
 
     const loadRecordingSessions = useCallback(
         async ({
@@ -1695,6 +1711,62 @@ export default function LocationLogScreen({ navigation }: Props) {
         ]),
     );
 
+    /*
+     * アクティビティ履歴を初めて表示したときに、
+     * Guidewayによる画面紹介を開始する。
+     *
+     * カード詳細・操作ボタンもTour対象にしているため、
+     * 最初のアクティビティをあらかじめ展開してから開始する。
+     */
+    useEffect(() => {
+        if (activityHistoryTourStartedRef.current) {
+            return;
+        }
+
+        if (historyViewMode !== "mine") {
+            return;
+        }
+
+        if (loading) {
+            return;
+        }
+
+        if (recordingSessions.length === 0) {
+            return;
+        }
+
+        activityHistoryTourStartedRef.current = true;
+
+        const firstSession = recordingSessions[0];
+
+        /*
+         * 「操作ボタン」のTour targetを存在させるため、
+         * 先頭アクティビティを展開する。
+         */
+        setExpandedSessionIds((current) => {
+            if (current.has(firstSession.id)) {
+                return current;
+            }
+
+            const next = new Set(current);
+            next.add(firstSession.id);
+
+            return next;
+        });
+
+        /*
+         * 展開後のViewが描画され、
+         * Guidewayが位置を測定できるまで少し待つ。
+         */
+        const timerId = setTimeout(() => {
+            startTour("activity-history-tutorial");
+        }, 500);
+
+        return () => {
+            clearTimeout(timerId);
+        };
+    }, [historyViewMode, loading, recordingSessions, startTour]);
+
     return (
         <View style={styles.container}>
             <View style={styles.historyTabContainer}>
@@ -1737,7 +1809,11 @@ export default function LocationLogScreen({ navigation }: Props) {
                 </Pressable>
             </View>
 
-            <View style={styles.searchBox}>
+            <View
+                ref={activityHistorySearchTourRef}
+                collapsable={false}
+                style={styles.searchBox}
+            >
                 <Text style={styles.searchLabel}>アクティビティ検索</Text>
 
                 <TextInput
@@ -1773,372 +1849,420 @@ export default function LocationLogScreen({ navigation }: Props) {
             ) ? (
                 <ActivityIndicator />
             ) : (
-                <FlatList
-                    ref={recordingSessionListRef}
-                    data={filteredItems}
-                    keyExtractor={(item) => item.id}
-                    refreshControl={
-                        <RefreshControl
-                            refreshing={
-                                historyViewMode === "mine"
-                                    ? loading
-                                    : loadingSharedSessions
-                            }
-                            onRefresh={handleRefresh}
-                        />
-                    }
-                    ListEmptyComponent={
-                        <Text style={styles.emptyText}>
-                            {searchText.trim().length > 0
-                                ? "検索条件に一致するアクティビティ履歴がありません。"
-                                : historyViewMode === "shared"
-                                  ? "共有されたアクティビティはありません。"
-                                  : "まだアクティビティ履歴がありません。"}
-                        </Text>
-                    }
-                    ListFooterComponent={
-                        hasMoreItems ? (
-                            <Pressable
-                                style={({ pressed }) => [
-                                    styles.loadMoreButton,
-                                    pressed &&
-                                        !loadingMore &&
-                                        styles.loadMoreButtonPressed,
-                                    loadingMore && styles.deleteButtonDisabled,
-                                ]}
-                                onPress={loadMoreItems}
-                                disabled={loadingMore}
-                            >
-                                <Text style={styles.loadMoreButtonText}>
-                                    {loadingMore
-                                        ? "読み込み中..."
-                                        : "もっと見る"}
-                                </Text>
-                                <Text style={styles.loadMoreSubText}>
-                                    次の{SESSION_PAGE_SIZE}件を取得
-                                </Text>
-                            </Pressable>
-                        ) : filteredItems.length > 0 ? (
-                            <Text style={styles.listEndText}>
-                                すべてのアクティビティ履歴を表示しました。
+                <View
+                    ref={activityHistoryListTourRef}
+                    collapsable={false}
+                    style={styles.historyListContainer}
+                >
+                    <FlatList
+                        ref={recordingSessionListRef}
+                        data={filteredItems}
+                        keyExtractor={(item) => item.id}
+                        refreshControl={
+                            <RefreshControl
+                                refreshing={
+                                    historyViewMode === "mine"
+                                        ? loading
+                                        : loadingSharedSessions
+                                }
+                                onRefresh={handleRefresh}
+                            />
+                        }
+                        ListEmptyComponent={
+                            <Text style={styles.emptyText}>
+                                {searchText.trim().length > 0
+                                    ? "検索条件に一致するアクティビティ履歴がありません。"
+                                    : historyViewMode === "shared"
+                                      ? "共有されたアクティビティはありません。"
+                                      : "まだアクティビティ履歴がありません。"}
                             </Text>
-                        ) : null
-                    }
-                    renderItem={({ item }) => {
-                        const isDeleting = deletingId === item.id;
-                        const isExpanded = expandedSessionIds.has(item.id);
-
-                        return (
-                            <Pressable
-                                style={({ pressed }) => [
-                                    styles.card,
-                                    pressed && styles.cardPressed,
-                                ]}
-                                onPress={() => toggleSessionExpanded(item.id)}
-                            >
-                                <View style={styles.cardContent}>
-                                    {/* タイトル */}
-                                    <View style={styles.cardTitleRow}>
-                                        <Text
-                                            style={styles.dateText}
-                                            numberOfLines={1}
-                                        >
-                                            {item.recordingSessionName}
-                                        </Text>
-
-                                        <Text style={styles.expandIcon}>
-                                            {isExpanded ? "▲" : "▼"}
-                                        </Text>
-                                    </View>
-
-                                    {/* 展開時のみユーザーを表示 */}
-                                    {(isExpanded ||
-                                        historyViewMode === "shared") && (
-                                        <Text style={styles.memoText}>
-                                            {historyViewMode === "shared"
-                                                ? "共有元"
-                                                : "ユーザー"}
-                                            : {getUserDisplayName(item.userId)}
-                                        </Text>
-                                    )}
-
-                                    {/* 期間：折りたたみ・展開の両方で表示 */}
-                                    <Text style={styles.memoText}>
-                                        期間:{" "}
-                                        {formatPeriod(item.startAt, item.endAt)}
+                        }
+                        ListFooterComponent={
+                            hasMoreItems ? (
+                                <Pressable
+                                    style={({ pressed }) => [
+                                        styles.loadMoreButton,
+                                        pressed &&
+                                            !loadingMore &&
+                                            styles.loadMoreButtonPressed,
+                                        loadingMore &&
+                                            styles.deleteButtonDisabled,
+                                    ]}
+                                    onPress={loadMoreItems}
+                                    disabled={loadingMore}
+                                >
+                                    <Text style={styles.loadMoreButtonText}>
+                                        {loadingMore
+                                            ? "読み込み中..."
+                                            : "もっと見る"}
                                     </Text>
-
-                                    {/* 距離・ポイント：折りたたみ・展開の両方で表示 */}
-                                    <Text style={styles.memoText}>
-                                        距離:{" "}
-                                        {formatDistance(item.distanceMeters)}{" "}
-                                        記録ポイント: {item.pointCount}件（F:
-                                        {item.foregroundPointCount}件、B:
-                                        {item.backgroundPointCount}件）
+                                    <Text style={styles.loadMoreSubText}>
+                                        次の{SESSION_PAGE_SIZE}件を取得
                                     </Text>
+                                </Pressable>
+                            ) : filteredItems.length > 0 ? (
+                                <Text style={styles.listEndText}>
+                                    すべてのアクティビティ履歴を表示しました。
+                                </Text>
+                            ) : null
+                        }
+                        renderItem={({ item, index }) => {
+                            const isDeleting = deletingId === item.id;
+                            const isExpanded = expandedSessionIds.has(item.id);
 
-                                    {/* 以下は展開時のみ表示 */}
-                                    {isExpanded && (
-                                        <>
-                                            <View
-                                                style={
-                                                    styles.recordingSettingsBox
-                                                }
+                            return (
+                                <Pressable
+                                    ref={
+                                        index === 0
+                                            ? activityHistoryCardTourRef
+                                            : undefined
+                                    }
+                                    collapsable={false}
+                                    style={({ pressed }) => [
+                                        styles.card,
+                                        pressed && styles.cardPressed,
+                                    ]}
+                                    onPress={() =>
+                                        toggleSessionExpanded(item.id)
+                                    }
+                                >
+                                    <View style={styles.cardContent}>
+                                        {/* タイトル */}
+                                        <View style={styles.cardTitleRow}>
+                                            <Text
+                                                style={styles.dateText}
+                                                numberOfLines={1}
                                             >
-                                                <Text
-                                                    style={
-                                                        styles.recordingSettingsText
-                                                    }
-                                                >
-                                                    記録頻度:{" "}
-                                                    {formatRecordingInterval(
-                                                        item.recordingIntervalMs,
-                                                    )}
-                                                </Text>
+                                                {item.recordingSessionName}
+                                            </Text>
 
-                                                <Text
-                                                    style={
-                                                        styles.recordingSettingsText
-                                                    }
-                                                >
-                                                    記録する移動距離:{" "}
-                                                    {formatRecordingDistance(
-                                                        item.recordingDistanceMeters,
-                                                    )}
-                                                </Text>
-                                            </View>
+                                            <Text style={styles.expandIcon}>
+                                                {isExpanded ? "▲" : "▼"}
+                                            </Text>
+                                        </View>
 
-                                            <View style={styles.activityBox}>
+                                        {/* 展開時のみユーザーを表示 */}
+                                        {(isExpanded ||
+                                            historyViewMode === "shared") && (
+                                            <Text style={styles.memoText}>
+                                                {historyViewMode === "shared"
+                                                    ? "共有元"
+                                                    : "ユーザー"}
+                                                :{" "}
+                                                {getUserDisplayName(
+                                                    item.userId,
+                                                )}
+                                            </Text>
+                                        )}
+
+                                        {/* 期間：折りたたみ・展開の両方で表示 */}
+                                        <Text style={styles.memoText}>
+                                            期間:{" "}
+                                            {formatPeriod(
+                                                item.startAt,
+                                                item.endAt,
+                                            )}
+                                        </Text>
+
+                                        {/* 距離・ポイント：折りたたみ・展開の両方で表示 */}
+                                        <Text style={styles.memoText}>
+                                            距離:{" "}
+                                            {formatDistance(
+                                                item.distanceMeters,
+                                            )}{" "}
+                                            記録ポイント: {item.pointCount}
+                                            件（F:
+                                            {item.foregroundPointCount}件、B:
+                                            {item.backgroundPointCount}件）
+                                        </Text>
+
+                                        {/* 以下は展開時のみ表示 */}
+                                        {isExpanded && (
+                                            <>
                                                 <View
                                                     style={
-                                                        styles.activityHeaderRow
+                                                        styles.recordingSettingsBox
                                                     }
                                                 >
                                                     <Text
                                                         style={
-                                                            styles.activityLabel
+                                                            styles.recordingSettingsText
                                                         }
                                                     >
-                                                        区分:{" "}
-                                                        {
-                                                            ACTIVITY_TYPE_LABELS[
-                                                                item
-                                                                    .activityType
-                                                            ]
-                                                        }
+                                                        記録頻度:{" "}
+                                                        {formatRecordingInterval(
+                                                            item.recordingIntervalMs,
+                                                        )}
                                                     </Text>
 
                                                     <Text
-                                                        style={[
-                                                            styles.aggregationBadge,
-                                                            item.isAggregationTarget
-                                                                ? styles.aggregationTargetBadge
-                                                                : styles.aggregationExcludedBadge,
-                                                        ]}
+                                                        style={
+                                                            styles.recordingSettingsText
+                                                        }
                                                     >
-                                                        {item.isAggregationTarget
-                                                            ? "集計対象"
-                                                            : "集計対象外"}
+                                                        記録する移動距離:{" "}
+                                                        {formatRecordingDistance(
+                                                            item.recordingDistanceMeters,
+                                                        )}
                                                     </Text>
                                                 </View>
 
-                                                {historyViewMode === "mine" && (
-                                                    <Text
+                                                <View
+                                                    style={styles.activityBox}
+                                                >
+                                                    <View
                                                         style={
-                                                            styles.activitySubText
-                                                        }
-                                                    >
-                                                        判定:{" "}
-                                                        {item.classificationSource ===
-                                                        "MANUAL"
-                                                            ? "手動"
-                                                            : "自動"}
-                                                        {typeof item.averageSpeedKmh ===
-                                                            "number" &&
-                                                            ` / 平均 ${item.averageSpeedKmh.toFixed(
-                                                                1,
-                                                            )}km/h`}
-                                                    </Text>
-                                                )}
-
-                                                {historyViewMode === "mine" && (
-                                                    <Pressable
-                                                        style={({
-                                                            pressed,
-                                                        }) => [
-                                                            styles.activityChangeButton,
-                                                            pressed &&
-                                                                styles.detailButtonPressed,
-                                                            updatingActivitySessionId ===
-                                                                item.id &&
-                                                                styles.deleteButtonDisabled,
-                                                        ]}
-                                                        onPress={(event) => {
-                                                            event.stopPropagation();
-
-                                                            handleChangeActivityType(
-                                                                item,
-                                                            );
-                                                        }}
-                                                        disabled={
-                                                            isDeleting ||
-                                                            updatingActivitySessionId ===
-                                                                item.id
+                                                            styles.activityHeaderRow
                                                         }
                                                     >
                                                         <Text
                                                             style={
-                                                                styles.activityChangeButtonText
+                                                                styles.activityLabel
                                                             }
                                                         >
-                                                            {updatingActivitySessionId ===
-                                                            item.id
-                                                                ? "区分を更新中..."
-                                                                : "区分を変更"}
+                                                            区分:{" "}
+                                                            {
+                                                                ACTIVITY_TYPE_LABELS[
+                                                                    item
+                                                                        .activityType
+                                                                ]
+                                                            }
                                                         </Text>
-                                                    </Pressable>
-                                                )}
-                                            </View>
 
-                                            {historyViewMode === "mine" &&
-                                                hasBatteryRange(
-                                                    item.startBatteryLevel,
-                                                    item.endBatteryLevel,
-                                                ) && (
-                                                    <Text
-                                                        style={
-                                                            styles.batteryText
-                                                        }
-                                                    >
-                                                        バッテリー消費:{" "}
-                                                        {formatBatteryPercent(
-                                                            item.startBatteryLevel,
-                                                        )}{" "}
-                                                        →{" "}
-                                                        {formatBatteryPercent(
-                                                            item.endBatteryLevel,
-                                                        )}
-                                                    </Text>
-                                                )}
-                                        </>
-                                    )}
-                                </View>
+                                                        <Text
+                                                            style={[
+                                                                styles.aggregationBadge,
+                                                                item.isAggregationTarget
+                                                                    ? styles.aggregationTargetBadge
+                                                                    : styles.aggregationExcludedBadge,
+                                                            ]}
+                                                        >
+                                                            {item.isAggregationTarget
+                                                                ? "集計対象"
+                                                                : "集計対象外"}
+                                                        </Text>
+                                                    </View>
 
-                                {/* 操作ボタンも展開時のみ表示 */}
-                                {isExpanded && (
-                                    <View style={styles.sessionActionRow}>
-                                        <Pressable
-                                            style={({ pressed }) => [
-                                                styles.sessionActionButton,
-                                                pressed &&
-                                                    styles.detailButtonPressed,
-                                            ]}
-                                            onPress={(event) => {
-                                                event.stopPropagation();
+                                                    {historyViewMode ===
+                                                        "mine" && (
+                                                        <Text
+                                                            style={
+                                                                styles.activitySubText
+                                                            }
+                                                        >
+                                                            判定:{" "}
+                                                            {item.classificationSource ===
+                                                            "MANUAL"
+                                                                ? "手動"
+                                                                : "自動"}
+                                                            {typeof item.averageSpeedKmh ===
+                                                                "number" &&
+                                                                ` / 平均 ${item.averageSpeedKmh.toFixed(
+                                                                    1,
+                                                                )}km/h`}
+                                                        </Text>
+                                                    )}
 
-                                                handleOpenSessionMap(item);
-                                            }}
-                                            disabled={isDeleting}
-                                        >
-                                            <Text
-                                                style={
-                                                    styles.sessionActionButtonText
-                                                }
-                                                numberOfLines={1}
-                                                adjustsFontSizeToFit
-                                            >
-                                                地図で表示
-                                            </Text>
-                                        </Pressable>
+                                                    {historyViewMode ===
+                                                        "mine" && (
+                                                        <Pressable
+                                                            style={({
+                                                                pressed,
+                                                            }) => [
+                                                                styles.activityChangeButton,
+                                                                pressed &&
+                                                                    styles.detailButtonPressed,
+                                                                updatingActivitySessionId ===
+                                                                    item.id &&
+                                                                    styles.deleteButtonDisabled,
+                                                            ]}
+                                                            onPress={(
+                                                                event,
+                                                            ) => {
+                                                                event.stopPropagation();
 
-                                        {historyViewMode === "mine" && (
-                                            <>
-                                                <Pressable
-                                                    style={({ pressed }) => [
-                                                        styles.sessionActionButton,
-                                                        pressed &&
-                                                            styles.detailButtonPressed,
-                                                    ]}
-                                                    onPress={(event) => {
-                                                        event.stopPropagation();
+                                                                handleChangeActivityType(
+                                                                    item,
+                                                                );
+                                                            }}
+                                                            disabled={
+                                                                isDeleting ||
+                                                                updatingActivitySessionId ===
+                                                                    item.id
+                                                            }
+                                                        >
+                                                            <Text
+                                                                style={
+                                                                    styles.activityChangeButtonText
+                                                                }
+                                                            >
+                                                                {updatingActivitySessionId ===
+                                                                item.id
+                                                                    ? "区分を更新中..."
+                                                                    : "区分を変更"}
+                                                            </Text>
+                                                        </Pressable>
+                                                    )}
+                                                </View>
 
-                                                        openEditNameModal(item);
-                                                    }}
-                                                    disabled={isDeleting}
-                                                >
-                                                    <Text
-                                                        style={
-                                                            styles.sessionActionButtonText
-                                                        }
-                                                        numberOfLines={1}
-                                                        adjustsFontSizeToFit
-                                                    >
-                                                        タイトル変更
-                                                    </Text>
-                                                </Pressable>
-
-                                                <Pressable
-                                                    style={({ pressed }) => [
-                                                        styles.sessionActionButton,
-                                                        pressed &&
-                                                            styles.detailButtonPressed,
-                                                    ]}
-                                                    onPress={(event) => {
-                                                        event.stopPropagation();
-
-                                                        openShareModal(item);
-                                                    }}
-                                                    disabled={isDeleting}
-                                                >
-                                                    <Text
-                                                        style={
-                                                            styles.sessionActionButtonText
-                                                        }
-                                                        numberOfLines={1}
-                                                        adjustsFontSizeToFit
-                                                    >
-                                                        共有
-                                                    </Text>
-                                                </Pressable>
-
-                                                <Pressable
-                                                    style={({ pressed }) => [
-                                                        styles.sessionDeleteButton,
-                                                        pressed &&
-                                                            !isDeleting &&
-                                                            styles.deleteButtonPressed,
-                                                        isDeleting &&
-                                                            styles.deleteButtonDisabled,
-                                                    ]}
-                                                    disabled={isDeleting}
-                                                    onPress={(event) => {
-                                                        event.stopPropagation();
-
-                                                        handleDeleteSession(
-                                                            item,
-                                                        );
-                                                    }}
-                                                >
-                                                    <Text
-                                                        style={
-                                                            styles.sessionDeleteButtonText
-                                                        }
-                                                        numberOfLines={1}
-                                                        adjustsFontSizeToFit
-                                                    >
-                                                        {isDeleting
-                                                            ? "削除中..."
-                                                            : "削除"}
-                                                    </Text>
-                                                </Pressable>
+                                                {historyViewMode === "mine" &&
+                                                    hasBatteryRange(
+                                                        item.startBatteryLevel,
+                                                        item.endBatteryLevel,
+                                                    ) && (
+                                                        <Text
+                                                            style={
+                                                                styles.batteryText
+                                                            }
+                                                        >
+                                                            バッテリー消費:{" "}
+                                                            {formatBatteryPercent(
+                                                                item.startBatteryLevel,
+                                                            )}{" "}
+                                                            →{" "}
+                                                            {formatBatteryPercent(
+                                                                item.endBatteryLevel,
+                                                            )}
+                                                        </Text>
+                                                    )}
                                             </>
                                         )}
                                     </View>
-                                )}
-                            </Pressable>
-                        );
-                    }}
-                />
+
+                                    {/* 操作ボタンも展開時のみ表示 */}
+                                    {isExpanded && (
+                                        <View
+                                            ref={
+                                                index === 0
+                                                    ? activityHistoryActionsTourRef
+                                                    : undefined
+                                            }
+                                            collapsable={false}
+                                            style={styles.sessionActionRow}
+                                        >
+                                            <Pressable
+                                                style={({ pressed }) => [
+                                                    styles.sessionActionButton,
+                                                    pressed &&
+                                                        styles.detailButtonPressed,
+                                                ]}
+                                                onPress={(event) => {
+                                                    event.stopPropagation();
+
+                                                    handleOpenSessionMap(item);
+                                                }}
+                                                disabled={isDeleting}
+                                            >
+                                                <Text
+                                                    style={
+                                                        styles.sessionActionButtonText
+                                                    }
+                                                    numberOfLines={1}
+                                                    adjustsFontSizeToFit
+                                                >
+                                                    地図で表示
+                                                </Text>
+                                            </Pressable>
+
+                                            {historyViewMode === "mine" && (
+                                                <>
+                                                    <Pressable
+                                                        style={({
+                                                            pressed,
+                                                        }) => [
+                                                            styles.sessionActionButton,
+                                                            pressed &&
+                                                                styles.detailButtonPressed,
+                                                        ]}
+                                                        onPress={(event) => {
+                                                            event.stopPropagation();
+
+                                                            openEditNameModal(
+                                                                item,
+                                                            );
+                                                        }}
+                                                        disabled={isDeleting}
+                                                    >
+                                                        <Text
+                                                            style={
+                                                                styles.sessionActionButtonText
+                                                            }
+                                                            numberOfLines={1}
+                                                            adjustsFontSizeToFit
+                                                        >
+                                                            タイトル変更
+                                                        </Text>
+                                                    </Pressable>
+
+                                                    <Pressable
+                                                        style={({
+                                                            pressed,
+                                                        }) => [
+                                                            styles.sessionActionButton,
+                                                            pressed &&
+                                                                styles.detailButtonPressed,
+                                                        ]}
+                                                        onPress={(event) => {
+                                                            event.stopPropagation();
+
+                                                            openShareModal(
+                                                                item,
+                                                            );
+                                                        }}
+                                                        disabled={isDeleting}
+                                                    >
+                                                        <Text
+                                                            style={
+                                                                styles.sessionActionButtonText
+                                                            }
+                                                            numberOfLines={1}
+                                                            adjustsFontSizeToFit
+                                                        >
+                                                            共有
+                                                        </Text>
+                                                    </Pressable>
+
+                                                    <Pressable
+                                                        style={({
+                                                            pressed,
+                                                        }) => [
+                                                            styles.sessionDeleteButton,
+                                                            pressed &&
+                                                                !isDeleting &&
+                                                                styles.deleteButtonPressed,
+                                                            isDeleting &&
+                                                                styles.deleteButtonDisabled,
+                                                        ]}
+                                                        disabled={isDeleting}
+                                                        onPress={(event) => {
+                                                            event.stopPropagation();
+
+                                                            handleDeleteSession(
+                                                                item,
+                                                            );
+                                                        }}
+                                                    >
+                                                        <Text
+                                                            style={
+                                                                styles.sessionDeleteButtonText
+                                                            }
+                                                            numberOfLines={1}
+                                                            adjustsFontSizeToFit
+                                                        >
+                                                            {isDeleting
+                                                                ? "削除中..."
+                                                                : "削除"}
+                                                        </Text>
+                                                    </Pressable>
+                                                </>
+                                            )}
+                                        </View>
+                                    )}
+                                </Pressable>
+                            );
+                        }}
+                    />
+                </View>
             )}
 
             <Modal
@@ -2604,6 +2728,9 @@ const styles = StyleSheet.create({
         flex: 1,
         padding: 16,
         backgroundColor: "#f7f7f7",
+    },
+    historyListContainer: {
+        flex: 1,
     },
     historyTabContainer: {
         flexDirection: "row",

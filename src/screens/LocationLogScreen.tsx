@@ -21,6 +21,7 @@ import {
 } from "react-native";
 
 import { client } from "../lib/client";
+import { useSubscription } from "../hooks/useSubscription";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import {
     ACTIVITY_TYPES,
@@ -116,6 +117,7 @@ const SESSION_PAGE_SIZE = 15;
 
 export default function LocationLogScreen({ navigation, route }: Props) {
     const { start: startTour } = useTour();
+    const { isPremium } = useSubscription();
     const activityHistorySearchTourRef = useTourTarget(
         "activity-history-search",
     );
@@ -1116,6 +1118,15 @@ export default function LocationLogScreen({ navigation, route }: Props) {
     );
 
     const handleChangeActivityType = (item: RecordingSessionDisplayItem) => {
+        if (!isPremium) {
+            Alert.alert(
+                "Premium機能",
+                "アクティビティの区分変更はPremiumプランで利用できます。",
+            );
+
+            return;
+        }
+
         Alert.alert(
             "アクティビティ区分を変更",
             "徒歩・ランニングはランキング集計対象です。自転車・乗り物・複合移動・未判定は集計対象外です。",
@@ -1138,6 +1149,10 @@ export default function LocationLogScreen({ navigation, route }: Props) {
         item: RecordingSessionDisplayItem,
         activityType: ActivityType,
     ) => {
+        if (!isPremium) {
+            return;
+        }
+
         try {
             setUpdatingActivitySessionId(item.id);
 
@@ -2069,6 +2084,8 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                                                 pressed,
                                                             }) => [
                                                                 styles.activityChangeButton,
+                                                                !isPremium &&
+                                                                    styles.activityChangeButtonPremiumLocked,
                                                                 pressed &&
                                                                     styles.detailButtonPressed,
                                                                 updatingActivitySessionId ===
@@ -2098,7 +2115,9 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                                                 {updatingActivitySessionId ===
                                                                 item.id
                                                                     ? "区分を更新中..."
-                                                                    : "区分を変更"}
+                                                                    : isPremium
+                                                                      ? "区分を変更"
+                                                                      : "区分を変更 ★"}
                                                             </Text>
                                                         </Pressable>
                                                     )}
@@ -3170,6 +3189,10 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: "#4b6f8f",
         backgroundColor: "#fff",
+    },
+    activityChangeButtonPremiumLocked: {
+        opacity: 0.55,
+        borderStyle: "dashed",
     },
     activityChangeButtonText: {
         color: "#4b6f8f",

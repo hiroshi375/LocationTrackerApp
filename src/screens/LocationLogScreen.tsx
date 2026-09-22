@@ -106,10 +106,22 @@ type RecordingSessionListResult = {
     nextToken?: string | null;
 };
 
+type HistoryViewMode = "mine" | "shared";
+
 const SESSION_PAGE_SIZE = 15;
 
 export default function LocationLogScreen({ navigation }: Props) {
     const [loading, setLoading] = useState(false);
+    const [historyViewMode, setHistoryViewMode] =
+        useState<HistoryViewMode>("mine");
+    const [sharedRecordingSessions, setSharedRecordingSessions] = useState<
+        RecordingSessionDisplayItem[]
+    >([]);
+    const [
+        sharedRecordingSessionTotalCount,
+        setSharedRecordingSessionTotalCount,
+    ] = useState(0);
+    const [loadingSharedSessions, setLoadingSharedSessions] = useState(false);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [searchText, setSearchText] = useState("");
     const [userProfiles, setUserProfiles] = useState<UserProfileItem[]>([]);
@@ -479,6 +491,277 @@ export default function LocationLogScreen({ navigation }: Props) {
         [],
     );
 
+    const loadSharedRecordingSessions = useCallback(async () => {
+        try {
+            setLoadingSharedSessions(true);
+
+            const currentUser = await getCurrentUser();
+
+            /*
+             * 現在ユーザーの共有用ownerValueを取得する。
+             */
+            const userProfileModel = client.models.UserProfile as any;
+
+            const profileResult = await userProfileModel.list({
+                filter: {
+                    userId: {
+                        eq: currentUser.userId,
+                    },
+                },
+                limit: 10,
+            });
+
+            if (profileResult.errors) {
+                console.error(
+                    "Current UserProfile load errors:",
+                    profileResult.errors,
+                );
+
+                Alert.alert(
+                    "取得エラー",
+                    "共有用ユーザー情報を取得できませんでした。",
+                );
+
+                return;
+            }
+
+            const currentProfile =
+                (profileResult.data ?? []).find(
+                    (profile: any) =>
+                        profile?.userId === currentUser.userId &&
+                        typeof profile?.ownerValue === "string" &&
+                        profile.ownerValue.length > 0,
+                ) ?? null;
+
+            const currentOwnerValue = currentProfile?.ownerValue ?? null;
+
+            if (!currentOwnerValue) {
+                console.warn(
+                    "[LocationLogScreen] Current ownerValue not found.",
+                    {
+                        userId: currentUser.userId,
+                    },
+                );
+
+                setSharedRecordingSessions([]);
+                setSharedRecordingSessionTotalCount(0);
+
+                return;
+            }
+
+            const recordingSessionModel = client.models.RecordingSession as any;
+
+            const allData: any[] = [];
+
+            let nextToken: string | null = null;
+
+            /*
+             * RecordingSessionを取得する。
+             *
+             * authルールによって、
+             * 現在ユーザーが参照可能なRecordingSessionだけが
+             * 返される前提。
+             *
+             * sharedOwnersの判定は下で明示的に行う。
+             */
+            do {
+                const result = (await recordingSessionModel.list({
+                    limit: 1000,
+                    nextToken: nextToken ?? undefined,
+                })) as RecordingSessionListResult;
+
+                if (result.errors) {
+                    console.error(
+                        "Shared RecordingSession list errors:",
+                        result.errors,
+                    );
+
+                    Alert.alert(
+                        "取得エラー",
+                        "共有されたアクティビティ履歴を取得できませんでした。",
+                    );
+
+                    return;
+                }
+
+                allData.push(...(result.data ?? []));
+
+                nextToken = result.nextToken ?? null;
+            } while (nextToken);
+
+            /*
+             * 自分以外のユーザーが所有し、
+             * かつsharedOwnersに自分のownerValueが
+             * 入っているものだけを対象にする。
+             */
+            const sharedRawSessions = allData
+                .filter((item: any) => {
+                    if (!item) {
+                        return false;
+                    }
+
+                    /*
+                     * 自分自身のRecordingSessionは
+                     * 「共有された履歴」には出さない。
+                     */
+                    if (item.userId === currentUser.userId) {
+                        return false;
+                    }
+
+                    if (!Array.isArray(item.sharedOwners)) {
+                        return false;
+                    }
+
+                    if (!item.sharedOwners.includes(currentOwnerValue)) {
+                        return false;
+                    }
+
+                    return (
+                        typeof item.recordingSessionId === "string" &&
+                        item.recordingSessionId.length > 0 &&
+                        typeof item.startedAt === "string" &&
+                        typeof item.endedAt === "string"
+                    );
+                })
+                .sort((a: any, b: any) => {
+                    return (
+                        new Date(b.endedAt).getTime() -
+                        new Date(a.endedAt).getTime()
+                    );
+                });
+
+            /*
+             * RecordingSessionDisplayItemへ変換する。
+             */
+            const loadedItems = await Promise.all(
+                sharedRawSessions.map(
+                    async (item: any): Promise<RecordingSessionDisplayItem> => {
+                        /*
+                         * LocationLog側もsharedOwnersで共有されているため、
+                         * 共有先ユーザーでもGSIからポイント数を取得できる。
+                         */
+                        const pointCounts = await loadSessionPointCounts(
+                            item.recordingSessionId,
+                        );
+
+                        return {
+                            kind: "session",
+
+                            id: item.id,
+
+                            userId: item.userId ?? "",
+
+                            recordingSessionId: item.recordingSessionId,
+
+                            recordingSessionName:
+                                item.recordingSessionName ??
+                                "共有アクティビティ",
+
+                            startAt: item.startedAt,
+
+                            endAt: item.endedAt,
+
+                            distanceMeters: Number(item.distanceMeters ?? 0),
+
+                            pointCount: pointCounts.pointCount,
+
+                            foregroundPointCount:
+                                pointCounts.foregroundPointCount,
+
+                            backgroundPointCount:
+                                pointCounts.backgroundPointCount,
+
+                            recordingIntervalMs:
+                                item.recordingIntervalMs != null &&
+                                Number.isFinite(
+                                    Number(item.recordingIntervalMs),
+                                )
+                                    ? Number(item.recordingIntervalMs)
+                                    : null,
+
+                            recordingDistanceMeters:
+                                item.recordingDistanceMeters != null &&
+                                Number.isFinite(
+                                    Number(item.recordingDistanceMeters),
+                                )
+                                    ? Number(item.recordingDistanceMeters)
+                                    : null,
+
+                            startBatteryLevel:
+                                item.startBatteryLevel != null &&
+                                Number.isFinite(Number(item.startBatteryLevel))
+                                    ? Number(item.startBatteryLevel)
+                                    : null,
+
+                            endBatteryLevel:
+                                item.endBatteryLevel != null &&
+                                Number.isFinite(Number(item.endBatteryLevel))
+                                    ? Number(item.endBatteryLevel)
+                                    : null,
+
+                            sharedOwners: Array.isArray(item.sharedOwners)
+                                ? item.sharedOwners.filter(
+                                      (owner: unknown): owner is string =>
+                                          typeof owner === "string" &&
+                                          owner.length > 0,
+                                  )
+                                : [],
+
+                            activityType: normalizeActivityType(
+                                item.activityType,
+                            ),
+
+                            isAggregationTarget:
+                                item.isAggregationTarget === true,
+
+                            classificationSource:
+                                item.classificationSource ?? null,
+
+                            classificationReason:
+                                item.classificationReason ?? null,
+
+                            averageSpeedKmh:
+                                item.averageSpeedKmh == null
+                                    ? null
+                                    : Number(item.averageSpeedKmh),
+
+                            maxSpeedKmh:
+                                item.maxSpeedKmh == null
+                                    ? null
+                                    : Number(item.maxSpeedKmh),
+
+                            movingDurationSeconds:
+                                item.movingDurationSeconds == null
+                                    ? null
+                                    : Number(item.movingDurationSeconds),
+
+                            sortAt: item.endedAt,
+                        };
+                    },
+                ),
+            );
+
+            console.log("[LocationLogScreen] Shared sessions loaded:", {
+                ownerValue: currentOwnerValue,
+                totalReadableSessionCount: allData.length,
+                sharedSessionCount: loadedItems.length,
+            });
+
+            setSharedRecordingSessions(loadedItems);
+
+            setSharedRecordingSessionTotalCount(loadedItems.length);
+        } catch (error) {
+            console.error("Shared RecordingSession load error:", error);
+
+            Alert.alert(
+                "取得エラー",
+                "共有されたアクティビティ履歴の取得に失敗しました。",
+            );
+        } finally {
+            setLoadingSharedSessions(false);
+        }
+    }, []);
+
     const loadRecordingSessionTotalCount = useCallback(async () => {
         try {
             const currentUser = await getCurrentUser();
@@ -583,25 +866,45 @@ export default function LocationLogScreen({ navigation }: Props) {
     );
 
     const filteredItems = useMemo(() => {
+        const sourceItems =
+            historyViewMode === "mine"
+                ? recordingSessions
+                : sharedRecordingSessions;
+
         const keyword = searchText.trim().toLowerCase();
 
         if (!keyword) {
-            return recordingSessions;
+            return sourceItems;
         }
 
-        return recordingSessions.filter((item) => {
+        return sourceItems.filter((item) => {
+            const ownerName = getUserDisplayName(item.userId).toLowerCase();
+
             return (
                 item.recordingSessionName.toLowerCase().includes(keyword) ||
-                item.recordingSessionId.toLowerCase().includes(keyword)
+                item.recordingSessionId.toLowerCase().includes(keyword) ||
+                ownerName.includes(keyword)
             );
         });
-    }, [recordingSessions, searchText]);
+    }, [
+        historyViewMode,
+        recordingSessions,
+        sharedRecordingSessions,
+        searchText,
+        getUserDisplayName,
+    ]);
 
     const hasMoreItems =
-        searchText.trim().length === 0 && recordingSessionNextToken !== null;
+        historyViewMode === "mine" &&
+        searchText.trim().length === 0 &&
+        recordingSessionNextToken !== null;
 
     const loadMoreItems = useCallback(() => {
-        if (loadingMore || !recordingSessionNextToken) {
+        if (
+            historyViewMode !== "mine" ||
+            loadingMore ||
+            !recordingSessionNextToken
+        ) {
             return;
         }
 
@@ -612,6 +915,7 @@ export default function LocationLogScreen({ navigation }: Props) {
             prependSession: null,
         });
     }, [
+        historyViewMode,
         loadingMore,
         recordingSessionNextToken,
         recordingSessionBeforeEndAt,
@@ -621,6 +925,13 @@ export default function LocationLogScreen({ navigation }: Props) {
     const handleRefresh = useCallback(() => {
         returnAnchorSessionRef.current = null;
         shouldScrollToReturnAnchorRef.current = false;
+
+        if (historyViewMode === "shared") {
+            void loadSharedRecordingSessions();
+            void loadUserProfiles();
+
+            return;
+        }
 
         setRecordingSessionNextToken(null);
         setRecordingSessionBeforeEndAt(null);
@@ -635,10 +946,40 @@ export default function LocationLogScreen({ navigation }: Props) {
         void loadRecordingSessionTotalCount();
         void loadUserProfiles();
     }, [
+        historyViewMode,
         loadRecordingSessions,
         loadRecordingSessionTotalCount,
+        loadSharedRecordingSessions,
         loadUserProfiles,
     ]);
+
+    const handleChangeHistoryViewMode = useCallback(
+        (mode: HistoryViewMode) => {
+            if (mode === historyViewMode) {
+                return;
+            }
+
+            setHistoryViewMode(mode);
+
+            setSearchText("");
+
+            setExpandedSessionIds(new Set());
+
+            returnAnchorSessionRef.current = null;
+
+            shouldScrollToReturnAnchorRef.current = false;
+
+            recordingSessionListRef.current?.scrollToOffset({
+                offset: 0,
+                animated: false,
+            });
+
+            if (mode === "shared") {
+                void loadSharedRecordingSessions();
+            }
+        },
+        [historyViewMode, loadSharedRecordingSessions],
+    );
 
     const filteredShareUsers = useMemo(() => {
         const keyword = shareSearchText.trim().toLowerCase();
@@ -657,10 +998,16 @@ export default function LocationLogScreen({ navigation }: Props) {
 
     const handleOpenSessionMap = (item: RecordingSessionDisplayItem) => {
         /*
-         * 地図から戻ったときの一覧位置を復元するため、
-         * 開いたsessionを覚えておく。
+         * 自分の履歴のみ、
+         * 地図から戻った際の一覧位置復元を行う。
+         *
+         * 共有履歴はfocus時に再取得する。
          */
-        returnAnchorSessionRef.current = item;
+        if (historyViewMode === "mine") {
+            returnAnchorSessionRef.current = item;
+        } else {
+            returnAnchorSessionRef.current = null;
+        }
 
         navigation.push("LocationMap", {
             recordingSessionId: item.recordingSessionId,
@@ -1197,6 +1544,20 @@ export default function LocationLogScreen({ navigation }: Props) {
 
     useFocusEffect(
         useCallback(() => {
+            /*
+             * 共有履歴表示中は共有されたRecordingSessionを再取得する。
+             */
+            if (historyViewMode === "shared") {
+                returnAnchorSessionRef.current = null;
+
+                shouldScrollToReturnAnchorRef.current = false;
+
+                void loadSharedRecordingSessions();
+                void loadUserProfiles();
+
+                return;
+            }
+
             const returnAnchorSession = returnAnchorSessionRef.current;
 
             /*
@@ -1247,6 +1608,8 @@ export default function LocationLogScreen({ navigation }: Props) {
             void loadRecordingSessionTotalCount();
             void loadUserProfiles();
         }, [
+            historyViewMode,
+            loadSharedRecordingSessions,
             loadRecordingSessions,
             loadRecordingSessionTotalCount,
             loadUserProfiles,
@@ -1255,6 +1618,46 @@ export default function LocationLogScreen({ navigation }: Props) {
 
     return (
         <View style={styles.container}>
+            <View style={styles.historyTabContainer}>
+                <Pressable
+                    style={[
+                        styles.historyTabButton,
+                        historyViewMode === "mine" &&
+                            styles.historyTabButtonActive,
+                    ]}
+                    onPress={() => handleChangeHistoryViewMode("mine")}
+                >
+                    <Text
+                        style={[
+                            styles.historyTabText,
+                            historyViewMode === "mine" &&
+                                styles.historyTabTextActive,
+                        ]}
+                    >
+                        自分の履歴
+                    </Text>
+                </Pressable>
+
+                <Pressable
+                    style={[
+                        styles.historyTabButton,
+                        historyViewMode === "shared" &&
+                            styles.historyTabButtonActive,
+                    ]}
+                    onPress={() => handleChangeHistoryViewMode("shared")}
+                >
+                    <Text
+                        style={[
+                            styles.historyTabText,
+                            historyViewMode === "shared" &&
+                                styles.historyTabTextActive,
+                        ]}
+                    >
+                        共有された履歴
+                    </Text>
+                </Pressable>
+            </View>
+
             <View style={styles.searchBox}>
                 <Text style={styles.searchLabel}>アクティビティ検索</Text>
 
@@ -1270,7 +1673,9 @@ export default function LocationLogScreen({ navigation }: Props) {
                 <View style={styles.searchInfoRow}>
                     <Text style={styles.searchInfoText}>
                         表示件数: {filteredItems.length} /{" "}
-                        {recordingSessionTotalCount ?? "-"}
+                        {historyViewMode === "mine"
+                            ? (recordingSessionTotalCount ?? "-")
+                            : sharedRecordingSessionTotalCount}
                     </Text>
 
                     {searchText.trim().length > 0 && (
@@ -1281,7 +1686,12 @@ export default function LocationLogScreen({ navigation }: Props) {
                 </View>
             </View>
 
-            {loading && recordingSessions.length === 0 ? (
+            {(
+                historyViewMode === "mine"
+                    ? loading && recordingSessions.length === 0
+                    : loadingSharedSessions &&
+                      sharedRecordingSessions.length === 0
+            ) ? (
                 <ActivityIndicator />
             ) : (
                 <FlatList
@@ -1290,7 +1700,11 @@ export default function LocationLogScreen({ navigation }: Props) {
                     keyExtractor={(item) => item.id}
                     refreshControl={
                         <RefreshControl
-                            refreshing={loading}
+                            refreshing={
+                                historyViewMode === "mine"
+                                    ? loading
+                                    : loadingSharedSessions
+                            }
                             onRefresh={handleRefresh}
                         />
                     }
@@ -1298,7 +1712,9 @@ export default function LocationLogScreen({ navigation }: Props) {
                         <Text style={styles.emptyText}>
                             {searchText.trim().length > 0
                                 ? "検索条件に一致するアクティビティ履歴がありません。"
-                                : "まだアクティビティ履歴がありません。"}
+                                : historyViewMode === "shared"
+                                  ? "共有されたアクティビティはありません。"
+                                  : "まだアクティビティ履歴がありません。"}
                         </Text>
                     }
                     ListFooterComponent={
@@ -1357,10 +1773,13 @@ export default function LocationLogScreen({ navigation }: Props) {
                                     </View>
 
                                     {/* 展開時のみユーザーを表示 */}
-                                    {isExpanded && (
+                                    {(isExpanded ||
+                                        historyViewMode === "shared") && (
                                         <Text style={styles.memoText}>
-                                            ユーザー:{" "}
-                                            {getUserDisplayName(item.userId)}
+                                            {historyViewMode === "shared"
+                                                ? "共有元"
+                                                : "ユーザー"}
+                                            : {getUserDisplayName(item.userId)}
                                         </Text>
                                     )}
 
@@ -1461,38 +1880,43 @@ export default function LocationLogScreen({ navigation }: Props) {
                                                         )}km/h`}
                                                 </Text>
 
-                                                <Pressable
-                                                    style={({ pressed }) => [
-                                                        styles.activityChangeButton,
-                                                        pressed &&
-                                                            styles.detailButtonPressed,
-                                                        updatingActivitySessionId ===
-                                                            item.id &&
-                                                            styles.deleteButtonDisabled,
-                                                    ]}
-                                                    onPress={(event) => {
-                                                        event.stopPropagation();
-                                                        handleChangeActivityType(
-                                                            item,
-                                                        );
-                                                    }}
-                                                    disabled={
-                                                        isDeleting ||
-                                                        updatingActivitySessionId ===
-                                                            item.id
-                                                    }
-                                                >
-                                                    <Text
-                                                        style={
-                                                            styles.activityChangeButtonText
+                                                {historyViewMode === "mine" && (
+                                                    <Pressable
+                                                        style={({
+                                                            pressed,
+                                                        }) => [
+                                                            styles.activityChangeButton,
+                                                            pressed &&
+                                                                styles.detailButtonPressed,
+                                                            updatingActivitySessionId ===
+                                                                item.id &&
+                                                                styles.deleteButtonDisabled,
+                                                        ]}
+                                                        onPress={(event) => {
+                                                            event.stopPropagation();
+
+                                                            handleChangeActivityType(
+                                                                item,
+                                                            );
+                                                        }}
+                                                        disabled={
+                                                            isDeleting ||
+                                                            updatingActivitySessionId ===
+                                                                item.id
                                                         }
                                                     >
-                                                        {updatingActivitySessionId ===
-                                                        item.id
-                                                            ? "区分を更新中..."
-                                                            : "区分を変更"}
-                                                    </Text>
-                                                </Pressable>
+                                                        <Text
+                                                            style={
+                                                                styles.activityChangeButtonText
+                                                            }
+                                                        >
+                                                            {updatingActivitySessionId ===
+                                                            item.id
+                                                                ? "区分を更新中..."
+                                                                : "区分を変更"}
+                                                        </Text>
+                                                    </Pressable>
+                                                )}
                                             </View>
 
                                             {hasBatteryRange(
@@ -1527,6 +1951,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                                             ]}
                                             onPress={(event) => {
                                                 event.stopPropagation();
+
                                                 handleOpenSessionMap(item);
                                             }}
                                             disabled={isDeleting}
@@ -1542,79 +1967,88 @@ export default function LocationLogScreen({ navigation }: Props) {
                                             </Text>
                                         </Pressable>
 
-                                        <Pressable
-                                            style={({ pressed }) => [
-                                                styles.sessionActionButton,
-                                                pressed &&
-                                                    styles.detailButtonPressed,
-                                            ]}
-                                            onPress={(event) => {
-                                                event.stopPropagation();
-                                                openEditNameModal(item);
-                                            }}
-                                            disabled={isDeleting}
-                                        >
-                                            <Text
-                                                style={
-                                                    styles.sessionActionButtonText
-                                                }
-                                                numberOfLines={1}
-                                                adjustsFontSizeToFit
-                                            >
-                                                タイトル変更
-                                            </Text>
-                                        </Pressable>
+                                        {historyViewMode === "mine" && (
+                                            <>
+                                                <Pressable
+                                                    style={({ pressed }) => [
+                                                        styles.sessionActionButton,
+                                                        pressed &&
+                                                            styles.detailButtonPressed,
+                                                    ]}
+                                                    onPress={(event) => {
+                                                        event.stopPropagation();
 
-                                        <Pressable
-                                            style={({ pressed }) => [
-                                                styles.sessionActionButton,
-                                                pressed &&
-                                                    styles.detailButtonPressed,
-                                            ]}
-                                            onPress={(event) => {
-                                                event.stopPropagation();
-                                                openShareModal(item);
-                                            }}
-                                            disabled={isDeleting}
-                                        >
-                                            <Text
-                                                style={
-                                                    styles.sessionActionButtonText
-                                                }
-                                                numberOfLines={1}
-                                                adjustsFontSizeToFit
-                                            >
-                                                共有
-                                            </Text>
-                                        </Pressable>
+                                                        openEditNameModal(item);
+                                                    }}
+                                                    disabled={isDeleting}
+                                                >
+                                                    <Text
+                                                        style={
+                                                            styles.sessionActionButtonText
+                                                        }
+                                                        numberOfLines={1}
+                                                        adjustsFontSizeToFit
+                                                    >
+                                                        タイトル変更
+                                                    </Text>
+                                                </Pressable>
 
-                                        <Pressable
-                                            style={({ pressed }) => [
-                                                styles.sessionDeleteButton,
-                                                pressed &&
-                                                    !isDeleting &&
-                                                    styles.deleteButtonPressed,
-                                                isDeleting &&
-                                                    styles.deleteButtonDisabled,
-                                            ]}
-                                            disabled={isDeleting}
-                                            onPress={(event) => {
-                                                event.stopPropagation();
-                                                handleDeleteSession(item);
-                                            }}
-                                        >
-                                            <Text
-                                                style={
-                                                    styles.sessionDeleteButtonText
-                                                }
-                                                numberOfLines={1}
-                                                adjustsFontSizeToFit
-                                            >
-                                                {isDeleting
-                                                    ? "削除中..."
-                                                    : "削除"}
-                                            </Text>
-                                        </Pressable>
+                                                <Pressable
+                                                    style={({ pressed }) => [
+                                                        styles.sessionActionButton,
+                                                        pressed &&
+                                                            styles.detailButtonPressed,
+                                                    ]}
+                                                    onPress={(event) => {
+                                                        event.stopPropagation();
+
+                                                        openShareModal(item);
+                                                    }}
+                                                    disabled={isDeleting}
+                                                >
+                                                    <Text
+                                                        style={
+                                                            styles.sessionActionButtonText
+                                                        }
+                                                        numberOfLines={1}
+                                                        adjustsFontSizeToFit
+                                                    >
+                                                        共有
+                                                    </Text>
+                                                </Pressable>
+
+                                                <Pressable
+                                                    style={({ pressed }) => [
+                                                        styles.sessionDeleteButton,
+                                                        pressed &&
+                                                            !isDeleting &&
+                                                            styles.deleteButtonPressed,
+                                                        isDeleting &&
+                                                            styles.deleteButtonDisabled,
+                                                    ]}
+                                                    disabled={isDeleting}
+                                                    onPress={(event) => {
+                                                        event.stopPropagation();
+
+                                                        handleDeleteSession(
+                                                            item,
+                                                        );
+                                                    }}
+                                                >
+                                                    <Text
+                                                        style={
+                                                            styles.sessionDeleteButtonText
+                                                        }
+                                                        numberOfLines={1}
+                                                        adjustsFontSizeToFit
+                                                    >
+                                                        {isDeleting
+                                                            ? "削除中..."
+                                                            : "削除"}
+                                                    </Text>
+                                                </Pressable>
+                                            </>
+                                        )}
                                     </View>
                                 )}
                             </Pressable>
@@ -2001,6 +2435,35 @@ const styles = StyleSheet.create({
         flex: 1,
         padding: 16,
         backgroundColor: "#f7f7f7",
+    },
+    historyTabContainer: {
+        flexDirection: "row",
+        marginBottom: 12,
+        padding: 3,
+        borderRadius: 10,
+        backgroundColor: "#e6e9ec",
+    },
+
+    historyTabButton: {
+        flex: 1,
+        paddingVertical: 10,
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: 8,
+    },
+
+    historyTabButtonActive: {
+        backgroundColor: "#4b6f8f",
+    },
+
+    historyTabText: {
+        color: "#555",
+        fontSize: 14,
+        fontWeight: "bold",
+    },
+
+    historyTabTextActive: {
+        color: "#fff",
     },
     searchBox: {
         padding: 12,

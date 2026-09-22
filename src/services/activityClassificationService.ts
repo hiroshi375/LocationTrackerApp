@@ -50,7 +50,14 @@ type SpeedSegment = {
 
 const MIN_VALID_SEGMENT_SECONDS = 1;
 const MAX_VALID_SEGMENT_SECONDS = 5 * 60;
-const MAX_ANALYSIS_ACCURACY_METERS = 100;
+/*
+ * アクティビティ判定では精度の悪いGPS地点を除外する。
+ *
+ * 30mを超える地点は、ランニング中でも
+ * 瞬間的に数十〜100m程度飛ぶことがあり、
+ * 異常な高速移動として誤判定される可能性がある。
+ */
+const MAX_ANALYSIS_ACCURACY_METERS = 30;
 const MAX_ANALYSIS_SPEED_KMH = 200;
 
 export function isAggregationTargetActivityType(
@@ -189,12 +196,52 @@ export function classifyActivitySession(
     const p90SpeedKmh = percentile(speeds, 0.9);
     const p95SpeedKmh = percentile(speeds, 0.95);
 
+    /*
+     * 高速移動は単発の最高速度ではなく、
+     * 「一定時間連続していたか」を重視して判定する。
+     */
     const maxContinuousSecondsAtOrAbove18 = getMaxContinuousDurationAtOrAbove(
         analysisSegments,
         18,
     );
+
+    const maxContinuousSecondsAtOrAbove22 = getMaxContinuousDurationAtOrAbove(
+        analysisSegments,
+        22,
+    );
+
+    const maxContinuousSecondsAtOrAbove25 = getMaxContinuousDurationAtOrAbove(
+        analysisSegments,
+        25,
+    );
+
+    const maxContinuousSecondsAtOrAbove35 = getMaxContinuousDurationAtOrAbove(
+        analysisSegments,
+        35,
+    );
+
     const secondsAtOrAbove25 = sumDurationAtOrAbove(analysisSegments, 25);
+
     const secondsAtOrAbove35 = sumDurationAtOrAbove(analysisSegments, 35);
+
+    /*
+     * 単発のGPS飛び値ではなく、
+     * 高速区間が複数存在することを確認する。
+     */
+    const segmentCountAtOrAbove22 = countHighSpeedRunsAtOrAbove(
+        analysisSegments,
+        22,
+    );
+
+    const segmentCountAtOrAbove25 = countHighSpeedRunsAtOrAbove(
+        analysisSegments,
+        25,
+    );
+
+    const segmentCountAtOrAbove35 = countHighSpeedRunsAtOrAbove(
+        analysisSegments,
+        35,
+    );
 
     const lowSpeedSeconds = analysisSegments
         .filter((segment) => segment.speedKmh <= 12)
@@ -204,22 +251,64 @@ export function classifyActivitySession(
         .filter((segment) => segment.speedKmh >= 22)
         .reduce((sum, segment) => sum + segment.durationSeconds, 0);
 
-    const hasClearlyMixedMovement =
-        lowSpeedSeconds >= 120 && highSpeedSeconds >= 60;
+    /*
+     * 複合移動と判定するには、
+     *
+     * ・低速移動が2分以上存在
+     * ・22km/h以上の高速移動が存在
+     *
+     * に加えて、
+     *
+     * ① 22km/h以上が60秒以上連続
+     *
+     * または
+     *
+     * ② 22km/h以上の区間が複数あり、
+     *    合計60秒以上
+     *
+     * のどちらかを要求する。
+     *
+     * GPS飛び値1件だけではMIXEDにならない。
+     */
+    const hasSustainedHighSpeedMovement =
+        maxContinuousSecondsAtOrAbove22 >= 60 ||
+        (highSpeedSeconds >= 60 && segmentCountAtOrAbove22 >= 3);
 
-    if (
-        secondsAtOrAbove35 >= 60 ||
-        secondsAtOrAbove25 >= 180 ||
-        p95SpeedKmh >= 45 ||
-        maxSpeedKmh >= 70
-    ) {
+    const hasClearlyMixedMovement =
+        lowSpeedSeconds >= 120 && hasSustainedHighSpeedMovement;
+
+    /*
+     * 乗り物判定。
+     *
+     * 単発の最高速度だけでは判定しない。
+     *
+     * 次のいずれかを満たした場合だけ、
+     * 乗り物相当の高速移動と判断する。
+     *
+     * 1. 35km/h以上が30秒以上連続
+     * 2. 25km/h以上が120秒以上連続
+     * 3. 35km/h以上が合計60秒以上かつ3区間以上
+     * 4. 25km/h以上が合計180秒以上かつ5区間以上
+     * 5. 95%点が45km/h以上かつ35km/h以上が3区間以上
+     */
+    const hasVehicleSpeedMovement =
+        maxContinuousSecondsAtOrAbove35 >= 30 ||
+        maxContinuousSecondsAtOrAbove25 >= 120 ||
+        (secondsAtOrAbove35 >= 60 && segmentCountAtOrAbove35 >= 3) ||
+        (secondsAtOrAbove25 >= 180 && segmentCountAtOrAbove25 >= 5) ||
+        (p95SpeedKmh >= 45 && segmentCountAtOrAbove35 >= 3);
+
+    if (hasVehicleSpeedMovement) {
         return createResult(
             hasClearlyMixedMovement ? "MIXED" : "VEHICLE",
             [
-                "乗り物相当の高速移動を検出しました。",
+                "乗り物相当の高速移動を継続的に検出しました。",
                 `平均${averageSpeedKmh.toFixed(1)}km/h`,
                 `90%点${p90SpeedKmh.toFixed(1)}km/h`,
                 `最高${maxSpeedKmh.toFixed(1)}km/h`,
+                `35km/h以上連続${Math.round(
+                    maxContinuousSecondsAtOrAbove35,
+                )}秒`,
             ].join(" "),
             averageSpeedKmh,
             maxSpeedKmh,
@@ -316,6 +405,27 @@ function sumDurationAtOrAbove(
     return segments
         .filter((segment) => segment.speedKmh >= thresholdKmh)
         .reduce((sum, segment) => sum + segment.durationSeconds, 0);
+}
+
+function countHighSpeedRunsAtOrAbove(
+    segments: SpeedSegment[],
+    thresholdKmh: number,
+): number {
+    let count = 0;
+    let inHighSpeedRun = false;
+
+    for (const segment of segments) {
+        if (segment.speedKmh >= thresholdKmh) {
+            if (!inHighSpeedRun) {
+                count += 1;
+                inHighSpeedRun = true;
+            }
+        } else {
+            inHighSpeedRun = false;
+        }
+    }
+
+    return count;
 }
 
 function getMaxContinuousDurationAtOrAbove(

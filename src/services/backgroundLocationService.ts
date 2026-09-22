@@ -157,7 +157,7 @@ function getBackgroundTaskHeartbeatStaleMs(intervalMs: number): number {
 
 function createRecordingLocationTaskOptions(
     intervalMs: number,
-    distanceMeters: number,
+    _distanceMeters: number,
 ) {
     return {
         accuracy: Location.Accuracy.BestForNavigation,

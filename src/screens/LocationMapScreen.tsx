@@ -22,7 +22,7 @@ import MapView, {
     Marker,
     Polyline,
     PROVIDER_GOOGLE,
-    UrlTile,
+    // UrlTile, // TODO: Pixelマップ実装時に使用予定
 } from "react-native-maps";
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
@@ -174,13 +174,15 @@ const retroMapStyle = [
 // 現在地を画面中央より少し上に見せるため、カメラ中心を少し南へずらす
 const CAMERA_CENTER_LATITUDE_OFFSET = 0.0015;
 
-const MAPTILER_API_KEY = process.env.EXPO_PUBLIC_MAPTILER_API_KEY;
-const MAPTILER_MAP_ID = process.env.EXPO_PUBLIC_MAPTILER_MAP_ID;
+// TODO: Pixelマップ実装時に使用予定
+//const MAPTILER_API_KEY = process.env.EXPO_PUBLIC_MAPTILER_API_KEY;
+//const MAPTILER_MAP_ID = process.env.EXPO_PUBLIC_MAPTILER_MAP_ID;
 
-const mapTilerPixelTileUrl =
-    MAPTILER_API_KEY && MAPTILER_MAP_ID
-        ? `https://api.maptiler.com/maps/${MAPTILER_MAP_ID}/256/{z}/{x}/{y}.png?key=${MAPTILER_API_KEY}`
-        : undefined;
+// TODO: Pixelマップ実装時に使用予定
+// const mapTilerPixelTileUrl =
+//    MAPTILER_API_KEY && MAPTILER_MAP_ID
+//        ? `https://api.maptiler.com/maps/${MAPTILER_MAP_ID}/256/{z}/{x}/{y}.png?key=${MAPTILER_API_KEY}`
+//        : undefined;
 
 export default function LocationMapScreen({ route }: Props) {
     const insets = useSafeAreaInsets();

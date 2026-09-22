@@ -1352,6 +1352,17 @@ export default function LocationMapScreen({ route }: Props) {
         };
     }, [isLiveRecordingMap]);
 
+    useEffect(() => {
+        console.log("[LocationMapScreen] mounted:", new Date().toISOString());
+
+        return () => {
+            console.log(
+                "[LocationMapScreen] unmounted:",
+                new Date().toISOString(),
+            );
+        };
+    }, []);
+
     if (!hasLoaded || loading) {
         return (
             <View style={styles.center}>

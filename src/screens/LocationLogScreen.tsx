@@ -1648,6 +1648,10 @@ export default function LocationLogScreen({ navigation, route }: Props) {
 
     useFocusEffect(
         useCallback(() => {
+            console.log(
+                "[LocationLogScreen] focused:",
+                new Date().toISOString(),
+            );
             /*
              * 共有履歴表示中は、従来どおり共有履歴を再取得する。
              */
@@ -1674,68 +1678,30 @@ export default function LocationLogScreen({ navigation, route }: Props) {
              * LocationLogScreen自体はNavigation Stack上に残っているため、
              * 地図を開く前のrecordingSessionsとスクロール位置は保持されている。
              *
-             * そのため、
-             *
-             *   ・RecordingSession 15件の再取得
-             *   ・各sessionのLocationLogポイント数再取得
-             *   ・総件数の再取得
-             *   ・UserProfileの再取得
-             *
-             * は行わない。
-             *
-             * 地図画面でポイントを削除した可能性だけを考慮し、
-             * 表示していたsession 1件のポイント数だけを更新する。
+             * 戻る操作のレスポンスを最優先し、
+             * RecordingSession / LocationLog / UserProfileは再取得しない。
              */
             if (returnAnchorSession) {
+                /*
+                 * 地図から戻っただけの場合は何も再取得しない。
+                 *
+                 * LocationLogScreenはNavigation Stack上に残っているため、
+                 * 地図を開く前のrecordingSessionsとスクロール位置を
+                 * そのまま利用する。
+                 *
+                 * 戻る操作のレスポンスを最優先し、
+                 * LocationLog / RecordingSession / UserProfileへの
+                 * ネットワークアクセスは一切行わない。
+                 */
                 shouldScrollToReturnAnchorRef.current = false;
 
-                void (async () => {
-                    try {
-                        const pointCounts = await loadSessionPointCounts(
+                console.log(
+                    "[LocationLogScreen] Returned from map without reload:",
+                    {
+                        recordingSessionId:
                             returnAnchorSession.recordingSessionId,
-                        );
-
-                        setRecordingSessions((currentSessions) =>
-                            currentSessions.map((session) => {
-                                if (session.id !== returnAnchorSession.id) {
-                                    return session;
-                                }
-
-                                return {
-                                    ...session,
-                                    pointCount: pointCounts.pointCount,
-                                    foregroundPointCount:
-                                        pointCounts.foregroundPointCount,
-                                    backgroundPointCount:
-                                        pointCounts.backgroundPointCount,
-                                };
-                            }),
-                        );
-
-                        console.log(
-                            "[LocationLogScreen] Refreshed return session only:",
-                            {
-                                recordingSessionId:
-                                    returnAnchorSession.recordingSessionId,
-                                oldPointCount: returnAnchorSession.pointCount,
-                                newPointCount: pointCounts.pointCount,
-                                foregroundPointCount:
-                                    pointCounts.foregroundPointCount,
-                                backgroundPointCount:
-                                    pointCounts.backgroundPointCount,
-                            },
-                        );
-                    } catch (error) {
-                        /*
-                         * 地図から戻る操作自体は成功させる。
-                         * ポイント数更新失敗だけで一覧画面をエラーにしない。
-                         */
-                        console.error(
-                            "[LocationLogScreen] Return session point count refresh error:",
-                            error,
-                        );
-                    }
-                })();
+                    },
+                );
 
                 return;
             }

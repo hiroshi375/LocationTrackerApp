@@ -263,6 +263,22 @@ export default function AppInfoScreen({ navigation }: Props) {
                     <Text style={styles.buttonText}>使い方を見る</Text>
                 </Pressable>
 
+                <Pressable
+                    style={({ pressed }) => [
+                        styles.button,
+                        pressed && styles.buttonPressed,
+                    ]}
+                    onPress={() =>
+                        navigation.navigate("LocationLog", {
+                            startTutorial: true,
+                        })
+                    }
+                >
+                    <Text style={styles.buttonText}>
+                        アクティビティ履歴の使い方を見る
+                    </Text>
+                </Pressable>
+
                 <View style={styles.updateSection}>
                     <Text style={styles.sectionTitle}>アプリUpdate</Text>
 

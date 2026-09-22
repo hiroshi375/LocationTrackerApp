@@ -22,7 +22,11 @@ export type RootStackParamList = {
               startTutorial?: boolean;
           }
         | undefined;
-    LocationLog: undefined;
+    LocationLog:
+        | {
+              startTutorial?: boolean;
+          }
+        | undefined;
     AdminLocationLogImport: undefined;
     ActivityCalendar: undefined;
     LocationMap: {

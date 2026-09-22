@@ -114,7 +114,7 @@ type HistoryViewMode = "mine" | "shared";
 
 const SESSION_PAGE_SIZE = 15;
 
-export default function LocationLogScreen({ navigation }: Props) {
+export default function LocationLogScreen({ navigation, route }: Props) {
     const { start: startTour } = useTour();
     const activityHistorySearchTourRef = useTourTarget(
         "activity-history-search",
@@ -219,12 +219,6 @@ export default function LocationLogScreen({ navigation }: Props) {
      * 先頭へスクロールする必要があるかを保持する。
      */
     const shouldScrollToReturnAnchorRef = useRef(false);
-
-    /*
-     * アクティビティ履歴画面のGuidewayを
-     * 同じ画面表示中に複数回開始しないためのref。
-     */
-    const activityHistoryTourStartedRef = useRef(false);
 
     const loadRecordingSessions = useCallback(
         async ({
@@ -1712,14 +1706,11 @@ export default function LocationLogScreen({ navigation }: Props) {
     );
 
     /*
-     * アクティビティ履歴を初めて表示したときに、
-     * Guidewayによる画面紹介を開始する。
-     *
-     * カード詳細・操作ボタンもTour対象にしているため、
-     * 最初のアクティビティをあらかじめ展開してから開始する。
+     * 「アプリ情報」→「使い方を見る」などから
+     * 明示的に指定された場合だけアクティビティ履歴Tourを再生する。
      */
     useEffect(() => {
-        if (activityHistoryTourStartedRef.current) {
+        if (!route.params?.startTutorial) {
             return;
         }
 
@@ -1735,12 +1726,10 @@ export default function LocationLogScreen({ navigation }: Props) {
             return;
         }
 
-        activityHistoryTourStartedRef.current = true;
-
         const firstSession = recordingSessions[0];
 
         /*
-         * 「操作ボタン」のTour targetを存在させるため、
+         * 操作ボタンのTour targetを表示するため、
          * 先頭アクティビティを展開する。
          */
         setExpandedSessionIds((current) => {
@@ -1754,18 +1743,28 @@ export default function LocationLogScreen({ navigation }: Props) {
             return next;
         });
 
-        /*
-         * 展開後のViewが描画され、
-         * Guidewayが位置を測定できるまで少し待つ。
-         */
         const timerId = setTimeout(() => {
+            /*
+             * 二重起動防止のため先にパラメータを解除する。
+             */
+            navigation.setParams({
+                startTutorial: false,
+            });
+
             startTour("activity-history-tutorial");
         }, 500);
 
         return () => {
             clearTimeout(timerId);
         };
-    }, [historyViewMode, loading, recordingSessions, startTour]);
+    }, [
+        route.params?.startTutorial,
+        historyViewMode,
+        loading,
+        recordingSessions,
+        navigation,
+        startTour,
+    ]);
 
     return (
         <View style={styles.container}>

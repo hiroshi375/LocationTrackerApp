@@ -2451,6 +2451,11 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     <AppButton
                         title="使い方を見る"
                         onPress={() => startTour("home-tutorial")}
+                        disabled={
+                            isRecording ||
+                            startingRecording ||
+                            stoppingRecording
+                        }
                     />
                 </View>
 

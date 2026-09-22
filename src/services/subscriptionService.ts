@@ -2,6 +2,7 @@ import type { SubscriptionTier } from "../config/subscriptionPlan";
 import {
     getRevenueCatCustomerInfo,
     hasPremiumEntitlement,
+    isRevenueCatEnabled,
 } from "./revenueCatService";
 import { getCurrentUserProfile } from "./userProfileService";
 
@@ -24,6 +25,12 @@ export async function getCurrentSubscriptionTier(): Promise<SubscriptionTier> {
         console.log("[Subscription] Admin user -> PREMIUM");
 
         return "PREMIUM";
+    }
+
+    if (!isRevenueCatEnabled()) {
+        console.log("[Subscription] RevenueCat disabled -> FREE");
+
+        return "FREE";
     }
 
     /*

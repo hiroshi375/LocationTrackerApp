@@ -3,6 +3,7 @@ import Purchases from "react-native-purchases";
 
 import type { SubscriptionTier } from "../config/subscriptionPlan";
 import { getCurrentSubscriptionTier } from "../services/subscriptionService";
+import { isRevenueCatEnabled } from "../services/revenueCatService";
 
 export function useSubscription() {
     const [tier, setTier] = useState<SubscriptionTier>("FREE");
@@ -45,6 +46,18 @@ export function useSubscription() {
      * などでCustomerInfoが更新された際に呼ばれる。
      */
     useEffect(() => {
+        /*
+         * RevenueCat無効時はSDKのlistenerを登録しない。
+         *
+         * Preview環境でTest Store API Keyを
+         * RevenueCat SDKへ触らせないため。
+         */
+        if (!isRevenueCatEnabled()) {
+            console.log("[Subscription] RevenueCat listener skipped");
+
+            return;
+        }
+
         const handleCustomerInfoUpdated = () => {
             console.log("[Subscription] CustomerInfo updated -> refresh");
 

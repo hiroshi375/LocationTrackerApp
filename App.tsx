@@ -45,7 +45,7 @@ Amplify.configure(outputs);
 const appTours: TourDefinition[] = [
     {
         id: "home-tutorial",
-        showOnce: true,
+        //showOnce: true,
         steps: [
             {
                 id: "home-auto-recording",
@@ -75,7 +75,7 @@ const appTours: TourDefinition[] = [
     },
     {
         id: "activity-history-tutorial",
-        showOnce: true,
+        //showOnce: true,
         steps: [
             {
                 id: "activity-history-search",
@@ -444,7 +444,7 @@ function AppTourProvider({ children }: { children: ReactNode }) {
             insets={insets}
             storage={AsyncStorage}
             colorScheme="light"
-            overlayTapBehavior="none"
+            overlayTapBehavior="skip"
             theme={{
                 labels: {
                     next: "次へ",

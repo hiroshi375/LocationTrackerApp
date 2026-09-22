@@ -3,7 +3,7 @@ import "./src/tasks/backgroundLocationTask";
 
 import { Authenticator } from "@aws-amplify/ui-react-native";
 import { Amplify } from "aws-amplify";
-import { Hub } from "aws-amplify/utils";
+import { Hub, I18n } from "aws-amplify/utils";
 import { getCurrentUser, signOut } from "aws-amplify/auth";
 import { StatusBar } from "expo-status-bar";
 import {
@@ -36,6 +36,134 @@ import {
 } from "./src/services/singleDeviceSessionService";
 
 Amplify.configure(outputs);
+
+/*
+ * Amplify Authenticatorを日本語表示にする。
+ */
+I18n.putVocabulariesForLanguage("ja", {
+    // ログイン画面
+    "Sign In": "ログイン",
+    "Sign in": "ログイン",
+    "Sign in to your account": "ログイン",
+    "Signing in": "ログイン中...",
+    "Sign In with Amazon": "Amazonでログイン",
+    "Sign In with Apple": "Appleでログイン",
+    "Sign In with Facebook": "Facebookでログイン",
+    "Sign In with Google": "Googleでログイン",
+
+    Username: "ユーザー名",
+    "Enter your Username": "ユーザー名を入力",
+    "Enter your username": "ユーザー名を入力",
+
+    Password: "パスワード",
+    "Enter your Password": "パスワードを入力",
+    "Enter your password": "パスワードを入力",
+
+    "Forgot your password?": "パスワードをお忘れですか？",
+    "Forgot Password?": "パスワードをお忘れですか？",
+
+    "No account?": "アカウントをお持ちでないですか？",
+    "Create Account": "アカウント作成",
+    "Create account": "アカウント作成",
+
+    // アカウント作成画面
+    "Create a new account": "新しいアカウントを作成",
+    "Creating Account": "アカウントを作成中...",
+    "Creating account": "アカウントを作成中...",
+
+    Email: "メールアドレス",
+    "Enter your Email": "メールアドレスを入力",
+    "Enter your email": "メールアドレスを入力",
+
+    "Phone Number": "電話番号",
+
+    "Confirm Password": "パスワード確認",
+    "Please confirm your Password": "パスワードを再入力",
+    "Confirm your password": "パスワードを再入力",
+
+    "Already have an account?": "すでにアカウントをお持ちですか？",
+
+    // 確認コード
+    "Confirmation Code": "確認コード",
+    "Confirmation code": "確認コード",
+    "Enter your Confirmation Code": "確認コードを入力",
+    "Enter your confirmation code": "確認コードを入力",
+
+    Confirm: "確認",
+    Confirming: "確認中...",
+
+    "Resend Code": "確認コードを再送信",
+    "Resend code": "確認コードを再送信",
+    "Resending Code": "確認コードを再送信中...",
+
+    "We Emailed You": "確認コードをメールで送信しました",
+    "Your code is on the way. To log in, enter the code we emailed to":
+        "ログインするには、メールで送信された確認コードを入力してください。",
+
+    // パスワードリセット
+    "Reset Password": "パスワードをリセット",
+    "Reset password": "パスワードをリセット",
+    "Reset your password": "パスワードをリセット",
+
+    "Send Code": "確認コードを送信",
+    "Send code": "確認コードを送信",
+    Sending: "送信中...",
+
+    "New Password": "新しいパスワード",
+    "Enter your new password": "新しいパスワードを入力",
+
+    "Back to Sign In": "ログイン画面に戻る",
+    "Back to Sign in": "ログイン画面に戻る",
+
+    Submit: "送信",
+
+    // パスワード変更
+    "Change Password": "パスワードを変更",
+    "Change password": "パスワードを変更",
+
+    // 一般
+    Skip: "スキップ",
+    Cancel: "キャンセル",
+    Continue: "続ける",
+
+    // 主なエラーメッセージ
+    "Incorrect username or password.":
+        "メールアドレスまたはパスワードが正しくありません。",
+
+    "User does not exist.": "ユーザーが見つかりません。",
+
+    "User already exists": "このユーザーはすでに登録されています。",
+
+    "An account with the given email already exists.":
+        "このメールアドレスはすでに登録されています。",
+
+    "Invalid verification code provided, please try again.":
+        "確認コードが正しくありません。もう一度入力してください。",
+
+    "Invalid code provided, please request a code again.":
+        "確認コードが正しくありません。確認コードを再送信してください。",
+
+    "Attempt limit exceeded, please try after some time.":
+        "試行回数の上限を超えました。しばらくしてからもう一度お試しください。",
+
+    "Password attempts exceeded":
+        "パスワードの試行回数を超えました。しばらくしてからもう一度お試しください。",
+
+    "Network error": "ネットワークエラーが発生しました。",
+
+    "Password did not conform with policy":
+        "パスワードが必要な条件を満たしていません。",
+
+    "Password must have at least 8 characters":
+        "パスワードは8文字以上で入力してください。",
+
+    "Passwords must match": "パスワードが一致していません。",
+});
+
+/*
+ * 表示言語を日本語に固定する。
+ */
+I18n.setLanguage("ja");
 
 function SingleDeviceSessionGuard({ children }: { children: ReactNode }) {
     const [checking, setChecking] = useState(true);

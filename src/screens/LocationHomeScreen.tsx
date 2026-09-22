@@ -55,6 +55,7 @@ import {
     type RecordingSessionBackfillProgress,
     backfillRecordingSessionsFromLocationLogs,
     recalculateCurrentUserSubscriptionUsage,
+    reclassifyCurrentUserAutoActivitySessions,
     upsertRecordingSessionSummary,
 } from "../services/recordingSessionService";
 import {
@@ -188,6 +189,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [planLimitStatusMessage, setPlanLimitStatusMessage] = useState("");
     const [openingSharedLiveMap, setOpeningSharedLiveMap] = useState(false);
     const [backfillingSessions, setBackfillingSessions] = useState(false);
+    const [reclassifyingAutoSessions, setReclassifyingAutoSessions] =
+        useState(false);
     const [exportingHeadlessDiagnostic, setExportingHeadlessDiagnostic] =
         useState(false);
     const [backfillProgress, setBackfillProgress] =
@@ -2255,6 +2258,85 @@ export default function LocationHomeScreen({ navigation }: Props) {
         );
     };
 
+    const handleReclassifyAutoActivitySessions = async () => {
+        if (reclassifyingAutoSessions || backfillingSessions || isRecording) {
+            return;
+        }
+
+        Alert.alert(
+            "AUTO区分を再評価",
+            [
+                "AUTO判定されている既存のアクティビティを、",
+                "現在の判定ロジックで再評価します。",
+                "",
+                "手動で変更した区分（MANUAL）は変更されません。",
+                "",
+                "実行しますか？",
+            ].join("\n"),
+            [
+                {
+                    text: "キャンセル",
+                    style: "cancel",
+                },
+                {
+                    text: "実行",
+                    onPress: () => {
+                        void (async () => {
+                            try {
+                                setReclassifyingAutoSessions(true);
+
+                                const result =
+                                    await reclassifyCurrentUserAutoActivitySessions();
+
+                                const failureDetails =
+                                    result.failures.length > 0
+                                        ? [
+                                              "",
+                                              "失敗内容:",
+                                              ...result.failures
+                                                  .slice(0, 3)
+                                                  .map(
+                                                      (failure) =>
+                                                          `${failure.recordingSessionId}: ${failure.errorMessage}`,
+                                                  ),
+                                          ]
+                                        : [];
+
+                                Alert.alert(
+                                    "再評価完了",
+                                    [
+                                        `対象: ${result.targetSessionCount}件`,
+                                        `再評価成功: ${result.reclassifiedCount}件`,
+                                        `失敗: ${result.failedCount}件`,
+                                        ...failureDetails,
+                                    ].join("\n"),
+                                );
+
+                                /*
+                                 * 再評価によって当月件数が変わる可能性があるため、
+                                 * Home画面表示も更新する。
+                                 */
+                                await loadCurrentMonthActivityUsage();
+                            } catch (error) {
+                                console.error(
+                                    "AUTO activity reclassification error:",
+                                    error,
+                                );
+
+                                Alert.alert(
+                                    "再評価エラー",
+                                    "AUTO判定のアクティビティを再評価できませんでした。",
+                                );
+                            } finally {
+                                setReclassifyingAutoSessions(false);
+                            }
+                        })();
+                    },
+                },
+            ],
+        );
+    };
+
     return (
         <KeyboardAvoidingView
             style={styles.keyboardAvoiding}
@@ -2859,6 +2941,21 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             }
                             onPress={handleBackfillRecordingSessions}
                             disabled={backfillingSessions || isRecording}
+                            backgroundColor="#27445c"
+                        />
+
+                        <AppButton
+                            title={
+                                reclassifyingAutoSessions
+                                    ? "AUTO区分を再評価中..."
+                                    : "AUTO区分を再評価"
+                            }
+                            onPress={handleReclassifyAutoActivitySessions}
+                            disabled={
+                                reclassifyingAutoSessions ||
+                                backfillingSessions ||
+                                isRecording
+                            }
                             backgroundColor="#27445c"
                         />
 

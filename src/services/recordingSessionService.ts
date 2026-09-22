@@ -612,6 +612,167 @@ export async function recalculateCurrentUserSubscriptionUsage(): Promise<number>
     return recalculateCurrentMonthRecordedActivityUsage(currentUser.userId);
 }
 
+export type AutoActivityReclassificationResult = {
+    targetSessionCount: number;
+    reclassifiedCount: number;
+    failedCount: number;
+    failures: {
+        recordingSessionId: string;
+        errorMessage: string;
+    }[];
+};
+
+export async function reclassifyCurrentUserAutoActivitySessions(): Promise<AutoActivityReclassificationResult> {
+    const currentUser = await getCurrentUser();
+    const model = client.models.RecordingSession as any;
+
+    const allSessions: any[] = [];
+    let nextToken: string | null = null;
+
+    /*
+     * 現在ログインしているユーザーのRecordingSessionを全件取得する。
+     */
+    do {
+        const result = (await model.list({
+            filter: {
+                userId: {
+                    eq: currentUser.userId,
+                },
+            },
+            limit: 1000,
+            nextToken: nextToken ?? undefined,
+        })) as ListResult;
+
+        if (result.errors) {
+            throw new Error(
+                `RecordingSession list failed: ${JSON.stringify(
+                    result.errors,
+                )}`,
+            );
+        }
+
+        allSessions.push(...(result.data ?? []));
+        nextToken = result.nextToken ?? null;
+    } while (nextToken);
+
+    /*
+     * AUTO判定のセッションだけを対象にする。
+     *
+     * MANUALはユーザーが明示的に変更した区分なので
+     * 再評価対象にしない。
+     */
+    const autoSessions = allSessions.filter(
+        (session: any) =>
+            session?.userId === currentUser.userId &&
+            session?.classificationSource === "AUTO" &&
+            typeof session?.recordingSessionId === "string" &&
+            session.recordingSessionId.trim().length > 0,
+    );
+
+    /*
+     * 過去データに同じrecordingSessionIdの
+     * RecordingSessionが複数存在する可能性があるため、
+     * recordingSessionId単位で重複を除去する。
+     */
+    const sessionMap = new Map<string, any>();
+
+    for (const session of autoSessions) {
+        const recordingSessionId = session.recordingSessionId.trim();
+
+        if (!sessionMap.has(recordingSessionId)) {
+            sessionMap.set(recordingSessionId, session);
+        }
+    }
+
+    let reclassifiedCount = 0;
+    let failedCount = 0;
+
+    const failures: AutoActivityReclassificationResult["failures"] = [];
+
+    for (const [recordingSessionId, session] of sessionMap.entries()) {
+        try {
+            console.log("[ActivityReclassification] start:", {
+                recordingSessionId,
+                recordingSessionName: session.recordingSessionName ?? null,
+                previousActivityType: session.activityType ?? null,
+            });
+
+            /*
+             * upsertRecordingSessionSummary() 内で
+             * LocationLogを再取得し、
+             * 最新のclassifyActivitySession()で再判定する。
+             *
+             * 各セッション処理では集計を行わず、
+             * 全件完了後にまとめて再計算する。
+             */
+            await upsertRecordingSessionSummary(
+                recordingSessionId,
+                session.recordingSessionName ?? null,
+                Array.isArray(session.sharedOwners)
+                    ? session.sharedOwners.filter(
+                          (owner: unknown): owner is string =>
+                              typeof owner === "string" && owner.length > 0,
+                      )
+                    : [],
+                typeof session.recordingIntervalMs === "number"
+                    ? session.recordingIntervalMs
+                    : undefined,
+                typeof session.recordingDistanceMeters === "number"
+                    ? session.recordingDistanceMeters
+                    : undefined,
+                {
+                    skipAggregation: true,
+                    skipSubscriptionUsageRecalculation: true,
+                },
+            );
+
+            reclassifiedCount += 1;
+
+            console.log("[ActivityReclassification] completed:", {
+                recordingSessionId,
+                reclassifiedCount,
+                targetSessionCount: sessionMap.size,
+            });
+        } catch (error) {
+            failedCount += 1;
+
+            const errorMessage =
+                error instanceof Error ? error.message : String(error);
+
+            failures.push({
+                recordingSessionId,
+                errorMessage,
+            });
+
+            console.error("[ActivityReclassification] failed:", {
+                recordingSessionId,
+                error,
+            });
+        }
+    }
+
+    /*
+     * activityType / isAggregationTarget が変わる可能性があるため、
+     * 全セッション再評価後に集計を1回だけ再計算する。
+     */
+    await recalculateCurrentMonthRecordedActivityUsage(currentUser.userId);
+
+    await recalculateUserActivityAggregates(currentUser.userId);
+
+    console.log("[ActivityReclassification] finished:", {
+        targetSessionCount: sessionMap.size,
+        reclassifiedCount,
+        failedCount,
+    });
+
+    return {
+        targetSessionCount: sessionMap.size,
+        reclassifiedCount,
+        failedCount,
+        failures,
+    };
+}
+
 async function updateLocationLogClassification(
     logs: SessionLogItem[],
     activityType: ActivityType,

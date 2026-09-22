@@ -33,7 +33,11 @@ export type RootStackParamList = {
          * false: 共有中の現在地のみ表示
          */
         sharedLiveIsRecording?: boolean;
-
+        /*
+         * true:
+         * 「共有された履歴」から開いた過去アクティビティ
+         */
+        isSharedActivityHistory?: boolean;
         selectedLocation?: {
             id: string;
             latitude: number;

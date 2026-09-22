@@ -210,6 +210,8 @@ export default function LocationMapScreen({ route }: Props) {
     const sharedLiveUserId = route.params?.sharedLiveUserId ?? null;
     const sharedLiveLocationId = route.params?.sharedLiveLocationId ?? null;
     const sharedLiveIsRecording = route.params?.sharedLiveIsRecording ?? false;
+    const isSharedActivityHistory =
+        route.params?.isSharedActivityHistory ?? false;
 
     const recordingIntervalMs = route.params?.recordingIntervalMs ?? null;
     const recordingDistanceMeters =
@@ -2143,7 +2145,7 @@ export default function LocationMapScreen({ route }: Props) {
                         </View>
                     )}
 
-                    {isActivityHistoryMap && (
+                    {isActivityHistoryMap && !isSharedActivityHistory && (
                         <Pressable
                             style={({ pressed }) => [
                                 styles.locationLogListButton,
@@ -2162,160 +2164,174 @@ export default function LocationMapScreen({ route }: Props) {
                     )}
                 </View>
             )}
-            {showLocationLogList && isActivityHistoryMap && (
-                <View
-                    style={[
-                        styles.locationLogListPanel,
-                        {
-                            bottom: Math.max(insets.bottom + 8, 16),
-                        },
-                    ]}
-                >
-                    <View style={styles.locationLogListHeader}>
-                        <View>
-                            <Text style={styles.locationLogListTitle}>
-                                記録ポイント一覧
-                            </Text>
+            {showLocationLogList &&
+                isActivityHistoryMap &&
+                !isSharedActivityHistory && (
+                    <View
+                        style={[
+                            styles.locationLogListPanel,
+                            {
+                                bottom: Math.max(insets.bottom + 8, 16),
+                            },
+                        ]}
+                    >
+                        <View style={styles.locationLogListHeader}>
+                            <View>
+                                <Text style={styles.locationLogListTitle}>
+                                    記録ポイント一覧
+                                </Text>
 
-                            <Text style={styles.locationLogListSubTitle}>
-                                {editableLocationLogs.length}件
-                            </Text>
-                        </View>
+                                <Text style={styles.locationLogListSubTitle}>
+                                    {editableLocationLogs.length}件
+                                </Text>
+                            </View>
 
-                        <Pressable
-                            style={styles.locationLogListCloseButton}
-                            onPress={() => {
-                                setShowLocationLogList(false);
-                                setSelectedLogId(null);
-                                showRouteOverview();
-                            }}
-                        >
-                            <Text style={styles.locationLogListCloseButtonText}>
-                                閉じる
-                            </Text>
-                        </Pressable>
-                    </View>
-
-                    <View style={styles.locationLogListColumnHeader}>
-                        <Text style={styles.locationLogNoHeader}>No.</Text>
-                        <Text style={styles.locationLogTimeHeader}>時刻</Text>
-                        <Text style={styles.locationLogSourceHeader}>
-                            取得元
-                        </Text>
-                        <Text style={styles.locationLogAccuracyHeader}>
-                            精度
-                        </Text>
-                        <View style={styles.locationLogDeleteHeaderSpace} />
-                    </View>
-
-                    <FlatList
-                        style={styles.locationLogFlatList}
-                        data={editableLocationLogs}
-                        keyExtractor={(item) => item.id}
-                        extraData={{
-                            selectedLogId,
-                            deletingLogId,
-                        }}
-                        renderItem={({ item, index }) => {
-                            const isSelected = item.id === selectedLogId;
-
-                            const sourceText =
-                                item.source === "background" ? "B" : "F";
-
-                            const sourceDetail =
-                                item.source === "background"
-                                    ? "background"
-                                    : "foreground";
-
-                            const accuracyText =
-                                item.accuracy !== null &&
-                                item.accuracy !== undefined
-                                    ? `${Number(item.accuracy).toFixed(1)}m`
-                                    : "-";
-
-                            const isLowAccuracy =
-                                typeof item.accuracy === "number" &&
-                                item.accuracy >= 100;
-
-                            return (
-                                <Pressable
-                                    style={[
-                                        styles.locationLogListItem,
-                                        isSelected &&
-                                            styles.locationLogListItemSelected,
-                                    ]}
-                                    onPress={() =>
-                                        handleSelectLocationLog(item)
+                            <Pressable
+                                style={styles.locationLogListCloseButton}
+                                onPress={() => {
+                                    setShowLocationLogList(false);
+                                    setSelectedLogId(null);
+                                    showRouteOverview();
+                                }}
+                            >
+                                <Text
+                                    style={
+                                        styles.locationLogListCloseButtonText
                                     }
                                 >
-                                    <Text style={styles.locationLogNo}>
-                                        {index + 1}
-                                    </Text>
+                                    閉じる
+                                </Text>
+                            </Pressable>
+                        </View>
 
-                                    <Text style={styles.locationLogTime}>
-                                        {formatTimeWithSeconds(item.recordedAt)}
-                                    </Text>
+                        <View style={styles.locationLogListColumnHeader}>
+                            <Text style={styles.locationLogNoHeader}>No.</Text>
+                            <Text style={styles.locationLogTimeHeader}>
+                                時刻
+                            </Text>
+                            <Text style={styles.locationLogSourceHeader}>
+                                取得元
+                            </Text>
+                            <Text style={styles.locationLogAccuracyHeader}>
+                                精度
+                            </Text>
+                            <View style={styles.locationLogDeleteHeaderSpace} />
+                        </View>
 
-                                    <View
-                                        style={styles.locationLogSourceColumn}
-                                    >
-                                        <Text
-                                            style={[
-                                                styles.locationLogSourceBadge,
-                                                item.source === "background"
-                                                    ? styles.locationLogSourceBackground
-                                                    : styles.locationLogSourceForeground,
-                                            ]}
-                                        >
-                                            {sourceText}
-                                        </Text>
+                        <FlatList
+                            style={styles.locationLogFlatList}
+                            data={editableLocationLogs}
+                            keyExtractor={(item) => item.id}
+                            extraData={{
+                                selectedLogId,
+                                deletingLogId,
+                            }}
+                            renderItem={({ item, index }) => {
+                                const isSelected = item.id === selectedLogId;
 
-                                        <Text
-                                            style={styles.locationLogSourceText}
-                                        >
-                                            {sourceDetail}
-                                        </Text>
-                                    </View>
+                                const sourceText =
+                                    item.source === "background" ? "B" : "F";
 
-                                    <Text
-                                        style={[
-                                            styles.locationLogAccuracy,
-                                            isLowAccuracy &&
-                                                styles.locationLogAccuracyWarning,
-                                        ]}
-                                    >
-                                        {accuracyText}
-                                    </Text>
+                                const sourceDetail =
+                                    item.source === "background"
+                                        ? "background"
+                                        : "foreground";
 
+                                const accuracyText =
+                                    item.accuracy !== null &&
+                                    item.accuracy !== undefined
+                                        ? `${Number(item.accuracy).toFixed(1)}m`
+                                        : "-";
+
+                                const isLowAccuracy =
+                                    typeof item.accuracy === "number" &&
+                                    item.accuracy >= 100;
+
+                                return (
                                     <Pressable
                                         style={[
-                                            styles.locationLogDeleteButton,
-                                            deletingLogId === item.id &&
-                                                styles.locationLogDeleteButtonDisabled,
+                                            styles.locationLogListItem,
+                                            isSelected &&
+                                                styles.locationLogListItemSelected,
                                         ]}
-                                        disabled={deletingLogId === item.id}
-                                        onPress={(event) => {
-                                            event.stopPropagation();
-
-                                            handleDeleteLocationLog(item);
-                                        }}
+                                        onPress={() =>
+                                            handleSelectLocationLog(item)
+                                        }
                                     >
-                                        <Text
+                                        <Text style={styles.locationLogNo}>
+                                            {index + 1}
+                                        </Text>
+
+                                        <Text style={styles.locationLogTime}>
+                                            {formatTimeWithSeconds(
+                                                item.recordedAt,
+                                            )}
+                                        </Text>
+
+                                        <View
                                             style={
-                                                styles.locationLogDeleteButtonText
+                                                styles.locationLogSourceColumn
                                             }
                                         >
-                                            {deletingLogId === item.id
-                                                ? "..."
-                                                : "削除"}
+                                            <Text
+                                                style={[
+                                                    styles.locationLogSourceBadge,
+                                                    item.source === "background"
+                                                        ? styles.locationLogSourceBackground
+                                                        : styles.locationLogSourceForeground,
+                                                ]}
+                                            >
+                                                {sourceText}
+                                            </Text>
+
+                                            <Text
+                                                style={
+                                                    styles.locationLogSourceText
+                                                }
+                                            >
+                                                {sourceDetail}
+                                            </Text>
+                                        </View>
+
+                                        <Text
+                                            style={[
+                                                styles.locationLogAccuracy,
+                                                isLowAccuracy &&
+                                                    styles.locationLogAccuracyWarning,
+                                            ]}
+                                        >
+                                            {accuracyText}
                                         </Text>
+
+                                        <Pressable
+                                            style={[
+                                                styles.locationLogDeleteButton,
+                                                deletingLogId === item.id &&
+                                                    styles.locationLogDeleteButtonDisabled,
+                                            ]}
+                                            disabled={deletingLogId === item.id}
+                                            onPress={(event) => {
+                                                event.stopPropagation();
+
+                                                handleDeleteLocationLog(item);
+                                            }}
+                                        >
+                                            <Text
+                                                style={
+                                                    styles.locationLogDeleteButtonText
+                                                }
+                                            >
+                                                {deletingLogId === item.id
+                                                    ? "..."
+                                                    : "削除"}
+                                            </Text>
+                                        </Pressable>
                                     </Pressable>
-                                </Pressable>
-                            );
-                        }}
-                    />
-                </View>
-            )}
+                                );
+                            }}
+                        />
+                    </View>
+                )}
         </View>
     );
 }
@@ -3310,6 +3326,7 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         paddingHorizontal: 32,
         backgroundColor: "#f5f5f5",
+        transform: [{ translateY: -60 }],
     },
 
     pixelMapUnderConstructionIcon: {

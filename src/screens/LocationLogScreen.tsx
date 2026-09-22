@@ -997,12 +997,6 @@ export default function LocationLogScreen({ navigation }: Props) {
     }, [shareUsers, shareSearchText]);
 
     const handleOpenSessionMap = (item: RecordingSessionDisplayItem) => {
-        /*
-         * 自分の履歴のみ、
-         * 地図から戻った際の一覧位置復元を行う。
-         *
-         * 共有履歴はfocus時に再取得する。
-         */
         if (historyViewMode === "mine") {
             returnAnchorSessionRef.current = item;
         } else {
@@ -1011,6 +1005,8 @@ export default function LocationLogScreen({ navigation }: Props) {
 
         navigation.push("LocationMap", {
             recordingSessionId: item.recordingSessionId,
+
+            isSharedActivityHistory: historyViewMode === "shared",
         });
     };
 
@@ -1863,22 +1859,24 @@ export default function LocationLogScreen({ navigation }: Props) {
                                                     </Text>
                                                 </View>
 
-                                                <Text
-                                                    style={
-                                                        styles.activitySubText
-                                                    }
-                                                >
-                                                    判定:{" "}
-                                                    {item.classificationSource ===
-                                                    "MANUAL"
-                                                        ? "手動"
-                                                        : "自動"}
-                                                    {typeof item.averageSpeedKmh ===
-                                                        "number" &&
-                                                        ` / 平均 ${item.averageSpeedKmh.toFixed(
-                                                            1,
-                                                        )}km/h`}
-                                                </Text>
+                                                {historyViewMode === "mine" && (
+                                                    <Text
+                                                        style={
+                                                            styles.activitySubText
+                                                        }
+                                                    >
+                                                        判定:{" "}
+                                                        {item.classificationSource ===
+                                                        "MANUAL"
+                                                            ? "手動"
+                                                            : "自動"}
+                                                        {typeof item.averageSpeedKmh ===
+                                                            "number" &&
+                                                            ` / 平均 ${item.averageSpeedKmh.toFixed(
+                                                                1,
+                                                            )}km/h`}
+                                                    </Text>
+                                                )}
 
                                                 {historyViewMode === "mine" && (
                                                     <Pressable
@@ -1919,23 +1917,26 @@ export default function LocationLogScreen({ navigation }: Props) {
                                                 )}
                                             </View>
 
-                                            {hasBatteryRange(
-                                                item.startBatteryLevel,
-                                                item.endBatteryLevel,
-                                            ) && (
-                                                <Text
-                                                    style={styles.batteryText}
-                                                >
-                                                    バッテリー消費:{" "}
-                                                    {formatBatteryPercent(
-                                                        item.startBatteryLevel,
-                                                    )}{" "}
-                                                    →{" "}
-                                                    {formatBatteryPercent(
-                                                        item.endBatteryLevel,
-                                                    )}
-                                                </Text>
-                                            )}
+                                            {historyViewMode === "mine" &&
+                                                hasBatteryRange(
+                                                    item.startBatteryLevel,
+                                                    item.endBatteryLevel,
+                                                ) && (
+                                                    <Text
+                                                        style={
+                                                            styles.batteryText
+                                                        }
+                                                    >
+                                                        バッテリー消費:{" "}
+                                                        {formatBatteryPercent(
+                                                            item.startBatteryLevel,
+                                                        )}{" "}
+                                                        →{" "}
+                                                        {formatBatteryPercent(
+                                                            item.endBatteryLevel,
+                                                        )}
+                                                    </Text>
+                                                )}
                                         </>
                                     )}
                                 </View>

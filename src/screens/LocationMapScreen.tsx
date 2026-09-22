@@ -184,7 +184,7 @@ const CAMERA_CENTER_LATITUDE_OFFSET = 0.0015;
 //        ? `https://api.maptiler.com/maps/${MAPTILER_MAP_ID}/256/{z}/{x}/{y}.png?key=${MAPTILER_API_KEY}`
 //        : undefined;
 
-export default function LocationMapScreen({ route }: Props) {
+export default function LocationMapScreen({ route, navigation }: Props) {
     const insets = useSafeAreaInsets();
     const mapRef = useRef<MapView | null>(null);
     const hasFittedInitialRouteRef = useRef(false);
@@ -1362,6 +1362,44 @@ export default function LocationMapScreen({ route }: Props) {
             );
         };
     }, []);
+
+    useEffect(() => {
+        const unsubscribeBeforeRemove = navigation.addListener(
+            "beforeRemove",
+            () => {
+                console.log(
+                    "[LocationMapScreen] beforeRemove:",
+                    new Date().toISOString(),
+                );
+            },
+        );
+
+        const unsubscribeTransitionStart = navigation.addListener(
+            "transitionStart",
+            () => {
+                console.log(
+                    "[LocationMapScreen] transitionStart:",
+                    new Date().toISOString(),
+                );
+            },
+        );
+
+        const unsubscribeTransitionEnd = navigation.addListener(
+            "transitionEnd",
+            () => {
+                console.log(
+                    "[LocationMapScreen] transitionEnd:",
+                    new Date().toISOString(),
+                );
+            },
+        );
+
+        return () => {
+            unsubscribeBeforeRemove();
+            unsubscribeTransitionStart();
+            unsubscribeTransitionEnd();
+        };
+    }, [navigation]);
 
     if (!hasLoaded || loading) {
         return (

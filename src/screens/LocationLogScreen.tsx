@@ -6,6 +6,7 @@ import {
     ActivityIndicator,
     Alert,
     FlatList,
+    Image,
     KeyboardAvoidingView,
     Modal,
     Platform,
@@ -31,6 +32,7 @@ import {
     recalculateCurrentUserSubscriptionUsage,
     updateRecordingSessionActivityType,
 } from "../services/recordingSessionService";
+import { getUrl } from "aws-amplify/storage";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationLog">;
 
@@ -92,6 +94,7 @@ type UserProfileItem = {
     displayName?: string | null;
     ownerValue?: string | null;
     searchText?: string | null;
+    iconImagePath?: string | null;
 };
 
 type LocationLogListResult = {
@@ -157,8 +160,12 @@ export default function LocationLogScreen({ navigation }: Props) {
     const [shareModalVisible, setShareModalVisible] = useState(false);
     const [shareSearchText, setShareSearchText] = useState("");
     const [shareUsers, setShareUsers] = useState<UserProfileItem[]>([]);
-    const [selectedShareUser, setSelectedShareUser] =
-        useState<UserProfileItem | null>(null);
+    const [selectedShareUsers, setSelectedShareUsers] = useState<
+        UserProfileItem[]
+    >([]);
+    const [shareUserIconUrls, setShareUserIconUrls] = useState<
+        Record<string, string | null>
+    >({});
     const [sharingSession, setSharingSession] =
         useState<RecordingSessionDisplayItem | null>(null);
     const [shareSearching, setShareSearching] = useState(false);
@@ -981,6 +988,22 @@ export default function LocationLogScreen({ navigation }: Props) {
         [historyViewMode, loadSharedRecordingSessions],
     );
 
+    const toggleShareUser = useCallback((user: UserProfileItem) => {
+        setSelectedShareUsers((currentUsers) => {
+            const alreadySelected = currentUsers.some(
+                (selectedUser) => selectedUser.id === user.id,
+            );
+
+            if (alreadySelected) {
+                return currentUsers.filter(
+                    (selectedUser) => selectedUser.id !== user.id,
+                );
+            }
+
+            return [...currentUsers, user];
+        });
+    }, []);
+
     const filteredShareUsers = useMemo(() => {
         const keyword = shareSearchText.trim().toLowerCase();
 
@@ -1237,7 +1260,8 @@ export default function LocationLogScreen({ navigation }: Props) {
         setSharingSession(item);
         setShareSearchText("");
         setShareUsers([]);
-        setSelectedShareUser(null);
+        setSelectedShareUsers([]);
+        setShareUserIconUrls({});
         setShareModalVisible(true);
 
         void loadShareUsers();
@@ -1252,7 +1276,8 @@ export default function LocationLogScreen({ navigation }: Props) {
         setSharingSession(null);
         setShareSearchText("");
         setShareUsers([]);
-        setSelectedShareUser(null);
+        setSelectedShareUsers([]);
+        setShareUserIconUrls({});
     };
 
     const openEditNameModal = (item: RecordingSessionDisplayItem) => {
@@ -1298,6 +1323,7 @@ export default function LocationLogScreen({ navigation }: Props) {
                     displayName: user.displayName ?? null,
                     ownerValue: user.ownerValue ?? null,
                     searchText: user.searchText ?? null,
+                    iconImagePath: user.iconImagePath ?? null,
                 }))
                 .filter((user) => {
                     if (!user.ownerValue) {
@@ -1314,8 +1340,37 @@ export default function LocationLogScreen({ navigation }: Props) {
                     return aName.localeCompare(bName);
                 });
 
+            const iconEntries = await Promise.all(
+                users.map(async (user) => {
+                    if (!user.iconImagePath) {
+                        return [user.id, null] as const;
+                    }
+
+                    try {
+                        const result = await getUrl({
+                            path: user.iconImagePath,
+                            options: {
+                                expiresIn: 3600,
+                            },
+                        });
+
+                        return [user.id, result.url.toString()] as const;
+                    } catch (error) {
+                        console.error("Load share user icon error:", {
+                            userId: user.userId,
+                            iconImagePath: user.iconImagePath,
+                            error,
+                        });
+
+                        return [user.id, null] as const;
+                    }
+                }),
+            );
+
+            setShareUserIconUrls(Object.fromEntries(iconEntries));
+
             setShareUsers(users);
-            setSelectedShareUser(null);
+            setSelectedShareUsers([]);
         } catch (error) {
             console.error("UserProfile list error:", error);
             Alert.alert("取得エラー", "共有先ユーザーの取得に失敗しました。");
@@ -1324,20 +1379,28 @@ export default function LocationLogScreen({ navigation }: Props) {
         }
     }, []);
 
-    const shareSessionWithSelectedUser = async () => {
+    const shareSessionWithSelectedUsers = async () => {
         if (!sharingSession) {
             return;
         }
 
-        if (!selectedShareUser?.ownerValue) {
-            Alert.alert("共有先未選択", "共有するユーザーを選択してください。");
+        const selectedOwnerValues = selectedShareUsers
+            .map((user) => user.ownerValue)
+            .filter(
+                (ownerValue): ownerValue is string =>
+                    typeof ownerValue === "string" && ownerValue.length > 0,
+            );
+
+        if (selectedOwnerValues.length === 0) {
+            Alert.alert(
+                "共有先未選択",
+                "共有するユーザーを1人以上選択してください。",
+            );
             return;
         }
 
         try {
             setSharing(true);
-
-            const sharedOwner = selectedShareUser.ownerValue;
 
             const sessionLogs = await listLocationLogsBySessionId(
                 sharingSession.recordingSessionId,
@@ -1348,7 +1411,10 @@ export default function LocationLogScreen({ navigation }: Props) {
                     const currentSharedOwners = log.sharedOwners ?? [];
 
                     const nextSharedOwners = Array.from(
-                        new Set([...currentSharedOwners, sharedOwner]),
+                        new Set([
+                            ...currentSharedOwners,
+                            ...selectedOwnerValues,
+                        ]),
                     );
 
                     return client.models.LocationLog.update({
@@ -1362,7 +1428,9 @@ export default function LocationLogScreen({ navigation }: Props) {
 
             if (hasErrors) {
                 console.error("Share session errors:", updateResults);
+
                 Alert.alert("共有エラー", "位置情報の共有に失敗しました。");
+
                 return;
             }
 
@@ -1372,7 +1440,10 @@ export default function LocationLogScreen({ navigation }: Props) {
                 sharingSession.sharedOwners ?? [];
 
             const nextSessionSharedOwners = Array.from(
-                new Set([...currentSessionSharedOwners, sharedOwner]),
+                new Set([
+                    ...currentSessionSharedOwners,
+                    ...selectedOwnerValues,
+                ]),
             );
 
             const recordingSessionUpdateResult =
@@ -1386,6 +1457,13 @@ export default function LocationLogScreen({ navigation }: Props) {
                     "RecordingSession share update errors:",
                     recordingSessionUpdateResult.errors,
                 );
+
+                Alert.alert(
+                    "共有エラー",
+                    "アクティビティ情報の共有に失敗しました。",
+                );
+
+                return;
             }
 
             setRecordingSessions((currentSessions) =>
@@ -1401,10 +1479,15 @@ export default function LocationLogScreen({ navigation }: Props) {
                 }),
             );
 
-            Alert.alert("共有完了", "選択したユーザーに共有しました。");
+            Alert.alert(
+                "共有完了",
+                `${selectedOwnerValues.length}人のユーザーに共有しました。`,
+            );
+
             closeShareModal();
         } catch (error) {
             console.error("Share session error:", error);
+
             Alert.alert("共有エラー", "位置情報の共有に失敗しました。");
         } finally {
             setSharing(false);
@@ -2070,6 +2153,10 @@ export default function LocationLogScreen({ navigation }: Props) {
                             共有先ユーザーを選択
                         </Text>
 
+                        <Text style={styles.shareSelectionText}>
+                            選択中: {selectedShareUsers.length}人
+                        </Text>
+
                         <TextInput
                             style={styles.shareSearchInput}
                             value={shareSearchText}
@@ -2098,8 +2185,13 @@ export default function LocationLogScreen({ navigation }: Props) {
                                 </Text>
                             ) : (
                                 filteredShareUsers.map((user) => {
-                                    const selected =
-                                        selectedShareUser?.id === user.id;
+                                    const selected = selectedShareUsers.some(
+                                        (selectedUser) =>
+                                            selectedUser.id === user.id,
+                                    );
+
+                                    const iconUrl =
+                                        shareUserIconUrls[user.id] ?? null;
 
                                     return (
                                         <Pressable
@@ -2110,17 +2202,85 @@ export default function LocationLogScreen({ navigation }: Props) {
                                                     styles.shareUserItemSelected,
                                             ]}
                                             onPress={() =>
-                                                setSelectedShareUser(user)
+                                                toggleShareUser(user)
                                             }
                                             disabled={sharing}
                                         >
-                                            <Text style={styles.shareUserName}>
-                                                {user.displayName ||
-                                                    "名前未設定"}
-                                            </Text>
-                                            <Text style={styles.shareUserEmail}>
-                                                {user.email || "メールなし"}
-                                            </Text>
+                                            <View style={styles.shareUserRow}>
+                                                {iconUrl ? (
+                                                    <Image
+                                                        source={{
+                                                            uri: iconUrl,
+                                                        }}
+                                                        style={
+                                                            styles.shareUserIcon
+                                                        }
+                                                    />
+                                                ) : (
+                                                    <View
+                                                        style={
+                                                            styles.shareUserIconPlaceholder
+                                                        }
+                                                    >
+                                                        <Text
+                                                            style={
+                                                                styles.shareUserIconPlaceholderText
+                                                            }
+                                                        >
+                                                            {(
+                                                                user.displayName ||
+                                                                user.email ||
+                                                                "?"
+                                                            )
+                                                                .trim()
+                                                                .slice(0, 1)
+                                                                .toUpperCase()}
+                                                        </Text>
+                                                    </View>
+                                                )}
+
+                                                <View
+                                                    style={
+                                                        styles.shareUserTextContainer
+                                                    }
+                                                >
+                                                    <Text
+                                                        style={
+                                                            styles.shareUserName
+                                                        }
+                                                    >
+                                                        {user.displayName ||
+                                                            "名前未設定"}
+                                                    </Text>
+
+                                                    <Text
+                                                        style={
+                                                            styles.shareUserEmail
+                                                        }
+                                                    >
+                                                        {user.email ||
+                                                            "メールなし"}
+                                                    </Text>
+                                                </View>
+
+                                                <View
+                                                    style={[
+                                                        styles.shareUserCheckbox,
+                                                        selected &&
+                                                            styles.shareUserCheckboxSelected,
+                                                    ]}
+                                                >
+                                                    {selected && (
+                                                        <Text
+                                                            style={
+                                                                styles.shareUserCheckboxText
+                                                            }
+                                                        >
+                                                            ✓
+                                                        </Text>
+                                                    )}
+                                                </View>
+                                            </View>
                                         </Pressable>
                                     );
                                 })
@@ -2141,13 +2301,21 @@ export default function LocationLogScreen({ navigation }: Props) {
                             <Pressable
                                 style={[
                                     styles.modalPrimaryButton,
-                                    sharing && styles.deleteButtonDisabled,
+                                    (sharing ||
+                                        selectedShareUsers.length === 0) &&
+                                        styles.deleteButtonDisabled,
                                 ]}
-                                onPress={shareSessionWithSelectedUser}
-                                disabled={sharing}
+                                onPress={shareSessionWithSelectedUsers}
+                                disabled={
+                                    sharing || selectedShareUsers.length === 0
+                                }
                             >
                                 <Text style={styles.modalPrimaryButtonText}>
-                                    {sharing ? "共有中..." : "共有する"}
+                                    {sharing
+                                        ? "共有中..."
+                                        : selectedShareUsers.length > 0
+                                          ? `${selectedShareUsers.length}人に共有する`
+                                          : "共有する"}
                                 </Text>
                             </Pressable>
                         </View>
@@ -2902,5 +3070,69 @@ const styles = StyleSheet.create({
     recordingSettingsText: {
         color: "#555",
         fontSize: 13,
+    },
+
+    shareSelectionText: {
+        marginTop: -6,
+        marginBottom: 10,
+        fontSize: 13,
+        color: "#666",
+    },
+
+    shareUserRow: {
+        flexDirection: "row",
+        alignItems: "center",
+    },
+
+    shareUserIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        marginRight: 10,
+        backgroundColor: "#e6edf3",
+    },
+
+    shareUserIconPlaceholder: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        marginRight: 10,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#dbe5ec",
+    },
+
+    shareUserIconPlaceholderText: {
+        fontSize: 18,
+        fontWeight: "bold",
+        color: "#2f4f66",
+    },
+
+    shareUserTextContainer: {
+        flex: 1,
+        minWidth: 0,
+    },
+
+    shareUserCheckbox: {
+        width: 24,
+        height: 24,
+        marginLeft: 10,
+        borderRadius: 12,
+        borderWidth: 2,
+        borderColor: "#9aaab6",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#fff",
+    },
+
+    shareUserCheckboxSelected: {
+        borderColor: "#4b6f8f",
+        backgroundColor: "#4b6f8f",
+    },
+
+    shareUserCheckboxText: {
+        color: "#fff",
+        fontSize: 15,
+        fontWeight: "bold",
     },
 });

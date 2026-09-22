@@ -52,6 +52,7 @@ import {
     getRecordingContinuationState,
 } from "../services/recordingContinuationService";
 import {
+    type AutoActivityReclassificationProgress,
     type RecordingSessionBackfillProgress,
     backfillRecordingSessionsFromLocationLogs,
     recalculateCurrentUserSubscriptionUsage,
@@ -191,6 +192,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [backfillingSessions, setBackfillingSessions] = useState(false);
     const [reclassifyingAutoSessions, setReclassifyingAutoSessions] =
         useState(false);
+    const [autoReclassificationProgress, setAutoReclassificationProgress] =
+        useState<AutoActivityReclassificationProgress | null>(null);
     const [exportingHeadlessDiagnostic, setExportingHeadlessDiagnostic] =
         useState(false);
     const [backfillProgress, setBackfillProgress] =
@@ -2178,6 +2181,38 @@ export default function LocationHomeScreen({ navigation }: Props) {
         }
     }, [backfillingSessions, backfillProgress]);
 
+    const autoReclassificationProgressText = useMemo(() => {
+        if (!reclassifyingAutoSessions) {
+            return "";
+        }
+
+        if (!autoReclassificationProgress) {
+            return "再評価を開始しています...";
+        }
+
+        switch (autoReclassificationProgress.phase) {
+            case "loadingRecordingSessions":
+                return autoReclassificationProgress.loadedRecordingSessionCount >
+                    0
+                    ? `RecordingSessionを取得中... ${autoReclassificationProgress.loadedRecordingSessionCount.toLocaleString()}件`
+                    : "RecordingSessionを取得中...";
+
+            case "loadingLocationLogs":
+                return autoReclassificationProgress.loadedLocationLogCount > 0
+                    ? `LocationLogを取得中... ${autoReclassificationProgress.loadedLocationLogCount.toLocaleString()}件`
+                    : "LocationLogを取得中...";
+
+            case "reclassifyingSessions":
+                return `AUTO区分を再評価中... ${autoReclassificationProgress.processedSessionCount} / ${autoReclassificationProgress.totalSessionCount}`;
+
+            case "recalculatingAggregates":
+                return "月間・トータル集計を再計算中...";
+
+            default:
+                return "AUTO区分を再評価中...";
+        }
+    }, [reclassifyingAutoSessions, autoReclassificationProgress]);
+
     const handleBackfillRecordingSessions = async () => {
         if (backfillingSessions || isRecording) {
             return;
@@ -2285,8 +2320,29 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             try {
                                 setReclassifyingAutoSessions(true);
 
+                                setAutoReclassificationProgress({
+                                    phase: "loadingRecordingSessions",
+                                    loadedRecordingSessionCount: 0,
+                                    loadedLocationLogCount: 0,
+                                    processedSessionCount: 0,
+                                    totalSessionCount: 0,
+                                    changedSessionCount: 0,
+                                    unchangedSessionCount: 0,
+                                    updatedLocationLogCount: 0,
+                                    skippedUnchangedLocationLogCount: 0,
+                                    failedCount: 0,
+                                    currentRecordingSessionId: null,
+                                    currentRecordingSessionName: null,
+                                });
+
                                 const result =
-                                    await reclassifyCurrentUserAutoActivitySessions();
+                                    await reclassifyCurrentUserAutoActivitySessions(
+                                        (progress) => {
+                                            setAutoReclassificationProgress(
+                                                progress,
+                                            );
+                                        },
+                                    );
 
                                 const failureDetails =
                                     result.failures.length > 0
@@ -2305,8 +2361,13 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 Alert.alert(
                                     "再評価完了",
                                     [
-                                        `対象: ${result.targetSessionCount}件`,
+                                        `LocationLog走査: ${result.locationLogCount.toLocaleString()}件`,
+                                        `AUTO対象: ${result.targetSessionCount}件`,
                                         `再評価成功: ${result.reclassifiedCount}件`,
+                                        `区分変更あり: ${result.changedSessionCount}件`,
+                                        `区分変更なし: ${result.unchangedSessionCount}件`,
+                                        `LocationLog更新: ${result.updatedLocationLogCount.toLocaleString()}件`,
+                                        `LocationLog更新省略: ${result.skippedUnchangedLocationLogCount.toLocaleString()}件`,
                                         `失敗: ${result.failedCount}件`,
                                         ...failureDetails,
                                     ].join("\n"),
@@ -2329,6 +2390,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 );
                             } finally {
                                 setReclassifyingAutoSessions(false);
+                                setAutoReclassificationProgress(null);
                             }
                         })();
                     },
@@ -2947,7 +3009,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
                         <AppButton
                             title={
                                 reclassifyingAutoSessions
-                                    ? "AUTO区分を再評価中..."
+                                    ? autoReclassificationProgressText
                                     : "AUTO区分を再評価"
                             }
                             onPress={handleReclassifyAutoActivitySessions}
@@ -2958,6 +3020,108 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             }
                             backgroundColor="#27445c"
                         />
+
+                        {reclassifyingAutoSessions &&
+                            autoReclassificationProgress && (
+                                <View style={styles.backfillProgressContainer}>
+                                    <ActivityIndicator size="small" />
+
+                                    <Text style={styles.backfillProgressText}>
+                                        {autoReclassificationProgressText}
+                                    </Text>
+
+                                    {autoReclassificationProgress.phase ===
+                                        "reclassifyingSessions" &&
+                                        autoReclassificationProgress.totalSessionCount >
+                                            0 && (
+                                            <>
+                                                <View
+                                                    style={
+                                                        styles.backfillProgressTrack
+                                                    }
+                                                >
+                                                    <View
+                                                        style={[
+                                                            styles.backfillProgressBar,
+                                                            {
+                                                                width: `${Math.min(
+                                                                    100,
+                                                                    Math.max(
+                                                                        0,
+                                                                        (autoReclassificationProgress.processedSessionCount /
+                                                                            autoReclassificationProgress.totalSessionCount) *
+                                                                            100,
+                                                                    ),
+                                                                )}%`,
+                                                            },
+                                                        ]}
+                                                    />
+                                                </View>
+
+                                                <Text
+                                                    style={
+                                                        styles.backfillProgressDetail
+                                                    }
+                                                >
+                                                    区分変更:{" "}
+                                                    {
+                                                        autoReclassificationProgress.changedSessionCount
+                                                    }
+                                                    件　変更なし:{" "}
+                                                    {
+                                                        autoReclassificationProgress.unchangedSessionCount
+                                                    }
+                                                    件
+                                                </Text>
+
+                                                <Text
+                                                    style={
+                                                        styles.backfillProgressDetail
+                                                    }
+                                                >
+                                                    LocationLog更新:{" "}
+                                                    {autoReclassificationProgress.updatedLocationLogCount.toLocaleString()}
+                                                    件
+                                                </Text>
+
+                                                <Text
+                                                    style={
+                                                        styles.backfillProgressDetail
+                                                    }
+                                                >
+                                                    LocationLog更新省略:{" "}
+                                                    {autoReclassificationProgress.skippedUnchangedLocationLogCount.toLocaleString()}
+                                                    件
+                                                </Text>
+
+                                                <Text
+                                                    style={
+                                                        styles.backfillProgressDetail
+                                                    }
+                                                >
+                                                    失敗:{" "}
+                                                    {
+                                                        autoReclassificationProgress.failedCount
+                                                    }
+                                                    件
+                                                </Text>
+
+                                                {autoReclassificationProgress.currentRecordingSessionName && (
+                                                    <Text
+                                                        style={
+                                                            styles.backfillProgressDetail
+                                                        }
+                                                    >
+                                                        処理中:{" "}
+                                                        {
+                                                            autoReclassificationProgress.currentRecordingSessionName
+                                                        }
+                                                    </Text>
+                                                )}
+                                            </>
+                                        )}
+                                </View>
+                            )}
 
                         {backfillingSessions && backfillProgress && (
                             <View style={styles.backfillProgressContainer}>

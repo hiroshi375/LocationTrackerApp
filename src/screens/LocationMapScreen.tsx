@@ -1755,7 +1755,6 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                                     anchor={{ x: 0.5, y: 0.5 }}
                                     centerOffset={{ x: 0, y: 0 }}
                                     zIndex={10}
-                                    tracksViewChanges={false}
                                 >
                                     <View
                                         collapsable={false}
@@ -1790,7 +1789,6 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                             anchor={{ x: 0.5, y: 0.5 }}
                             centerOffset={{ x: 0, y: 0 }}
                             zIndex={100}
-                            tracksViewChanges={false}
                         >
                             <View
                                 collapsable={false}
@@ -1819,7 +1817,6 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                             anchor={{ x: 0.5, y: 0.5 }}
                             centerOffset={{ x: 0, y: 0 }}
                             zIndex={100}
-                            tracksViewChanges={false}
                         >
                             <View
                                 collapsable={false}
@@ -1853,7 +1850,6 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                                     selectedLocation,
                                 )}
                                 anchor={{ x: 0.5, y: 0.5 }}
-                                tracksViewChanges={false}
                             >
                                 <View
                                     style={[
@@ -1881,7 +1877,6 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                             anchor={{ x: 0.5, y: 0.5 }}
                             centerOffset={{ x: 0, y: 0 }}
                             zIndex={300}
-                            tracksViewChanges={false}
                         >
                             <View
                                 collapsable={false}

@@ -14,7 +14,21 @@ const REVENUECAT_TEST_API_KEY =
 
 let revenueCatConfigured = false;
 
-export function configureRevenueCat(): void {
+const REVENUECAT_ENABLED =
+    process.env.EXPO_PUBLIC_REVENUECAT_ENABLED !== "false";
+
+export function isRevenueCatEnabled(): boolean {
+    return REVENUECAT_ENABLED;
+}
+
+export async function configureRevenueCat(): Promise<void> {
+    if (!REVENUECAT_ENABLED) {
+        console.log(
+            "[RevenueCat] Disabled by EXPO_PUBLIC_REVENUECAT_ENABLED=false",
+        );
+        return;
+    }
+
     if (revenueCatConfigured) {
         return;
     }
@@ -39,7 +53,15 @@ export function configureRevenueCat(): void {
 export async function identifyRevenueCatUser(
     userId: string,
 ): Promise<CustomerInfo> {
-    configureRevenueCat();
+    if (!REVENUECAT_ENABLED) {
+        console.log(
+            "[RevenueCat] identify skipped because RevenueCat is disabled",
+        );
+
+        throw new Error("RevenueCat is disabled.");
+    }
+
+    await configureRevenueCat();
 
     const normalizedUserId = userId.trim();
 
@@ -82,7 +104,15 @@ export async function logoutRevenueCatUser(): Promise<void> {
 }
 
 export async function getRevenueCatCustomerInfo(): Promise<CustomerInfo> {
-    configureRevenueCat();
+    if (!REVENUECAT_ENABLED) {
+        console.log(
+            "[RevenueCat] getCustomerInfo skipped because RevenueCat is disabled",
+        );
+
+        throw new Error("RevenueCat is disabled.");
+    }
+
+    await configureRevenueCat();
 
     return Purchases.getCustomerInfo();
 }
@@ -96,7 +126,15 @@ export function hasPremiumEntitlement(customerInfo: CustomerInfo): boolean {
  * lifetime_premium Packageを取得する。
  */
 export async function getPremiumPackage(): Promise<PurchasesPackage | null> {
-    configureRevenueCat();
+    if (!REVENUECAT_ENABLED) {
+        console.log(
+            "[RevenueCat] getPremiumPackage skipped because RevenueCat is disabled",
+        );
+
+        return null;
+    }
+
+    await configureRevenueCat();
 
     const offerings = await Purchases.getOfferings();
 
@@ -136,7 +174,11 @@ export type PremiumPurchaseResult =
  * Premium買い切り商品の購入。
  */
 export async function purchasePremium(): Promise<PremiumPurchaseResult> {
-    configureRevenueCat();
+    if (!REVENUECAT_ENABLED) {
+        throw new Error("Premium購入機能は現在一時的に停止しています。");
+    }
+
+    await configureRevenueCat();
 
     const premiumPackage = await getPremiumPackage();
 
@@ -191,7 +233,11 @@ export async function purchasePremium(): Promise<PremiumPurchaseResult> {
  * 既存購入の復元。
  */
 export async function restorePremiumPurchases(): Promise<CustomerInfo> {
-    configureRevenueCat();
+    if (!REVENUECAT_ENABLED) {
+        throw new Error("購入の復元機能は現在一時的に停止しています。");
+    }
+
+    await configureRevenueCat();
 
     const customerInfo = await Purchases.restorePurchases();
 

@@ -21,6 +21,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { getUrl } from "aws-amplify/storage";
+import { useTour, useTourTarget } from "guideway";
 import * as Location from "expo-location";
 import { useForegroundLocationRecorder } from "../hooks/useForegroundLocationRecorder";
 import {
@@ -137,6 +138,26 @@ const DEFAULT_RECORD_DISTANCE_METERS = 50;
 
 // 現在地の記録と保存を行うホーム画面コンポーネント
 export default function LocationHomeScreen({ navigation }: Props) {
+    const { start: startTour } = useTour();
+
+    const homeScrollRef = useRef<ScrollView>(null);
+
+    const autoRecordingTourRef = useTourTarget("home-auto-recording", {
+        scrollRef: homeScrollRef,
+    });
+
+    const recordingMapTourRef = useTourTarget("home-recording-map", {
+        scrollRef: homeScrollRef,
+    });
+
+    const activityHistoryTourRef = useTourTarget("home-activity-history", {
+        scrollRef: homeScrollRef,
+    });
+
+    const sharingTourRef = useTourTarget("home-sharing", {
+        scrollRef: homeScrollRef,
+    });
+
     const [loginUserName, setLoginUserName] = useState("ユーザー");
     const [loginUserIconUrl, setLoginUserIconUrl] = useState<string | null>(
         null,
@@ -2405,6 +2426,7 @@ export default function LocationHomeScreen({ navigation }: Props) {
             behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
             <ScrollView
+                ref={homeScrollRef}
                 contentContainerStyle={styles.container}
                 keyboardShouldPersistTaps="handled"
             >
@@ -2425,7 +2447,18 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     )}
                 </View>
 
-                <View style={styles.liveShareBox}>
+                <View style={styles.buttonSpace}>
+                    <AppButton
+                        title="使い方を見る"
+                        onPress={() => startTour("home-tutorial")}
+                    />
+                </View>
+
+                <View
+                    ref={sharingTourRef}
+                    collapsable={false}
+                    style={styles.liveShareBox}
+                >
                     <Text style={styles.liveShareTitle}>
                         リアルタイム共有先
                     </Text>
@@ -2799,7 +2832,11 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             )}
                         </View>
                     )}
-                    <View style={styles.autoRecordMapButtonSpace}>
+                    <View
+                        ref={recordingMapTourRef}
+                        collapsable={false}
+                        style={styles.autoRecordMapButtonSpace}
+                    >
                         <AppButton
                             title="地図で見る"
                             onPress={handleOpenRecordingMap}
@@ -2859,6 +2896,8 @@ export default function LocationHomeScreen({ navigation }: Props) {
                                 </Text>
                             </View>
                             <Pressable
+                                ref={autoRecordingTourRef}
+                                collapsable={false}
                                 style={({ pressed }) => [
                                     styles.autoRecordStartButton,
                                     pressed &&
@@ -2909,7 +2948,11 @@ export default function LocationHomeScreen({ navigation }: Props) {
                     )}
                 </View>
 
-                <View style={styles.buttonSpace}>
+                <View
+                    ref={activityHistoryTourRef}
+                    collapsable={false}
+                    style={styles.buttonSpace}
+                >
                     <AppButton
                         title="アクティビティ履歴"
                         onPress={() => navigation.navigate("LocationLog")}

@@ -20,7 +20,11 @@ import {
     useRef,
     useState,
 } from "react";
-import { SafeAreaProvider } from "react-native-safe-area-context";
+import {
+    SafeAreaProvider,
+    useSafeAreaInsets,
+} from "react-native-safe-area-context";
+import { TourProvider, type TourDefinition } from "guideway";
 
 import outputs from "./amplify_outputs.json";
 import RootNavigator from "./src/navigation/RootNavigator";
@@ -37,6 +41,37 @@ import {
 
 Amplify.configure(outputs);
 
+const appTours: TourDefinition[] = [
+    {
+        id: "home-tutorial",
+        steps: [
+            {
+                id: "home-auto-recording",
+                title: "自動記録",
+                body: "「自動記録開始」を押すと、移動中の位置情報を自動で記録します。記録頻度や記録する移動距離も設定できます。",
+                placement: "auto",
+            },
+            {
+                id: "home-recording-map",
+                title: "地図表示",
+                body: "「地図で見る」から、記録中の現在地や移動ルートを地図上で確認できます。",
+                placement: "auto",
+            },
+            {
+                id: "home-activity-history",
+                title: "アクティビティ履歴",
+                body: "過去に記録したアクティビティを確認できます。記録したルートや移動距離なども確認できます。",
+                placement: "auto",
+            },
+            {
+                id: "home-sharing",
+                title: "リアルタイム共有",
+                body: "現在地を共有するユーザーを選択できます。自動記録中でなくても現在地をリアルタイムで共有できます。",
+                placement: "auto",
+            },
+        ],
+    },
+];
 /*
  * Amplify Authenticatorを日本語表示にする。
  */
@@ -368,12 +403,37 @@ function SingleDeviceSessionGuard({ children }: { children: ReactNode }) {
     return <>{children}</>;
 }
 
+function AppTourProvider({ children }: { children: ReactNode }) {
+    const insets = useSafeAreaInsets();
+
+    return (
+        <TourProvider
+            tours={appTours}
+            insets={insets}
+            colorScheme="light"
+            overlayTapBehavior="none"
+            theme={{
+                labels: {
+                    next: "次へ",
+                    back: "戻る",
+                    skip: "スキップ",
+                    done: "完了",
+                },
+            }}
+        >
+            {children}
+        </TourProvider>
+    );
+}
+
 function AppContent() {
     return (
         <SafeAreaProvider>
-            <SingleDeviceSessionGuard>
-                <RootNavigator />
-            </SingleDeviceSessionGuard>
+            <AppTourProvider>
+                <SingleDeviceSessionGuard>
+                    <RootNavigator />
+                </SingleDeviceSessionGuard>
+            </AppTourProvider>
         </SafeAreaProvider>
     );
 }

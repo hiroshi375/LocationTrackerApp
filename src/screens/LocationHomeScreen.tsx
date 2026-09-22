@@ -137,7 +137,7 @@ const LOCATION_HOME_SETTINGS_VERSION = 2;
 const DEFAULT_RECORD_DISTANCE_METERS = 50;
 
 // 現在地の記録と保存を行うホーム画面コンポーネント
-export default function LocationHomeScreen({ navigation }: Props) {
+export default function LocationHomeScreen({ navigation, route }: Props) {
     const { start: startTour } = useTour();
 
     const homeScrollRef = useRef<ScrollView>(null);
@@ -463,6 +463,55 @@ export default function LocationHomeScreen({ navigation }: Props) {
     const [currentMonthActivityCount, setCurrentMonthActivityCount] = useState<
         number | null
     >(null);
+
+    /*
+     * アプリ情報画面の「使い方を見る」からHomeへ戻ってきた場合、
+     * Home画面の描画完了後にチュートリアルを開始する。
+     *
+     * 自動記録中・開始処理中・停止処理中は、
+     * Guidewayの対象要素が通常時と異なるため開始しない。
+     */
+    useEffect(() => {
+        if (!route.params?.startTutorial) {
+            return;
+        }
+
+        if (isRecording || startingRecording || stoppingRecording) {
+            navigation.setParams({
+                startTutorial: false,
+            });
+
+            Alert.alert(
+                "使い方を表示できません",
+                "自動記録中は使い方を表示できません。自動記録を停止してからもう一度お試しください。",
+            );
+
+            return;
+        }
+
+        const timerId = setTimeout(() => {
+            /*
+             * 先にパラメータを解除しておくことで、
+             * 再レンダーや画面再フォーカスによる二重起動を防ぐ。
+             */
+            navigation.setParams({
+                startTutorial: false,
+            });
+
+            startTour("home-tutorial");
+        }, 500);
+
+        return () => {
+            clearTimeout(timerId);
+        };
+    }, [
+        route.params?.startTutorial,
+        isRecording,
+        startingRecording,
+        stoppingRecording,
+        navigation,
+        startTour,
+    ]);
 
     const loadLoginUserName = useCallback(async () => {
         try {
@@ -2445,18 +2494,6 @@ export default function LocationHomeScreen({ navigation }: Props) {
                             </Text>
                         </View>
                     )}
-                </View>
-
-                <View style={styles.buttonSpace}>
-                    <AppButton
-                        title="使い方を見る"
-                        onPress={() => startTour("home-tutorial")}
-                        disabled={
-                            isRecording ||
-                            startingRecording ||
-                            stoppingRecording
-                        }
-                    />
                 </View>
 
                 <View

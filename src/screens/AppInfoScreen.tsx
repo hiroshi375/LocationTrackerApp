@@ -249,6 +249,20 @@ export default function AppInfoScreen({ navigation }: Props) {
                     <Text style={styles.buttonText}>お問い合わせ</Text>
                 </Pressable>
 
+                <Pressable
+                    style={({ pressed }) => [
+                        styles.button,
+                        pressed && styles.buttonPressed,
+                    ]}
+                    onPress={() =>
+                        navigation.navigate("LocationHome", {
+                            startTutorial: true,
+                        })
+                    }
+                >
+                    <Text style={styles.buttonText}>使い方を見る</Text>
+                </Pressable>
+
                 <View style={styles.updateSection}>
                     <Text style={styles.sectionTitle}>アプリUpdate</Text>
 

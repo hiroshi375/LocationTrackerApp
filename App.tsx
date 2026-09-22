@@ -38,12 +38,14 @@ import {
     clearLocalDeviceSessionRegistration,
     initializeCurrentDeviceSession,
 } from "./src/services/singleDeviceSessionService";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 Amplify.configure(outputs);
 
 const appTours: TourDefinition[] = [
     {
         id: "home-tutorial",
+        showOnce: true,
         steps: [
             {
                 id: "home-auto-recording",
@@ -410,6 +412,7 @@ function AppTourProvider({ children }: { children: ReactNode }) {
         <TourProvider
             tours={appTours}
             insets={insets}
+            storage={AsyncStorage}
             colorScheme="light"
             overlayTapBehavior="none"
             theme={{

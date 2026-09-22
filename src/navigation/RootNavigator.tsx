@@ -17,7 +17,11 @@ import ShareGroupManagementScreen from "../screens/ShareGroupManagementScreen";
 import TermsOfServiceScreen from "../screens/TermsOfServiceScreen";
 
 export type RootStackParamList = {
-    LocationHome: undefined;
+    LocationHome:
+        | {
+              startTutorial?: boolean;
+          }
+        | undefined;
     LocationLog: undefined;
     AdminLocationLogImport: undefined;
     ActivityCalendar: undefined;

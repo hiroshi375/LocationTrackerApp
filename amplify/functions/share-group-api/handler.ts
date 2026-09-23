@@ -57,6 +57,16 @@ type RevenueCatCustomerResponse = {
     subscriber?: RevenueCatSubscriber;
 };
 
+type ShareGroupMemberDeleteListResult = {
+    data?:
+        | {
+              membershipId: string;
+          }[]
+        | null;
+    errors?: readonly unknown[] | null;
+    nextToken?: string | null;
+};
+
 const BACKEND_SUBSCRIPTION_LIMITS: Record<
     BackendSubscriptionTier,
     BackendSubscriptionLimits
@@ -796,6 +806,30 @@ async function listMyShareCandidates(
     >();
 
     for (const membership of myMemberships) {
+        /*
+         * 削除済み・無効化済みグループのMembershipが
+         * 万一残っていても共有候補へ含めない。
+         */
+        const groupResult = await client.models.ShareGroup.get({
+            groupId: membership.groupId,
+        });
+
+        if (groupResult.errors?.length) {
+            console.error(
+                "[ShareGroup] Share candidate group lookup errors:",
+                groupResult.errors,
+                {
+                    groupId: membership.groupId,
+                },
+            );
+
+            continue;
+        }
+
+        if (!groupResult.data || groupResult.data.isActive !== true) {
+            continue;
+        }
+
         const groupMembersResult =
             await client.models.ShareGroupMember.listShareGroupMembersByGroup(
                 {
@@ -973,6 +1007,9 @@ export const handler = async (event: any) => {
 
         case "regenerateShareGroupInviteCode":
             return await regenerateShareGroupInviteCode(event);
+
+        case "deleteOwnedShareGroup":
+            return await deleteOwnedShareGroup(event);
 
         default:
             throw new Error(`Unsupported operation: ${operation ?? "unknown"}`);
@@ -1223,6 +1260,172 @@ async function regenerateShareGroupInviteCode(
         groupId: group.groupId,
         groupName: group.name,
         inviteCode,
+    };
+}
+
+/*
+ * 自分が作成した共有グループを削除する。
+ *
+ * OWNERのみ実行可能。
+ *
+ * ShareGroupMemberを先にすべて削除し、
+ * 最後にShareGroup本体を削除する。
+ */
+async function deleteOwnedShareGroup(
+    event: Parameters<Schema["deleteOwnedShareGroup"]["functionHandler"]>[0],
+) {
+    const { userId } = getCaller(event);
+
+    const groupId = event.arguments.groupId;
+
+    /*
+     * 対象グループを取得する。
+     */
+    const groupResult = await client.models.ShareGroup.get({
+        groupId,
+    });
+
+    if (groupResult.errors?.length) {
+        console.error(
+            "[ShareGroup] Delete group lookup errors:",
+            groupResult.errors,
+            {
+                groupId,
+                userId,
+            },
+        );
+
+        throw new Error("共有グループを取得できませんでした。");
+    }
+
+    const group = groupResult.data;
+
+    if (!group) {
+        throw new Error("共有グループが見つかりません。");
+    }
+
+    /*
+     * 他ユーザーが作成したグループを削除できないようにする。
+     *
+     * クライアント側の表示制御だけには依存せず、
+     * 必ずLambda側でもOWNER確認を行う。
+     */
+    if (group.ownerUserId !== userId) {
+        throw new Error("共有グループを削除できるのは作成者だけです。");
+    }
+
+    /*
+     * グループに所属している全ShareGroupMemberを取得する。
+     */
+    const allMembers: {
+        membershipId: string;
+    }[] = [];
+
+    let nextToken: string | null = null;
+
+    do {
+        const memberResult = (await (
+            client.models.ShareGroupMember as any
+        ).listShareGroupMembersByGroup(
+            {
+                groupId,
+            },
+            {
+                limit: 1000,
+                nextToken: nextToken ?? undefined,
+            },
+        )) as ShareGroupMemberDeleteListResult;
+
+        if (memberResult.errors?.length) {
+            console.error(
+                "[ShareGroup] Delete group member list errors:",
+                memberResult.errors,
+                {
+                    groupId,
+                },
+            );
+
+            throw new Error(
+                "共有グループのメンバー情報を取得できませんでした。",
+            );
+        }
+
+        for (const member of memberResult.data ?? []) {
+            allMembers.push({
+                membershipId: member.membershipId,
+            });
+        }
+
+        nextToken = memberResult.nextToken ?? null;
+    } while (nextToken);
+
+    /*
+     * Memberを削除する。
+     *
+     * 1件ずつ直列にすると人数が増えた場合に遅いため、
+     * 25件単位で並列削除する。
+     */
+    for (let index = 0; index < allMembers.length; index += 25) {
+        const batch = allMembers.slice(index, index + 25);
+
+        const deleteResults = await Promise.all(
+            batch.map((member) =>
+                client.models.ShareGroupMember.delete({
+                    membershipId: member.membershipId,
+                }),
+            ),
+        );
+
+        const failedResult = deleteResults.find(
+            (result) => result.errors?.length,
+        );
+
+        if (failedResult?.errors?.length) {
+            console.error(
+                "[ShareGroup] Delete group member errors:",
+                failedResult.errors,
+                {
+                    groupId,
+                },
+            );
+
+            throw new Error(
+                "共有グループのメンバー情報を削除できませんでした。",
+            );
+        }
+    }
+
+    /*
+     * Member削除完了後にグループ本体を削除する。
+     */
+    const deleteGroupResult = await client.models.ShareGroup.delete({
+        groupId,
+    });
+
+    if (deleteGroupResult.errors?.length) {
+        console.error(
+            "[ShareGroup] Delete group errors:",
+            deleteGroupResult.errors,
+            {
+                groupId,
+            },
+        );
+
+        throw new Error("共有グループを削除できませんでした。");
+    }
+
+    console.log("[ShareGroup] Group deleted:", {
+        groupId,
+        groupName: group.name,
+        ownerUserId: userId,
+        deletedMemberCount: allMembers.length,
+    });
+
+    return {
+        success: true,
+        message: "共有グループを削除しました。",
+        groupId,
+        groupName: group.name,
     };
 }
 

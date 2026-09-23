@@ -388,6 +388,15 @@ const schema = a
             .authorization((allow) => [allow.authenticated()])
             .handler(a.handler.function(shareGroupApi)),
 
+        deleteOwnedShareGroup: a
+            .mutation()
+            .arguments({
+                groupId: a.id().required(),
+            })
+            .returns(a.ref("ShareGroupActionResult"))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(shareGroupApi)),
+
         listMyShareCandidates: a
             .query()
             .returns(a.ref("ShareCandidate").array())

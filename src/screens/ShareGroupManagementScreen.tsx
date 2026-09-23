@@ -103,7 +103,7 @@ export default function ShareGroupManagementScreen() {
     const [regeneratingGroupId, setRegeneratingGroupId] = useState<
         string | null
     >(null);
-
+    const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null);
     const ownedGroupCount = groups.filter(
         (group) => group.role === "OWNER",
     ).length;
@@ -448,6 +448,95 @@ export default function ShareGroupManagementScreen() {
         [handleRegenerateInviteCode],
     );
 
+    const handleDeleteGroup = useCallback(
+        async (group: ShareGroupSummaryItem) => {
+            if (deletingGroupId) {
+                return;
+            }
+
+            try {
+                setDeletingGroupId(group.groupId);
+
+                const result = (await (
+                    client.mutations.deleteOwnedShareGroup as any
+                )({
+                    groupId: group.groupId,
+                })) as ShareGroupActionResult;
+
+                if (result.errors?.length) {
+                    console.error(
+                        "deleteOwnedShareGroup errors:",
+                        result.errors,
+                    );
+
+                    throw new Error(
+                        getFirstGraphQLErrorMessage(result.errors) ??
+                            "グループを削除できませんでした。",
+                    );
+                }
+
+                if (!result.data?.success) {
+                    throw new Error(
+                        result.data?.message ??
+                            "グループを削除できませんでした。",
+                    );
+                }
+
+                /*
+                 * 削除したグループの招待コードを
+                 * 直前に作成・再発行して表示していた場合は消す。
+                 */
+                if (createdGroupName === group.name) {
+                    setCreatedGroupName(null);
+                    setCreatedInviteCode(null);
+                }
+
+                await loadGroups();
+
+                Alert.alert("削除完了", `「${group.name}」を削除しました。`);
+            } catch (error) {
+                console.error("Delete share group error:", error);
+
+                Alert.alert("削除エラー", getErrorMessage(error));
+            } finally {
+                setDeletingGroupId(null);
+            }
+        },
+        [createdGroupName, deletingGroupId, loadGroups],
+    );
+
+    const confirmDeleteGroup = useCallback(
+        (group: ShareGroupSummaryItem) => {
+            Alert.alert(
+                "共有グループを削除",
+                [
+                    `「${group.name}」を削除します。`,
+                    "",
+                    "このグループのメンバー情報も削除されます。",
+                    "メンバーはこのグループを利用できなくなります。",
+                    "",
+                    "この操作は元に戻せません。",
+                    "",
+                    "削除しますか？",
+                ].join("\n"),
+                [
+                    {
+                        text: "キャンセル",
+                        style: "cancel",
+                    },
+                    {
+                        text: "削除",
+                        style: "destructive",
+                        onPress: () => {
+                            void handleDeleteGroup(group);
+                        },
+                    },
+                ],
+            );
+        },
+        [handleDeleteGroup],
+    );
+
     const handleShareInviteCode = async () => {
         if (!createdInviteCode) {
             Alert.alert(
@@ -658,6 +747,8 @@ export default function ShareGroupManagementScreen() {
                         const isRegenerating =
                             regeneratingGroupId === group.groupId;
 
+                        const isDeleting = deletingGroupId === group.groupId;
+
                         return (
                             <View key={group.groupId} style={styles.groupItem}>
                                 <View style={styles.groupNameArea}>
@@ -757,28 +848,67 @@ export default function ShareGroupManagementScreen() {
                                 </View>
 
                                 {isOwner && (
-                                    <Pressable
-                                        style={({ pressed }) => [
-                                            styles.regenerateButton,
-                                            pressed &&
-                                                !isRegenerating &&
-                                                styles.buttonPressed,
-                                            isRegenerating &&
-                                                styles.disabledButton,
-                                        ]}
-                                        onPress={() => {
-                                            confirmRegenerateInviteCode(group);
-                                        }}
-                                        disabled={isRegenerating}
-                                    >
-                                        <Text
-                                            style={styles.regenerateButtonText}
+                                    <View style={styles.ownerActionArea}>
+                                        <Pressable
+                                            style={({ pressed }) => [
+                                                styles.regenerateButton,
+                                                pressed &&
+                                                    !isRegenerating &&
+                                                    !isDeleting &&
+                                                    styles.buttonPressed,
+                                                (isRegenerating ||
+                                                    isDeleting) &&
+                                                    styles.disabledButton,
+                                            ]}
+                                            onPress={() => {
+                                                confirmRegenerateInviteCode(
+                                                    group,
+                                                );
+                                            }}
+                                            disabled={
+                                                isRegenerating || isDeleting
+                                            }
                                         >
-                                            {isRegenerating
-                                                ? "再発行中..."
-                                                : "招待コードを再発行"}
-                                        </Text>
-                                    </Pressable>
+                                            <Text
+                                                style={
+                                                    styles.regenerateButtonText
+                                                }
+                                            >
+                                                {isRegenerating
+                                                    ? "再発行中..."
+                                                    : "招待コードを再発行"}
+                                            </Text>
+                                        </Pressable>
+
+                                        <Pressable
+                                            style={({ pressed }) => [
+                                                styles.deleteGroupButton,
+                                                pressed &&
+                                                    !isDeleting &&
+                                                    !isRegenerating &&
+                                                    styles.buttonPressed,
+                                                (isDeleting ||
+                                                    isRegenerating) &&
+                                                    styles.disabledButton,
+                                            ]}
+                                            onPress={() => {
+                                                confirmDeleteGroup(group);
+                                            }}
+                                            disabled={
+                                                isDeleting || isRegenerating
+                                            }
+                                        >
+                                            <Text
+                                                style={
+                                                    styles.deleteGroupButtonText
+                                                }
+                                            >
+                                                {isDeleting
+                                                    ? "削除中..."
+                                                    : "グループを削除"}
+                                            </Text>
+                                        </Pressable>
+                                    </View>
                                 )}
                             </View>
                         );
@@ -957,7 +1087,6 @@ const styles = StyleSheet.create({
     },
 
     regenerateButton: {
-        marginTop: 10,
         borderWidth: 1,
         borderColor: "#4b6f8f",
         borderRadius: 8,
@@ -969,6 +1098,27 @@ const styles = StyleSheet.create({
 
     regenerateButtonText: {
         color: "#4b6f8f",
+        fontSize: 14,
+        fontWeight: "bold",
+    },
+
+    ownerActionArea: {
+        marginTop: 10,
+        gap: 8,
+    },
+
+    deleteGroupButton: {
+        borderWidth: 1,
+        borderColor: "#c62828",
+        borderRadius: 8,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    deleteGroupButtonText: {
+        color: "#c62828",
         fontSize: 14,
         fontWeight: "bold",
     },

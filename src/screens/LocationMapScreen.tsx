@@ -1215,7 +1215,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                 edgePadding: {
                     top: 80,
                     right: 40,
-                    bottom: 260,
+                    bottom: 360,
                     left: 40,
                 },
                 animated: true,
@@ -1541,7 +1541,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             edgePadding: {
                 top: 100,
                 right: 60,
-                bottom: 320,
+                bottom: 360,
                 left: 60,
             },
             animated: true,

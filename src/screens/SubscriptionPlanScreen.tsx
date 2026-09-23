@@ -171,7 +171,9 @@ export default function SubscriptionPlanScreen() {
             </View>
 
             <View style={styles.noteCard}>
-                <Text style={styles.noteTitle}>サンプルについて</Text>
+                <Text style={styles.noteTitle}>
+                    サンプルアクティビティについて
+                </Text>
 
                 <Text style={styles.noteText}>
                     操作説明用のサンプルアクティビティは、 FREE /

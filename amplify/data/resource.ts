@@ -124,7 +124,20 @@ const schema = a
                 searchText: a.string(),
                 iconImagePath: a.string(),
                 role: a.string(),
-
+                /*
+                 * 利用規約・プライバシーポリシーへの同意情報。
+                 *
+                 * acceptedAt:
+                 *   初回同意日時。
+                 *
+                 * version:
+                 *   同意した文書のバージョン。
+                 *   将来、重要な規約改定時に再同意を求める場合にも利用できる。
+                 */
+                termsAcceptedAt: a.datetime(),
+                termsVersion: a.string(),
+                privacyPolicyAcceptedAt: a.datetime(),
+                privacyPolicyVersion: a.string(),
                 totalAggregationDistanceMeters: a.float(),
                 totalAggregationDurationSeconds: a.integer(),
                 totalAggregationSessionCount: a.integer(),

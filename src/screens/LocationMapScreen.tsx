@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { getCurrentUser } from "aws-amplify/auth";
+import { useTour, useTourTarget } from "guideway";
 import { getUrl } from "aws-amplify/storage";
 import Constants from "expo-constants";
 import * as Location from "expo-location";
@@ -191,6 +192,11 @@ const CAMERA_CENTER_LATITUDE_OFFSET = 0.0015;
 
 export default function LocationMapScreen({ route, navigation }: Props) {
     const insets = useSafeAreaInsets();
+    const { start: startTour } = useTour();
+    const activityMapLayerTourRef = useTourTarget("activity-map-layer");
+    const activityMapPointsTourRef = useTourTarget("activity-map-points");
+    const activityMapRouteTourRef = useTourTarget("activity-map-route");
+    const activityMapLogListTourRef = useTourTarget("activity-map-log-list");
     const mapRef = useRef<MapView | null>(null);
     const hasFittedInitialRouteRef = useRef(false);
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
@@ -217,7 +223,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     const sharedLiveIsRecording = route.params?.sharedLiveIsRecording ?? false;
     const isSharedActivityHistory =
         route.params?.isSharedActivityHistory ?? false;
-
+    const startMapTutorial = route.params?.startMapTutorial === true;
     const recordingIntervalMs = route.params?.recordingIntervalMs ?? null;
     const recordingDistanceMeters =
         route.params?.recordingDistanceMeters ?? null;
@@ -1475,6 +1481,71 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         };
     }, [navigation, isMapVisible]);
 
+    /*
+     * アクティビティ履歴Guidewayから
+     * サンプル地図へ遷移してきた場合だけ、
+     * 地図用Guidewayを開始する。
+     */
+    useEffect(() => {
+        if (!startMapTutorial) {
+            return;
+        }
+
+        /*
+         * 固定サンプル以外ではGuidewayを自動起動しない。
+         */
+        if (!isSampleActivity) {
+            return;
+        }
+
+        /*
+         * 地図画面のUIがまだ描画されていない間は開始しない。
+         */
+        if (!hasLoaded || loading) {
+            return;
+        }
+
+        if (!isActivityHistoryMap || isSharedActivityHistory) {
+            return;
+        }
+
+        if (!isMapVisible) {
+            return;
+        }
+
+        /*
+         * ポイント一覧が開いた状態では
+         * Tour targetの配置が変わるため閉じておく。
+         */
+        setShowLocationLogList(false);
+        setSelectedLogId(null);
+
+        const timerId = setTimeout(() => {
+            /*
+             * 再renderなどによる二重起動を防止する。
+             */
+            navigation.setParams({
+                startMapTutorial: false,
+            });
+
+            startTour("activity-map-tutorial");
+        }, 600);
+
+        return () => {
+            clearTimeout(timerId);
+        };
+    }, [
+        startMapTutorial,
+        isSampleActivity,
+        hasLoaded,
+        loading,
+        isActivityHistoryMap,
+        isSharedActivityHistory,
+        isMapVisible,
+        navigation,
+        startTour,
+    ]);
+
     if (!hasLoaded || loading) {
         return (
             <View style={styles.center}>
@@ -2182,7 +2253,11 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                             </View>
                         )}
 
-                    <View style={styles.mapLayerRow}>
+                    <View
+                        ref={activityMapLayerTourRef}
+                        collapsable={false}
+                        style={styles.mapLayerRow}
+                    >
                         {MAP_LAYER_OPTIONS.map((option) => {
                             const isActive = mapLayerMode === option.value;
 
@@ -2215,6 +2290,8 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                     {!isSharedCurrentLocationOnlyMap && (
                         <View style={styles.mapActionButtonRow}>
                             <Pressable
+                                ref={activityMapPointsTourRef}
+                                collapsable={false}
                                 style={({ pressed }) => [
                                     styles.mapActionButton,
                                     pressed && styles.mapActionButtonPressed,
@@ -2229,6 +2306,8 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                             </Pressable>
 
                             <Pressable
+                                ref={activityMapRouteTourRef}
+                                collapsable={false}
                                 style={({ pressed }) => [
                                     styles.mapActionButton,
 
@@ -2270,6 +2349,8 @@ export default function LocationMapScreen({ route, navigation }: Props) {
 
                     {isActivityHistoryMap && !isSharedActivityHistory && (
                         <Pressable
+                            ref={activityMapLogListTourRef}
+                            collapsable={false}
                             style={({ pressed }) => [
                                 styles.locationLogListButton,
                                 pressed && styles.mapActionButtonPressed,

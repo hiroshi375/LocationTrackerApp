@@ -73,6 +73,7 @@ const appTours: TourDefinition[] = [
             },
         ],
     },
+
     {
         id: "activity-history-tutorial",
         //showOnce: true,
@@ -98,7 +99,38 @@ const appTours: TourDefinition[] = [
             {
                 id: "activity-history-actions",
                 title: "アクティビティの操作",
-                body: "地図表示、タイトル変更、共有、削除などの操作を行えます。",
+                body: "地図表示、タイトル変更、共有、削除などの操作を行えます。このガイドが終了したら、サンプルアクティビティの「地図で表示」を押して、地図の使い方を確認してみましょう。",
+                placement: "auto",
+            },
+        ],
+    },
+
+    {
+        id: "activity-map-tutorial",
+        //showOnce: true,
+        steps: [
+            {
+                id: "activity-map-layer",
+                title: "地図の種類",
+                body: "標準、航空写真、レトロ風など、地図の表示方法を切り替えられます。ドット絵風マップは現在準備中です。",
+                placement: "auto",
+            },
+            {
+                id: "activity-map-points",
+                title: "記録ポイントを表示",
+                body: "「ポイント表示」をONにすると、位置情報を記録した地点を地図上に表示できます。もう一度押すと非表示にできます。",
+                placement: "auto",
+            },
+            {
+                id: "activity-map-route",
+                title: "ルート全体表示",
+                body: "過去のアクティビティでは、移動ルート全体が画面内に収まるように表示されます。",
+                placement: "auto",
+            },
+            {
+                id: "activity-map-log-list",
+                title: "記録ポイント一覧",
+                body: "記録した地点を一覧で確認できます。各ポイントの時刻、foreground・background、位置精度などを確認できます。",
                 placement: "auto",
             },
         ],

@@ -208,7 +208,12 @@ export default function LocationLogScreen({ navigation, route }: Props) {
     const returnAnchorSessionRef = useRef<RecordingSessionDisplayItem | null>(
         null,
     );
-
+    /*
+     * アクティビティ履歴Guideway終了後、
+     * サンプルの地図を開いたときに
+     * 地図Guidewayへ引き継ぐためのフラグ。
+     */
+    const continueToMapTutorialRef = useRef(false);
     /*
      * 地図から戻った後の一覧で、
      * 「もっと見る」を押した場合も同じ時点より過去を取得するための上限。
@@ -1051,10 +1056,26 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             returnAnchorSessionRef.current = null;
         }
 
+        /*
+         * 履歴Guidewayから続けて、
+         * サンプルアクティビティの地図を開いた場合だけ
+         * 地図Guidewayを開始する。
+         */
+        const startMapTutorial =
+            continueToMapTutorialRef.current && item.isSample === true;
+
+        /*
+         * 地図を1回開いた時点で引き継ぎフラグは消費する。
+         *
+         * サンプル以外を開いた場合も、
+         * 後から意図せず地図Guidewayが始まらないようfalseに戻す。
+         */
+        continueToMapTutorialRef.current = false;
+
         navigation.push("LocationMap", {
             recordingSessionId: item.recordingSessionId,
-
             isSharedActivityHistory: historyViewMode === "shared",
+            startMapTutorial,
         });
     };
 
@@ -1787,6 +1808,12 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             navigation.setParams({
                 startTutorial: false,
             });
+
+            /*
+             * この後サンプルの「地図で表示」を押した場合、
+             * 地図Guidewayへ続ける。
+             */
+            continueToMapTutorialRef.current = true;
 
             startTour("activity-history-tutorial");
         }, 500);

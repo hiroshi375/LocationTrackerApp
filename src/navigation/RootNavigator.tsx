@@ -31,6 +31,7 @@ export type RootStackParamList = {
     ActivityCalendar: undefined;
     LocationMap: {
         recordingSessionId?: string | null;
+        startMapTutorial?: boolean;
         recordingIntervalMs?: number | null;
         recordingDistanceMeters?: number | null;
         sharedLiveUserId?: string | null;

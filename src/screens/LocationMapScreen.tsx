@@ -188,7 +188,6 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     const insets = useSafeAreaInsets();
     const mapRef = useRef<MapView | null>(null);
     const hasFittedInitialRouteRef = useRef(false);
-    const isBackAfterHidingPointsRef = useRef(false);
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
     const [recordingSessionSummary, setRecordingSessionSummary] =
         useState<RecordingSessionItem | null>(null);
@@ -199,6 +198,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     const [hasLoaded, setHasLoaded] = useState(false);
     const [showPoints, setShowPoints] = useState(false);
     const [mapLayerMode, setMapLayerMode] = useState<MapLayerMode>("standard");
+    const [isMapVisible, setIsMapVisible] = useState(true);
     const [routeViewMode, setRouteViewMode] = useState<RouteViewMode>("route");
     const [mapReady, setMapReady] = useState(false);
     const [currentUserIconUrl, setCurrentUserIconUrl] = useState<string | null>(
@@ -1378,45 +1378,35 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                     new Date().toISOString(),
                 );
 
-                /*
-                 * ポイントMarkerが表示中の場合は、
-                 * そのまま画面を閉じると大量Markerの破棄と
-                 * Navigationの画面遷移が同時に走って重くなる。
-                 *
-                 * 一度戻る操作を止めてMarkerを非表示にし、
-                 * 描画更新後に本来の戻る処理を再開する。
-                 */
-                if (showPoints && !isBackAfterHidingPointsRef.current) {
+                if (isMapVisible) {
+                    /*
+                     * 戻る操作を一度止め、
+                     * Marker単体ではなくMapView全体をReactツリーから外す。
+                     */
                     event.preventDefault();
 
-                    isBackAfterHidingPointsRef.current = true;
-
                     console.log(
-                        "[LocationMapScreen] Hide markers before back:",
+                        "[LocationMapScreen] Detach MapView before back:",
                         new Date().toISOString(),
                     );
 
-                    setShowPoints(false);
+                    setIsMapVisible(false);
 
-                    requestAnimationFrame(() => {
-                        requestAnimationFrame(() => {
-                            console.log(
-                                "[LocationMapScreen] Resume back after hiding markers:",
-                                new Date().toISOString(),
-                            );
+                    /*
+                     * MapViewを外した更新をReact Native側へ反映してから
+                     * 元の戻るアクションを再開する。
+                     */
+                    setTimeout(() => {
+                        console.log(
+                            "[LocationMapScreen] Resume back after MapView detach:",
+                            new Date().toISOString(),
+                        );
 
-                            navigation.dispatch(event.data.action);
-                        });
-                    });
+                        navigation.dispatch(event.data.action);
+                    }, 100);
 
                     return;
                 }
-
-                /*
-                 * Markerを非表示にした後の2回目のbeforeRemoveでは
-                 * Navigationをそのまま通す。
-                 */
-                isBackAfterHidingPointsRef.current = false;
             },
         );
 
@@ -1445,7 +1435,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             unsubscribeTransitionStart();
             unsubscribeTransitionEnd();
         };
-    }, [navigation, showPoints]);
+    }, [navigation, isMapVisible]);
 
     if (!hasLoaded || loading) {
         return (
@@ -1738,7 +1728,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                         今後のアップデートで提供予定です。
                     </Text>
                 </View>
-            ) : (
+            ) : isMapVisible ? (
                 <MapView
                     ref={mapRef}
                     provider={PROVIDER_GOOGLE}
@@ -1942,6 +1932,8 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                         </Marker>
                     )}
                 </MapView>
+            ) : (
+                <View style={styles.map} />
             )}
 
             {!isPixelMapLayer &&

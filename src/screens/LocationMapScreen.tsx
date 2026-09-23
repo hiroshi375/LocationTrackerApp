@@ -534,8 +534,6 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     const handleSelectLocationLog = useCallback((log: LocationLogItem) => {
         setSelectedLogId(log.id);
 
-        setShowPoints(true);
-
         mapRef.current?.animateToRegion(
             {
                 latitude: log.latitude,
@@ -726,7 +724,15 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                     ],
                 );
 
-                if (savedShowPoints === "true") {
+                if (isActivityHistoryMap) {
+                    /*
+                     * アクティビティ履歴から地図を開いた場合は、
+                     * 大量のMarkerを初期表示しない。
+                     *
+                     * 「ポイント表示」ボタンを押した場合のみ表示する。
+                     */
+                    setShowPoints(false);
+                } else if (savedShowPoints === "true") {
                     setShowPoints(true);
                 } else if (savedShowPoints === "false") {
                     setShowPoints(false);
@@ -2200,7 +2206,6 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                             ]}
                             onPress={() => {
                                 setShowLocationLogList(true);
-                                setShowPoints(true);
                             }}
                         >
                             <Text style={styles.locationLogListButtonText}>

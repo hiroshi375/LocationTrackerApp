@@ -1,4 +1,7 @@
-import { NavigationContainer } from "@react-navigation/native";
+import {
+    NavigationContainer,
+    createNavigationContainerRef,
+} from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -85,7 +88,12 @@ export type RootStackParamList = {
     SubscriptionPlan: undefined;
     TermsConsent: undefined;
 };
-
+/*
+ * GuidewayなどNavigationコンポーネント外から
+ * 画面遷移を行うためのNavigation Ref。
+ */
+export const rootNavigationRef =
+    createNavigationContainerRef<RootStackParamList>();
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function RootNavigator() {
@@ -188,7 +196,7 @@ export default function RootNavigator() {
     }
 
     return (
-        <NavigationContainer>
+        <NavigationContainer ref={rootNavigationRef}>
             {/*
              * ★変更⑦
              *

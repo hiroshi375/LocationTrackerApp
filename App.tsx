@@ -27,7 +27,9 @@ import {
 import { TourProvider, type TourDefinition } from "guideway";
 
 import outputs from "./amplify_outputs.json";
-import RootNavigator from "./src/navigation/RootNavigator";
+import RootNavigator, {
+    rootNavigationRef,
+} from "./src/navigation/RootNavigator";
 import {
     configureRevenueCat,
     identifyRevenueCatUser,
@@ -39,6 +41,7 @@ import {
     initializeCurrentDeviceSession,
 } from "./src/services/singleDeviceSessionService";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { SAMPLE_ACTIVITY_SESSION_ID } from "./src/data/sampleActivity";
 
 Amplify.configure(outputs);
 
@@ -72,8 +75,34 @@ const appTours: TourDefinition[] = [
                 placement: "auto",
             },
         ],
-    },
 
+        /*
+         * Home Guidewayを最後まで完了した場合だけ、
+         * 続けてアクティビティ履歴Guidewayへ進む。
+         *
+         * 「スキップ」の場合はonCompleteは呼ばれないため、
+         * アクティビティ履歴へは遷移しない。
+         */
+        onComplete: () => {
+            /*
+             * GuidewayのOverlayが閉じるまで少し待ってから
+             * 次の画面へ遷移する。
+             */
+            setTimeout(() => {
+                if (!rootNavigationRef.isReady()) {
+                    console.warn(
+                        "[Guideway] Navigation is not ready after home tutorial.",
+                    );
+
+                    return;
+                }
+
+                rootNavigationRef.navigate("LocationLog", {
+                    startTutorial: true,
+                });
+            }, 250);
+        },
+    },
     {
         id: "activity-history-tutorial",
         //showOnce: true,
@@ -99,10 +128,32 @@ const appTours: TourDefinition[] = [
             {
                 id: "activity-history-actions",
                 title: "アクティビティの操作",
-                body: "地図表示、タイトル変更、共有、削除などの操作を行えます。このガイドが終了したら、サンプルアクティビティの「地図で表示」を押して、地図の使い方を確認してみましょう。",
+                body: "地図表示、タイトル変更、共有、削除などの操作を行えます。最後にサンプルアクティビティの地図を使って、地図画面の操作を確認します。",
                 placement: "auto",
             },
         ],
+
+        /*
+         * アクティビティ履歴Guidewayを最後まで完了したら、
+         * サンプルアクティビティの地図へ自動遷移し、
+         * 続けて地図Guidewayを開始する。
+         */
+        onComplete: () => {
+            setTimeout(() => {
+                if (!rootNavigationRef.isReady()) {
+                    console.warn(
+                        "[Guideway] Navigation is not ready after activity history tutorial.",
+                    );
+
+                    return;
+                }
+
+                rootNavigationRef.navigate("LocationMap", {
+                    recordingSessionId: SAMPLE_ACTIVITY_SESSION_ID,
+                    startMapTutorial: true,
+                });
+            }, 250);
+        },
     },
 
     {

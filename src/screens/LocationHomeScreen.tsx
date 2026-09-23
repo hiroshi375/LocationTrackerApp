@@ -230,6 +230,16 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
         setCheckingBackgroundLocationPermission,
     ] = useState(true);
 
+    const startHomeTutorialAfterLayout = useCallback(() => {
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                setTimeout(() => {
+                    startTour("home-tutorial");
+                }, 150);
+            });
+        });
+    }, [startTour]);
+
     useEffect(() => {
         void debugPrintLocationQueueRecoverySummary();
     }, []);
@@ -471,6 +481,14 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
      *
      * 自動記録中・開始処理中・停止処理中は、
      * Guidewayの対象要素が通常時と異なるため開始しない。
+     *
+     * また、
+     * ・保存済みHome設定
+     * ・Background Location権限
+     *
+     * の確認が完了してからGuidewayを開始する。
+     * これらの確認途中で開始すると、
+     * 後から画面レイアウトが変化してハイライト位置がずれることがある。
      */
     useEffect(() => {
         if (!route.params?.startTutorial) {
@@ -490,6 +508,25 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             return;
         }
 
+        /*
+         * AsyncStorageからHome設定を読み込んでいる途中は
+         * UIがまだ確定していないため開始しない。
+         */
+        if (!hasLoadedSavedHomeSettings) {
+            return;
+        }
+
+        /*
+         * Background Location権限の確認中は、
+         * 確認完了後に警告ボックスが表示／非表示になる可能性がある。
+         *
+         * Guideway開始後にレイアウトが変わると
+         * ターゲット座標がずれるため、確認完了まで待つ。
+         */
+        if (checkingBackgroundLocationPermission) {
+            return;
+        }
+
         const timerId = setTimeout(() => {
             /*
              * 先にパラメータを解除しておくことで、
@@ -499,7 +536,11 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                 startTutorial: false,
             });
 
-            startTour("home-tutorial");
+            /*
+             * requestAnimationFrameを使って
+             * レイアウト確定後にGuidewayを開始する。
+             */
+            startHomeTutorialAfterLayout();
         }, 500);
 
         return () => {
@@ -510,8 +551,10 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
         isRecording,
         startingRecording,
         stoppingRecording,
+        hasLoadedSavedHomeSettings,
+        checkingBackgroundLocationPermission,
         navigation,
-        startTour,
+        startHomeTutorialAfterLayout,
     ]);
 
     const loadLoginUserName = useCallback(async () => {

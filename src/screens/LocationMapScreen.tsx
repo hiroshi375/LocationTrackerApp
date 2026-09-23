@@ -192,8 +192,8 @@ const CAMERA_CENTER_LATITUDE_OFFSET = 0.0015;
 //        ? `https://api.maptiler.com/maps/${MAPTILER_MAP_ID}/256/{z}/{x}/{y}.png?key=${MAPTILER_API_KEY}`
 //        : undefined;
 
-const START_PIN_IMAGE = require("../../assets/images/map-start-pin-trimmed-160.png");
-const GOAL_PIN_IMAGE = require("../../assets/images/map-goal-pin-trimmed-160.png");
+const START_PIN_IMAGE = require("../../assets/images/map-start-pin-marker.png");
+const GOAL_PIN_IMAGE = require("../../assets/images/map-goal-pin-marker.png");
 
 export default function LocationMapScreen({ route, navigation }: Props) {
     const insets = useSafeAreaInsets();
@@ -2033,7 +2033,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                                 longitude: startLog.longitude,
                             }}
                             image={START_PIN_IMAGE}
-                            anchor={{ x: 0.5, y: 1 }}
+                            anchor={{ x: 0.5, y: 0.82 }}
                             zIndex={200}
                             title="開始位置"
                             description={buildMarkerDescription(startLog)}
@@ -2047,7 +2047,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                                 longitude: endLog.longitude,
                             }}
                             image={GOAL_PIN_IMAGE}
-                            anchor={{ x: 0.5, y: 1 }}
+                            anchor={{ x: 0.5, y: 0.82 }}
                             zIndex={201}
                             title="終了位置"
                             description={buildMarkerDescription(endLog)}

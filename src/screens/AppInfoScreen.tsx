@@ -240,9 +240,15 @@ export default function AppInfoScreen({ navigation }: Props) {
                 </Pressable>
 
                 <Pressable
+                    style={({ pressed }) => [
+                        styles.button,
+                        pressed && styles.buttonPressed,
+                    ]}
                     onPress={() => navigation.navigate("SubscriptionPlan")}
                 >
-                    <Text>FREE / PREMIUM プランの違いを見る</Text>
+                    <Text style={styles.buttonText}>
+                        FREE / PREMIUM プランの違いを見る
+                    </Text>
                 </Pressable>
 
                 <Pressable

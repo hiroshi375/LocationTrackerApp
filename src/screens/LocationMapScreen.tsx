@@ -34,7 +34,7 @@ import {
     SAMPLE_ACTIVITY_SESSION,
     SAMPLE_ACTIVITY_SESSION_ID,
 } from "../data/sampleActivity";
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationMap">;
 

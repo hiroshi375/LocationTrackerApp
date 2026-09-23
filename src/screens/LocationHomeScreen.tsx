@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
+    Linking,
     Animated,
     AppState,
     Image,
@@ -1052,6 +1053,50 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             setStartingRecording(false);
         }
     };
+
+    const handleOpenBackgroundLocationSettings = useCallback(async () => {
+        try {
+            /*
+             * まずExpo Locationから
+             * バックグラウンド位置情報権限を要求する。
+             *
+             * AndroidではOSバージョンによって
+             * システム設定画面へ誘導される。
+             */
+            const permission =
+                await Location.requestBackgroundPermissionsAsync();
+
+            if (permission.status === "granted") {
+                setHasBackgroundLocationPermission(true);
+
+                Alert.alert(
+                    "位置情報の設定",
+                    "位置情報の「常に許可」が有効になりました。",
+                );
+
+                return;
+            }
+
+            /*
+             * Expo側の権限要求だけでは設定できなかった場合は、
+             * このアプリのOS設定画面を開く。
+             */
+            await Linking.openSettings();
+        } catch (error) {
+            console.error("Open background location settings error:", error);
+
+            try {
+                await Linking.openSettings();
+            } catch (settingsError) {
+                console.error("Open app settings error:", settingsError);
+
+                Alert.alert(
+                    "設定画面を開けませんでした",
+                    "端末の設定からAcLog Fitの位置情報権限を「常に許可」に変更してください。",
+                );
+            }
+        }
+    }, []);
 
     const handleCheckBackgroundHeartbeat =
         useCallback(async (): Promise<void> => {
@@ -2986,10 +3031,38 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
 
                             {!checkingBackgroundLocationPermission &&
                                 !hasBackgroundLocationPermission && (
-                                    <Text style={styles.permissionWarningText}>
-                                        自動記録を開始するには、端末の設定で
-                                        位置情報を「常に許可」にしてください。
-                                    </Text>
+                                    <View
+                                        style={
+                                            styles.locationPermissionWarningBox
+                                        }
+                                    >
+                                        <Text
+                                            style={styles.permissionWarningText}
+                                        >
+                                            自動記録を開始するには、位置情報を
+                                            「常に許可」に設定してください。
+                                            （設定画面で位置情報の権限を「常に許可」に変更してください）
+                                        </Text>
+
+                                        <Pressable
+                                            style={({ pressed }) => [
+                                                styles.locationPermissionSettingsButton,
+                                                pressed &&
+                                                    styles.locationPermissionSettingsButtonPressed,
+                                            ]}
+                                            onPress={() => {
+                                                void handleOpenBackgroundLocationSettings();
+                                            }}
+                                        >
+                                            <Text
+                                                style={
+                                                    styles.locationPermissionSettingsButtonText
+                                                }
+                                            >
+                                                位置情報の設定を開く
+                                            </Text>
+                                        </Pressable>
+                                    </View>
                                 )}
                         </>
                     )}
@@ -4193,13 +4266,6 @@ const styles = StyleSheet.create({
         textAlign: "center",
     },
 
-    permissionWarningText: {
-        marginTop: 8,
-        fontSize: 12,
-        color: "#b42318",
-        lineHeight: 18,
-    },
-
     liveShareGroupManageButton: {
         borderWidth: 1,
         borderColor: "#4b6f8f",
@@ -4310,5 +4376,44 @@ const styles = StyleSheet.create({
     autoRecordingTourTarget: {
         width: "100%",
         marginTop: 10,
+    },
+
+    locationPermissionWarningBox: {
+        marginTop: 12,
+        padding: 14,
+
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: "#e2b24c",
+
+        backgroundColor: "#fff8df",
+    },
+
+    permissionWarningText: {
+        color: "#8a5a00",
+        fontSize: 13,
+        lineHeight: 19,
+        textAlign: "center",
+    },
+
+    locationPermissionSettingsButton: {
+        marginTop: 10,
+        alignSelf: "center",
+
+        paddingHorizontal: 18,
+        paddingVertical: 9,
+
+        borderRadius: 18,
+        backgroundColor: "#06395f",
+    },
+
+    locationPermissionSettingsButtonPressed: {
+        opacity: 0.75,
+    },
+
+    locationPermissionSettingsButtonText: {
+        color: "#ffffff",
+        fontSize: 13,
+        fontWeight: "700",
     },
 });

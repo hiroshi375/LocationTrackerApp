@@ -27,6 +27,7 @@ import {
 import {
     getCurrentUserProfile,
     updateUserProfileDisplayName,
+    updateUserProfileWeightKg,
 } from "../services/userProfileService";
 import {
     getPremiumPackage,
@@ -48,6 +49,7 @@ export default function ProfileScreen({ navigation }: Props) {
     const [profileId, setProfileId] = useState<string | null>(null);
     const [email, setEmail] = useState("");
     const [displayName, setDisplayName] = useState("");
+    const [weightKg, setWeightKg] = useState("");
     const [profileRole, setProfileRole] = useState<string | null>(null);
     const [iconImageUrl, setIconImageUrl] = useState<string | null>(null);
     const [uploadingIcon, setUploadingIcon] = useState(false);
@@ -89,6 +91,11 @@ export default function ProfileScreen({ navigation }: Props) {
             setProfileId(profile.id);
             setEmail(profile.email ?? "");
             setDisplayName(profile.displayName ?? "");
+            setWeightKg(
+                typeof profile.weightKg === "number"
+                    ? String(profile.weightKg)
+                    : "",
+            );
             setProfileRole(profile.role ?? null);
 
             const nextIconImagePath = profile.iconImagePath ?? null;
@@ -212,7 +219,25 @@ export default function ProfileScreen({ navigation }: Props) {
 
     const saveProfile = async () => {
         const trimmedDisplayName = displayName.trim();
+        const trimmedWeightKg = weightKg.trim();
 
+        let parsedWeightKg: number | null = null;
+
+        if (trimmedWeightKg) {
+            parsedWeightKg = Number(trimmedWeightKg);
+
+            if (
+                !Number.isFinite(parsedWeightKg) ||
+                parsedWeightKg <= 0 ||
+                parsedWeightKg > 300
+            ) {
+                Alert.alert(
+                    "入力エラー",
+                    "体重は0より大きく300kg以下の数値で入力してください。",
+                );
+                return;
+            }
+        }
         if (!trimmedDisplayName) {
             Alert.alert("入力エラー", "ユーザー名を入力してください。");
             return;
@@ -257,7 +282,7 @@ export default function ProfileScreen({ navigation }: Props) {
              * displayNameは既存serviceで更新する。
              */
             await updateUserProfileDisplayName(trimmedDisplayName);
-
+            await updateUserProfileWeightKg(parsedWeightKg);
             /*
              * 新しいアイコンが選択されていた場合だけ、
              * 同じUserProfileへiconImagePathを保存する。
@@ -510,6 +535,26 @@ export default function ProfileScreen({ navigation }: Props) {
                         このユーザー名は、共有先ユーザー検索で表示されます。
                     </Text>
 
+                    <Text style={styles.label}>体重</Text>
+
+                    <View style={styles.weightInputRow}>
+                        <TextInput
+                            style={[styles.input, styles.weightInput]}
+                            value={weightKg}
+                            onChangeText={setWeightKg}
+                            placeholder="例：65.0"
+                            keyboardType="decimal-pad"
+                            editable={!isProcessing}
+                            maxLength={6}
+                        />
+
+                        <Text style={styles.weightUnit}>kg</Text>
+                    </View>
+
+                    <Text style={styles.description}>
+                        消費カロリーの推定計算に使用します。
+                    </Text>
+
                     <Pressable
                         style={[
                             styles.saveButton,
@@ -747,6 +792,23 @@ const styles = StyleSheet.create({
         backgroundColor: "#fff",
         marginBottom: 14,
     },
+    weightInputRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+
+    weightInput: {
+        flex: 1,
+    },
+
+    weightUnit: {
+        marginBottom: 14,
+        fontSize: 16,
+        color: "#555555",
+        fontWeight: "600",
+    },
+
     readOnlyInput: {
         backgroundColor: "#f0f0f0",
         color: "#666",

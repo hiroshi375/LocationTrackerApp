@@ -309,7 +309,9 @@ export default function RootNavigator() {
                         <Stack.Screen
                             name="LocationMap"
                             component={LocationMapScreen}
-                            options={{ title: "地図表示" }}
+                            options={{
+                                headerShown: false,
+                            }}
                         />
                         <Stack.Screen
                             name="Profile"

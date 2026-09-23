@@ -1985,6 +1985,7 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                     collapsable={false}
                                     style={({ pressed }) => [
                                         styles.card,
+                                        isSample && styles.sampleCard,
                                         pressed && styles.cardPressed,
                                     ]}
                                     onPress={() =>
@@ -2900,6 +2901,11 @@ const styles = StyleSheet.create({
         backgroundColor: "#fff",
         overflow: "hidden",
     },
+    sampleCard: {
+        backgroundColor: "#FFF9D9",
+        borderColor: "#E8D98A",
+    },
+
     cardContent: {
         paddingHorizontal: 14,
         paddingVertical: 10,

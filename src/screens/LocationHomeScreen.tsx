@@ -2937,39 +2937,44 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                                           : `${currentMonthActivityCount}件 / ${monthlyActivityLimit}件`}
                                 </Text>
                             </View>
-                            <Pressable
+                            <View
                                 ref={autoRecordingTourRef}
                                 collapsable={false}
-                                style={({ pressed }) => [
-                                    styles.autoRecordStartButton,
-                                    pressed &&
-                                        hasLoadedSavedHomeSettings &&
-                                        !startingRecording &&
-                                        styles.buttonPressed,
-                                    (!hasLoadedSavedHomeSettings ||
+                                style={styles.autoRecordingTourTarget}
+                            >
+                                <Pressable
+                                    style={({ pressed }) => [
+                                        styles.autoRecordStartButton,
+                                        pressed &&
+                                            hasLoadedSavedHomeSettings &&
+                                            !startingRecording &&
+                                            styles.buttonPressed,
+                                        (!hasLoadedSavedHomeSettings ||
+                                            startingRecording ||
+                                            checkingBackgroundLocationPermission ||
+                                            !hasBackgroundLocationPermission) &&
+                                            styles.appButtonDisabled,
+                                    ]}
+                                    onPress={handleStartRecording}
+                                    disabled={
+                                        !hasLoadedSavedHomeSettings ||
                                         startingRecording ||
                                         checkingBackgroundLocationPermission ||
-                                        !hasBackgroundLocationPermission) &&
-                                        styles.appButtonDisabled,
-                                ]}
-                                onPress={handleStartRecording}
-                                disabled={
-                                    !hasLoadedSavedHomeSettings ||
-                                    startingRecording ||
-                                    checkingBackgroundLocationPermission ||
-                                    !hasBackgroundLocationPermission
-                                }
-                            >
-                                <Text style={styles.autoRecordButtonText}>
-                                    {!hasLoadedSavedHomeSettings
-                                        ? "設定を読み込み中..."
-                                        : startingRecording
-                                          ? "自動記録を開始中..."
-                                          : selectedLiveShareUsers.length > 0
-                                            ? "自動記録開始＋共有"
-                                            : "自動記録開始"}
-                                </Text>
-                            </Pressable>
+                                        !hasBackgroundLocationPermission
+                                    }
+                                >
+                                    <Text style={styles.autoRecordButtonText}>
+                                        {!hasLoadedSavedHomeSettings
+                                            ? "設定を読み込み中..."
+                                            : startingRecording
+                                              ? "自動記録を開始中..."
+                                              : selectedLiveShareUsers.length >
+                                                  0
+                                                ? "自動記録開始＋共有"
+                                                : "自動記録開始"}
+                                    </Text>
+                                </Pressable>
+                            </View>
 
                             {planLimitStatusMessage.length > 0 && (
                                 <View style={styles.planLimitStatusBox}>
@@ -3633,7 +3638,6 @@ const styles = StyleSheet.create({
         marginBottom: 6,
     },
     autoRecordStartButton: {
-        marginTop: 10,
         backgroundColor: "#4b6f8f",
         borderRadius: 8,
         paddingVertical: 10,
@@ -4301,5 +4305,10 @@ const styles = StyleSheet.create({
         fontSize: 12,
         lineHeight: 18,
         marginBottom: 8,
+    },
+
+    autoRecordingTourTarget: {
+        width: "100%",
+        marginTop: 10,
     },
 });

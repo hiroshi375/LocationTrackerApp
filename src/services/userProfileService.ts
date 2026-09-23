@@ -12,6 +12,7 @@ type UserProfileRecord = {
     searchText?: string | null;
     iconImagePath?: string | null;
     role: string | null;
+    weightKg?: number | null;
     totalAggregationDistanceMeters?: number | null;
     totalAggregationDurationSeconds?: number | null;
     totalAggregationSessionCount?: number | null;
@@ -31,6 +32,7 @@ type CurrentUserProfile = {
     ownerValue: string | null;
     iconImagePath: string | null;
     role: string | null;
+    weightKg: number | null;
     totalAggregationDistanceMeters: number;
     totalAggregationDurationSeconds: number;
     totalAggregationSessionCount: number;
@@ -137,6 +139,27 @@ export async function updateUserProfileDisplayName(displayName: string) {
     }
 }
 
+export async function updateUserProfileWeightKg(weightKg: number | null) {
+    const user = await getCurrentUser();
+
+    const existing = await findExistingUserProfile(user.userId);
+
+    if (!existing) {
+        throw new Error("プロフィールが見つかりません。");
+    }
+
+    const updateResult = await client.models.UserProfile.update({
+        id: existing.id,
+        weightKg,
+    });
+
+    if (updateResult.errors) {
+        console.error("UserProfile weight update errors:", updateResult.errors);
+
+        throw new Error("体重を更新できませんでした。");
+    }
+}
+
 export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
     const user = await getCurrentUser();
     const attributes = await fetchUserAttributes();
@@ -154,6 +177,7 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
             ownerValue: existing.ownerValue ?? null,
             iconImagePath: existing.iconImagePath ?? null,
             role: existing.role ?? null,
+            weightKg: existing.weightKg ?? null,
             totalAggregationDistanceMeters:
                 existing.totalAggregationDistanceMeters ?? 0,
             totalAggregationDurationSeconds:
@@ -187,6 +211,7 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
             ownerValue: null,
             iconImagePath: null,
             role: null,
+            weightKg: null,
             totalAggregationDistanceMeters: 0,
             totalAggregationDurationSeconds: 0,
             totalAggregationSessionCount: 0,
@@ -207,6 +232,7 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
         ownerValue: created.ownerValue ?? null,
         iconImagePath: created.iconImagePath ?? null,
         role: created.role ?? null,
+        weightKg: created.weightKg ?? null,
         totalAggregationDistanceMeters:
             created.totalAggregationDistanceMeters ?? 0,
         totalAggregationDurationSeconds:

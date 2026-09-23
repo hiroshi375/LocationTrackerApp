@@ -124,6 +124,8 @@ const schema = a
                 searchText: a.string(),
                 iconImagePath: a.string(),
                 role: a.string(),
+                // 消費カロリー推定用の体重（kg）
+                weightKg: a.float(),
                 /*
                  * 利用規約・プライバシーポリシーへの同意情報。
                  *

@@ -34,6 +34,7 @@ import {
     SAMPLE_ACTIVITY_SESSION,
     SAMPLE_ACTIVITY_SESSION_ID,
 } from "../data/sampleActivity";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationMap">;
 
@@ -67,6 +68,7 @@ type UserProfileItem = {
     email?: string | null;
     displayName?: string | null;
     iconImagePath?: string | null;
+    weightKg?: number | null;
 };
 
 type MapLayerMode = "standard" | "satellite" | "retro" | "pixel";
@@ -190,6 +192,9 @@ const CAMERA_CENTER_LATITUDE_OFFSET = 0.0015;
 //        ? `https://api.maptiler.com/maps/${MAPTILER_MAP_ID}/256/{z}/{x}/{y}.png?key=${MAPTILER_API_KEY}`
 //        : undefined;
 
+const START_PIN_IMAGE = require("../../assets/images/map-start-pin-trimmed-160.png");
+const GOAL_PIN_IMAGE = require("../../assets/images/map-goal-pin-trimmed-160.png");
+
 export default function LocationMapScreen({ route, navigation }: Props) {
     const insets = useSafeAreaInsets();
     const { start: startTour } = useTour();
@@ -203,6 +208,8 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     const [recordingSessionSummary, setRecordingSessionSummary] =
         useState<RecordingSessionItem | null>(null);
     const [showLocationLogList, setShowLocationLogList] = useState(false);
+    const [showActivityHistoryMenu, setShowActivityHistoryMenu] =
+        useState(false);
     const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
     const [deletingLogId, setDeletingLogId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
@@ -215,6 +222,9 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     const [currentUserIconUrl, setCurrentUserIconUrl] = useState<string | null>(
         null,
     );
+    const [currentUserWeightKg, setCurrentUserWeightKg] = useState<
+        number | null
+    >(null);
 
     const selectedLocation = route.params?.selectedLocation ?? null;
     const routeRecordingSessionId = route.params?.recordingSessionId ?? null;
@@ -275,17 +285,19 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         !isSharedLiveLocationMap,
     );
 
-    /*
-     * アクティビティ履歴の「地図で表示」から開いた過去ルート。
-     *
-     * recordingSessionId はあるが、
-     * 自動記録中の地図でも共有地図でもない場合。
-     */
     const isActivityHistoryMap = Boolean(
         routeRecordingSessionId &&
         !isOwnLiveRecordingMap &&
         !isSharedLiveLocationMap,
     );
+
+    /*
+     * 自分の自動記録中とアクティビティ履歴では、
+     * 共通のアクティビティ地図UIを使用する。
+     *
+     * 共有地図は従来UIのままとする。
+     */
+    const useActivityStyleMap = isActivityHistoryMap || isOwnLiveRecordingMap;
 
     const shouldShowLiveCurrentLocation =
         isOwnLiveRecordingMap || isSharedLiveLocationMap;
@@ -735,9 +747,22 @@ export default function LocationMapScreen({ route, navigation }: Props) {
 
             const profiles = (result.data ?? []) as UserProfileItem[];
 
-            const profileWithIcon = profiles.find(
-                (profile) => !!profile.iconImagePath,
+            const targetProfile =
+                profiles.find((profile) => profile.userId === targetUserId) ??
+                null;
+
+            setCurrentUserWeightKg(
+                typeof targetProfile?.weightKg === "number"
+                    ? targetProfile.weightKg
+                    : null,
             );
+
+            const profileWithIcon =
+                profiles.find(
+                    (profile) =>
+                        profile.userId === targetUserId &&
+                        !!profile.iconImagePath,
+                ) ?? null;
 
             if (!profileWithIcon?.iconImagePath) {
                 setCurrentUserIconUrl(null);
@@ -1175,9 +1200,9 @@ export default function LocationMapScreen({ route, navigation }: Props) {
 
             mapRef.current?.fitToCoordinates(coordinates, {
                 edgePadding: {
-                    top: 100,
+                    top: isOwnLiveRecordingMap ? 110 : 100,
                     right: 60,
-                    bottom: 320,
+                    bottom: isOwnLiveRecordingMap ? 210 : 320,
                     left: 60,
                 },
                 animated: true,
@@ -1191,6 +1216,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         hasLoadedMapPreferences,
         mapReady,
         isLiveRecordingMap,
+        isOwnLiveRecordingMap,
         routeViewMode,
         currentLocation,
         activeSessionId,
@@ -1257,9 +1283,9 @@ export default function LocationMapScreen({ route, navigation }: Props) {
 
             mapRef.current?.fitToCoordinates(coordinates, {
                 edgePadding: {
-                    top: 80,
+                    top: isActivityHistoryMap ? 110 : 80,
                     right: 40,
-                    bottom: 360,
+                    bottom: isActivityHistoryMap ? 210 : 360,
                     left: 40,
                 },
                 animated: true,
@@ -1277,6 +1303,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         loading,
         activeSessionId,
         isLiveRecordingMap,
+        isActivityHistoryMap,
         logs,
     ]);
 
@@ -1395,7 +1422,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
 
         const timerId = setInterval(() => {
             setCurrentDateTime(new Date());
-        }, 30_000);
+        }, 1_000);
 
         return () => {
             clearInterval(timerId);
@@ -1520,10 +1547,14 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         setShowLocationLogList(false);
         setSelectedLogId(null);
 
+        /*
+         * 新UIではGuideway対象の操作を
+         * 右上メニュー内に配置しているため、
+         * Tour開始前にメニューを開いておく。
+         */
+        setShowActivityHistoryMenu(true);
+
         const timerId = setTimeout(() => {
-            /*
-             * 再renderなどによる二重起動を防止する。
-             */
             navigation.setParams({
                 startMapTutorial: false,
             });
@@ -1678,9 +1709,9 @@ export default function LocationMapScreen({ route, navigation }: Props) {
 
         mapRef.current?.fitToCoordinates(fitTargetCoordinates, {
             edgePadding: {
-                top: 100,
+                top: useActivityStyleMap ? 110 : 100,
                 right: 60,
-                bottom: 360,
+                bottom: useActivityStyleMap ? 210 : 360,
                 left: 60,
             },
             animated: true,
@@ -1775,14 +1806,83 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         : 0;
 
     const sessionStartAt =
-        activeSessionId && routeLogs.length > 0
-            ? routeLogs[0].recordedAt
-            : null;
+        isOwnLiveRecordingMap && recordingSessionSummary?.startedAt
+            ? recordingSessionSummary.startedAt
+            : activeSessionId && routeLogs.length > 0
+              ? routeLogs[0].recordedAt
+              : null;
 
     const sessionEndAt =
         activeSessionId && routeLogs.length > 0
             ? routeLogs[routeLogs.length - 1].recordedAt
             : null;
+
+    /*
+     * アクティビティ地図のサマリー表示値。
+     *
+     * 履歴:
+     *   RecordingSessionの集計距離を優先する。
+     *
+     * 自動記録中:
+     *   最新のLocationLogから計算した距離を優先する。
+     */
+    const activityDistanceMeters = isOwnLiveRecordingMap
+        ? (routeDistanceMeters ?? recordingSessionSummary?.distanceMeters ?? 0)
+        : typeof recordingSessionSummary?.distanceMeters === "number"
+          ? recordingSessionSummary.distanceMeters
+          : (routeDistanceMeters ?? 0);
+
+    const activityDistanceMetersText = Math.round(
+        activityDistanceMeters,
+    ).toLocaleString("ja-JP");
+
+    /*
+     * 履歴:
+     *   開始地点 → 最終地点
+     *
+     * 自動記録中:
+     *   開始地点 → 現在時刻
+     */
+    const activityEndTime = isOwnLiveRecordingMap
+        ? currentDateTime
+        : sessionEndAt
+          ? new Date(sessionEndAt)
+          : null;
+
+    const activityDurationSeconds =
+        sessionStartAt && activityEndTime
+            ? Math.max(
+                  0,
+                  Math.floor(
+                      (activityEndTime.getTime() -
+                          new Date(sessionStartAt).getTime()) /
+                          1000,
+                  ),
+              )
+            : 0;
+
+    const activityDurationText = formatDurationHms(activityDurationSeconds);
+
+    const activityCalories =
+        currentUserWeightKg !== null
+            ? estimateCalories(
+                  activityDistanceMeters,
+                  activityDurationSeconds,
+                  currentUserWeightKg,
+              )
+            : null;
+
+    const activityAverageSpeedKmh =
+        activityDurationSeconds > 0
+            ? (activityDistanceMeters / activityDurationSeconds) * 3.6
+            : 0;
+
+    const activityAverageSpeedText =
+        activityAverageSpeedKmh > 0 ? activityAverageSpeedKmh.toFixed(1) : "-";
+
+    const activityHeaderDateTimeText = sessionStartAt
+        ? formatActivityHeaderDateTime(sessionStartAt)
+        : "";
 
     const liveRecordingPeriodText =
         isLiveRecordingMap && sessionStartAt
@@ -1817,9 +1917,9 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     return (
         <View style={styles.container}>
             <StatusBar
-                style="dark"
+                style={useActivityStyleMap ? "light" : "dark"}
                 hidden={false}
-                backgroundColor="#ffffff"
+                backgroundColor={useActivityStyleMap ? "#06395f" : "#ffffff"}
                 translucent={false}
             />
 
@@ -1859,8 +1959,10 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                         routeCoordinates.length >= 2 && (
                             <Polyline
                                 coordinates={routeCoordinates}
-                                strokeColor="rgba(22, 91, 112, 0.85)"
-                                strokeWidth={6}
+                                strokeColor="#22C7B8"
+                                strokeWidth={7}
+                                lineCap="round"
+                                lineJoin="round"
                             />
                         )}
 
@@ -1868,9 +1970,10 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                         currentLocationLineCoordinates.length === 2 && (
                             <Polyline
                                 coordinates={currentLocationLineCoordinates}
-                                strokeColor="rgba(22, 91, 112, 0.85)"
+                                strokeColor="#22C7B8"
                                 strokeWidth={6}
                                 lineDashPattern={[8, 6]}
+                                lineCap="round"
                             />
                         )}
 
@@ -1929,26 +2032,12 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                                 latitude: startLog.latitude,
                                 longitude: startLog.longitude,
                             }}
+                            image={START_PIN_IMAGE}
+                            anchor={{ x: 0.5, y: 1 }}
+                            zIndex={200}
                             title="開始位置"
                             description={buildMarkerDescription(startLog)}
-                            anchor={{ x: 0.5, y: 0.5 }}
-                            centerOffset={{ x: 0, y: 0 }}
-                            zIndex={100}
-                        >
-                            <View
-                                collapsable={false}
-                                style={styles.endpointMarkerContainer}
-                            >
-                                <View
-                                    collapsable={false}
-                                    style={styles.startPointMarker}
-                                >
-                                    <Text style={styles.endpointMarkerText}>
-                                        S
-                                    </Text>
-                                </View>
-                            </View>
-                        </Marker>
+                        />
                     )}
 
                     {!isSharedCurrentLocationOnlyMap && endLog && (
@@ -1957,26 +2046,12 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                                 latitude: endLog.latitude,
                                 longitude: endLog.longitude,
                             }}
+                            image={GOAL_PIN_IMAGE}
+                            anchor={{ x: 0.5, y: 1 }}
+                            zIndex={201}
                             title="終了位置"
                             description={buildMarkerDescription(endLog)}
-                            anchor={{ x: 0.5, y: 0.5 }}
-                            centerOffset={{ x: 0, y: 0 }}
-                            zIndex={100}
-                        >
-                            <View
-                                collapsable={false}
-                                style={styles.endpointMarkerContainer}
-                            >
-                                <View
-                                    collapsable={false}
-                                    style={styles.endPointMarker}
-                                >
-                                    <Text style={styles.endpointMarkerText}>
-                                        G
-                                    </Text>
-                                </View>
-                            </View>
-                        </Marker>
+                        />
                     )}
 
                     {!isSharedCurrentLocationOnlyMap &&
@@ -2044,6 +2119,203 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             ) : (
                 <View style={styles.map} />
             )}
+
+            {useActivityStyleMap && !showLocationLogList && (
+                <View
+                    style={[
+                        styles.activityHistoryHeader,
+                        {
+                            paddingTop: Math.max(insets.top, 8),
+                        },
+                    ]}
+                >
+                    <Pressable
+                        style={styles.activityHistoryHeaderButton}
+                        onPress={() => navigation.goBack()}
+                    >
+                        <Text style={styles.activityHistoryBackText}>‹</Text>
+                    </Pressable>
+
+                    <Text
+                        style={styles.activityHistoryHeaderTitle}
+                        numberOfLines={1}
+                    >
+                        {isOwnLiveRecordingMap
+                            ? "自動記録中"
+                            : activityHeaderDateTimeText}
+                    </Text>
+
+                    <Pressable
+                        style={styles.activityHistoryHeaderButton}
+                        onPress={() => {
+                            setShowActivityHistoryMenu((current) => !current);
+                        }}
+                    >
+                        <Text style={styles.activityHistoryMenuIcon}>•••</Text>
+                    </Pressable>
+                </View>
+            )}
+
+            {useActivityStyleMap &&
+                !showLocationLogList &&
+                showActivityHistoryMenu && (
+                    <>
+                        <Pressable
+                            style={styles.activityHistoryMenuBackdrop}
+                            onPress={() => {
+                                setShowActivityHistoryMenu(false);
+                            }}
+                        />
+
+                        <View
+                            style={[
+                                styles.activityHistoryMenu,
+                                {
+                                    top: Math.max(insets.top, 8) + 54,
+                                },
+                            ]}
+                        >
+                            {/* 地図表示 */}
+                            <View
+                                ref={activityMapLayerTourRef}
+                                collapsable={false}
+                                style={styles.activityHistoryMapLayerSection}
+                            >
+                                <Text
+                                    style={styles.activityHistoryMapLayerTitle}
+                                >
+                                    地図表示
+                                </Text>
+
+                                <View style={styles.activityHistoryMapLayerRow}>
+                                    {MAP_LAYER_OPTIONS.map((option) => {
+                                        const isActive =
+                                            mapLayerMode === option.value;
+
+                                        return (
+                                            <Pressable
+                                                key={option.value}
+                                                style={({ pressed }) => [
+                                                    styles.activityHistoryMapLayerButton,
+                                                    isActive &&
+                                                        styles.activityHistoryMapLayerButtonActive,
+                                                    pressed &&
+                                                        styles.activityHistoryMapLayerButtonPressed,
+                                                ]}
+                                                onPress={() => {
+                                                    setMapLayerMode(
+                                                        option.value,
+                                                    );
+                                                }}
+                                            >
+                                                <Text
+                                                    style={[
+                                                        styles.activityHistoryMapLayerButtonText,
+                                                        isActive &&
+                                                            styles.activityHistoryMapLayerButtonTextActive,
+                                                    ]}
+                                                >
+                                                    {option.label}
+                                                </Text>
+                                            </Pressable>
+                                        );
+                                    })}
+                                </View>
+                            </View>
+
+                            {/* 記録ポイント一覧 */}
+                            {isActivityHistoryMap &&
+                                !isSharedActivityHistory && (
+                                    <Pressable
+                                        ref={activityMapLogListTourRef}
+                                        collapsable={false}
+                                        style={({ pressed }) => [
+                                            styles.activityHistoryMenuItem,
+                                            pressed &&
+                                                styles.activityHistoryMenuItemPressed,
+                                        ]}
+                                        onPress={() => {
+                                            setShowActivityHistoryMenu(false);
+                                            setShowLocationLogList(true);
+                                        }}
+                                    >
+                                        <View
+                                            style={
+                                                styles.activityHistoryMenuItemRow
+                                            }
+                                        >
+                                            <Text
+                                                style={
+                                                    styles.activityHistoryMenuItemText
+                                                }
+                                            >
+                                                記録ポイント一覧を見る
+                                            </Text>
+
+                                            <Text
+                                                style={
+                                                    styles.activityHistoryMenuItemCount
+                                                }
+                                            >
+                                                {editableLocationLogs.length}件
+                                            </Text>
+                                        </View>
+                                    </Pressable>
+                                )}
+
+                            {/* 記録ポイント表示 */}
+                            <Pressable
+                                ref={activityMapPointsTourRef}
+                                collapsable={false}
+                                style={({ pressed }) => [
+                                    styles.activityHistoryMenuItem,
+                                    pressed &&
+                                        styles.activityHistoryMenuItemPressed,
+                                ]}
+                                onPress={() => {
+                                    setShowPoints((current) => !current);
+                                    setShowActivityHistoryMenu(false);
+                                }}
+                            >
+                                <Text
+                                    style={styles.activityHistoryMenuItemText}
+                                >
+                                    {showPoints
+                                        ? "記録ポイントを非表示"
+                                        : "記録ポイントを表示"}
+                                </Text>
+                            </Pressable>
+
+                            {/* ルート表示 */}
+                            <Pressable
+                                ref={activityMapRouteTourRef}
+                                collapsable={false}
+                                style={({ pressed }) => [
+                                    styles.activityHistoryMenuItem,
+                                    pressed &&
+                                        styles.activityHistoryMenuItemPressed,
+                                ]}
+                                onPress={() => {
+                                    if (isOwnLiveRecordingMap) {
+                                        toggleRouteViewMode();
+                                    } else {
+                                        showRouteOverview();
+                                    }
+
+                                    setShowActivityHistoryMenu(false);
+                                }}
+                            >
+                                <Text
+                                    style={styles.activityHistoryMenuItemText}
+                                >
+                                    {isOwnLiveRecordingMap
+                                        ? routeFitButtonText
+                                        : "ルート全体を表示"}
+                                </Text>
+                            </Pressable>
+                        </View>
+                    </>
+                )}
 
             {!isPixelMapLayer &&
                 shouldShowLiveCurrentLocation &&
@@ -2116,7 +2388,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                     </View>
                 )}
 
-            {!showLocationLogList && (
+            {!showLocationLogList && !useActivityStyleMap && (
                 <View style={styles.infoBox}>
                     <Text style={styles.infoTitle}>
                         {isSharedCurrentLocationOnlyMap
@@ -2253,11 +2525,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                             </View>
                         )}
 
-                    <View
-                        ref={activityMapLayerTourRef}
-                        collapsable={false}
-                        style={styles.mapLayerRow}
-                    >
+                    <View style={styles.mapLayerRow}>
                         {MAP_LAYER_OPTIONS.map((option) => {
                             const isActive = mapLayerMode === option.value;
 
@@ -2290,8 +2558,6 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                     {!isSharedCurrentLocationOnlyMap && (
                         <View style={styles.mapActionButtonRow}>
                             <Pressable
-                                ref={activityMapPointsTourRef}
-                                collapsable={false}
                                 style={({ pressed }) => [
                                     styles.mapActionButton,
                                     pressed && styles.mapActionButtonPressed,
@@ -2306,8 +2572,6 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                             </Pressable>
 
                             <Pressable
-                                ref={activityMapRouteTourRef}
-                                collapsable={false}
                                 style={({ pressed }) => [
                                     styles.mapActionButton,
 
@@ -2346,27 +2610,85 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                             </Pressable>
                         </View>
                     )}
-
-                    {isActivityHistoryMap && !isSharedActivityHistory && (
-                        <Pressable
-                            ref={activityMapLogListTourRef}
-                            collapsable={false}
-                            style={({ pressed }) => [
-                                styles.locationLogListButton,
-                                pressed && styles.mapActionButtonPressed,
-                            ]}
-                            onPress={() => {
-                                setShowLocationLogList(true);
-                            }}
-                        >
-                            <Text style={styles.locationLogListButtonText}>
-                                記録ポイント一覧を見る（
-                                {editableLocationLogs.length}件）
-                            </Text>
-                        </Pressable>
-                    )}
                 </View>
             )}
+
+            {useActivityStyleMap && !showLocationLogList && (
+                <View
+                    style={[
+                        styles.activityHistorySummaryCard,
+                        {
+                            paddingBottom: Math.max(insets.bottom + 8, 16),
+                        },
+                    ]}
+                >
+                    <View style={styles.activityDistanceRow}>
+                        <MaterialCommunityIcons
+                            name="run"
+                            size={34}
+                            color="#06395f"
+                        />
+
+                        <Text style={styles.activityDistanceValue}>
+                            {activityDistanceMetersText}
+                            <Text style={styles.activityDistanceUnit}> m</Text>
+                        </Text>
+                    </View>
+
+                    <View style={styles.activityStatsDivider} />
+
+                    <View style={styles.activityStatsRow}>
+                        <View style={styles.activityStatItem}>
+                            <MaterialCommunityIcons
+                                name="clock-outline"
+                                size={28}
+                                color="#06395f"
+                            />
+
+                            <Text style={styles.activityStatValue}>
+                                {activityDurationText}
+                            </Text>
+
+                            <Text style={styles.activityStatLabel}>時間</Text>
+                        </View>
+
+                        <View style={styles.activityStatVerticalDivider} />
+
+                        <View style={styles.activityStatItem}>
+                            <MaterialCommunityIcons
+                                name="fire"
+                                size={27}
+                                color="#06395f"
+                            />
+
+                            <Text style={styles.activityStatValue}>
+                                {activityCalories ?? "-"}
+                            </Text>
+
+                            <Text style={styles.activityStatLabel}>kcal</Text>
+                        </View>
+
+                        <View style={styles.activityStatVerticalDivider} />
+
+                        <View style={styles.activityStatItem}>
+                            <MaterialCommunityIcons
+                                name="speedometer"
+                                size={28}
+                                color="#06395f"
+                            />
+
+                            <Text style={styles.activityStatValue}>
+                                {activityAverageSpeedText}
+                            </Text>
+
+                            <Text style={styles.activityStatLabel}>
+                                平均速度 (km/h)
+                            </Text>
+                        </View>
+                    </View>
+                </View>
+            )}
+
             {showLocationLogList &&
                 isActivityHistoryMap &&
                 !isSharedActivityHistory && (
@@ -2643,6 +2965,72 @@ function formatDuration(startValue: string, endValue: string) {
     const mm = String(minutes).padStart(2, "0");
 
     return `${hours}h:${mm}m`;
+}
+
+function formatDurationHms(totalSeconds: number) {
+    if (!Number.isFinite(totalSeconds) || totalSeconds < 0) {
+        return "--:--:--";
+    }
+
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = Math.floor(totalSeconds % 60);
+
+    const hh = String(hours).padStart(2, "0");
+    const mm = String(minutes).padStart(2, "0");
+    const ss = String(seconds).padStart(2, "0");
+
+    return `${hh}:${mm}:${ss}`;
+}
+
+/*
+ * 推定消費カロリー
+ */
+function estimateCalories(
+    distanceMeters: number,
+    durationSeconds: number,
+    weightKg: number,
+) {
+    if (durationSeconds <= 0 || distanceMeters <= 0 || weightKg <= 0) {
+        return null;
+    }
+
+    const durationMinutes = durationSeconds / 60;
+    const speedKmh = (distanceMeters / durationSeconds) * 3.6;
+
+    let met = 3.0;
+
+    if (speedKmh < 3) {
+        met = 2.5;
+    } else if (speedKmh < 4) {
+        met = 3.0;
+    } else if (speedKmh < 5) {
+        met = 3.5;
+    } else if (speedKmh < 6.5) {
+        met = 4.3;
+    } else if (speedKmh < 8) {
+        met = 6.0;
+    } else if (speedKmh < 10) {
+        met = 8.3;
+    } else {
+        met = 10.0;
+    }
+
+    const calories = (met * 3.5 * weightKg * durationMinutes) / 200;
+
+    return Math.round(calories);
+}
+
+function formatActivityHeaderDateTime(value: string) {
+    const date = new Date(value);
+
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const dd = String(date.getDate()).padStart(2, "0");
+    const hh = String(date.getHours()).padStart(2, "0");
+    const mi = String(date.getMinutes()).padStart(2, "0");
+
+    return `${yyyy}/${mm}/${dd} ${hh}:${mi}`;
 }
 
 async function getBestAddressText(latitude: number, longitude: number) {
@@ -2966,6 +3354,284 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
+
+    activityHistoryHeader: {
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        minHeight: 58,
+        paddingHorizontal: 10,
+        paddingBottom: 8,
+        flexDirection: "row",
+        alignItems: "flex-end",
+        backgroundColor: "#06395f",
+        zIndex: 2000,
+        elevation: 20,
+    },
+
+    activityHistoryHeaderButton: {
+        width: 46,
+        height: 44,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    activityHistoryBackText: {
+        color: "#ffffff",
+        fontSize: 42,
+        lineHeight: 42,
+        fontWeight: "300",
+    },
+
+    activityHistoryHeaderTitle: {
+        flex: 1,
+        paddingBottom: 9,
+        textAlign: "center",
+        color: "#ffffff",
+        fontSize: 17,
+        fontWeight: "600",
+    },
+
+    activityHistoryMenuBackdrop: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 2050,
+    },
+
+    activityHistoryMenu: {
+        position: "absolute",
+        right: 12,
+        width: 320,
+
+        backgroundColor: "#ffffff",
+        borderRadius: 12,
+
+        overflow: "hidden",
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 4,
+        },
+        shadowOpacity: 0.18,
+        shadowRadius: 8,
+
+        elevation: 12,
+
+        zIndex: 2100,
+    },
+
+    activityHistoryMenuItem: {
+        minHeight: 52,
+        paddingHorizontal: 16,
+        paddingVertical: 13,
+        justifyContent: "center",
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: "#e5e7eb",
+    },
+
+    activityHistoryMenuItemPressed: {
+        backgroundColor: "#f1f5f8",
+    },
+
+    activityHistoryMenuItemRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+    },
+
+    activityHistoryMenuItemText: {
+        flexShrink: 1,
+        color: "#123b5d",
+        fontSize: 14,
+        fontWeight: "600",
+    },
+
+    activityHistoryMapLayerSection: {
+        paddingHorizontal: 16,
+        paddingTop: 14,
+        paddingBottom: 14,
+
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: "#e5e7eb",
+    },
+
+    activityHistoryMapLayerTitle: {
+        marginBottom: 10,
+
+        color: "#123b5d",
+        fontSize: 13,
+        fontWeight: "700",
+    },
+
+    activityHistoryMapLayerRow: {
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: 8,
+    },
+
+    activityHistoryMapLayerButton: {
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: "#cbd5dc",
+
+        backgroundColor: "#ffffff",
+    },
+
+    activityHistoryMapLayerButtonActive: {
+        backgroundColor: "#06395f",
+        borderColor: "#06395f",
+    },
+
+    activityHistoryMapLayerButtonPressed: {
+        opacity: 0.75,
+    },
+
+    activityHistoryMapLayerButtonText: {
+        color: "#31546d",
+        fontSize: 12,
+        fontWeight: "600",
+    },
+
+    activityHistoryMapLayerButtonTextActive: {
+        color: "#ffffff",
+    },
+
+    activityHistoryMenuItemCount: {
+        color: "#7b8790",
+        fontSize: 12,
+    },
+
+    activityHistoryMenuIcon: {
+        color: "#ffffff",
+        fontSize: 18,
+        fontWeight: "bold",
+        letterSpacing: 1,
+    },
+
+    activityHistorySummaryCard: {
+        position: "absolute",
+        left: 0,
+        right: 0,
+        bottom: 0,
+
+        backgroundColor: "rgba(255,255,255,0.98)",
+
+        paddingTop: 14,
+        paddingHorizontal: 18,
+
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: -3,
+        },
+        shadowOpacity: 0.12,
+        shadowRadius: 8,
+
+        elevation: 12,
+
+        zIndex: 1500,
+    },
+
+    activityDistanceRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+
+        minHeight: 64,
+    },
+
+    activityDistanceIcon: {
+        marginRight: 14,
+
+        color: "#06395f",
+
+        fontSize: 30,
+        fontWeight: "700",
+    },
+
+    activityDistanceValue: {
+        color: "#06395f",
+
+        fontSize: 40,
+        lineHeight: 46,
+
+        fontWeight: "700",
+
+        letterSpacing: -1,
+    },
+
+    activityDistanceUnit: {
+        fontSize: 21,
+        fontWeight: "600",
+    },
+
+    activityStatsDivider: {
+        height: StyleSheet.hairlineWidth,
+
+        backgroundColor: "#dfe5e9",
+
+        marginTop: 2,
+    },
+
+    activityStatsRow: {
+        flexDirection: "row",
+
+        alignItems: "stretch",
+
+        paddingTop: 12,
+    },
+
+    activityStatItem: {
+        flex: 1,
+
+        alignItems: "center",
+        justifyContent: "center",
+
+        paddingHorizontal: 4,
+    },
+
+    activityStatVerticalDivider: {
+        width: StyleSheet.hairlineWidth,
+
+        backgroundColor: "#dfe5e9",
+
+        marginVertical: 4,
+    },
+
+    activityStatIcon: {
+        color: "#06395f",
+
+        fontSize: 21,
+
+        marginBottom: 4,
+    },
+
+    activityStatValue: {
+        color: "#06395f",
+
+        fontSize: 18,
+
+        fontWeight: "700",
+    },
+
+    activityStatLabel: {
+        marginTop: 4,
+
+        color: "#6b7780",
+
+        fontSize: 10,
+
+        textAlign: "center",
+    },
+
     infoBox: {
         position: "absolute",
         left: 16,
@@ -3041,35 +3707,110 @@ const styles = StyleSheet.create({
         justifyContent: "center",
     },
     endpointMarkerContainer: {
+        width: 60,
+        height: 72,
+        alignItems: "center",
+        justifyContent: "flex-start",
+        overflow: "visible",
+    },
+    mapPinContainer: {
+        width: 60,
+        height: 68,
+        alignItems: "center",
+        justifyContent: "flex-start",
+        overflow: "visible",
+    },
+
+    startMapPinBody: {
         width: 36,
         height: 36,
+        borderRadius: 18,
+
+        backgroundColor: "#22C7B8",
+
+        borderWidth: 2,
+        borderColor: "#169F94",
+
         alignItems: "center",
         justifyContent: "center",
+
+        zIndex: 2,
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.2,
+        shadowRadius: 2,
+
+        elevation: 5,
     },
-    startPointMarker: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
-        backgroundColor: "rgba(31, 92, 90, 0.95)",
-        borderWidth: 3,
-        borderColor: "#ffffff",
+
+    startMapPinCenter: {
+        width: 15,
+        height: 15,
+        borderRadius: 7.5,
+
+        backgroundColor: "#087F76",
+    },
+
+    startMapPinTail: {
+        width: 0,
+        height: 0,
+
+        marginTop: -6,
+
+        borderLeftWidth: 10,
+        borderRightWidth: 10,
+        borderTopWidth: 18,
+
+        borderLeftColor: "transparent",
+        borderRightColor: "transparent",
+        borderTopColor: "#22C7B8",
+
+        zIndex: 1,
+    },
+
+    endMapPinBody: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+
+        backgroundColor: "#F44336",
+
+        borderWidth: 2,
+        borderColor: "#D32F2F",
+
         alignItems: "center",
         justifyContent: "center",
+
+        zIndex: 2,
+        elevation: 3,
     },
-    endPointMarker: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
-        backgroundColor: "rgba(22, 91, 112, 0.95)",
-        borderWidth: 3,
-        borderColor: "#ffffff",
-        alignItems: "center",
-        justifyContent: "center",
+
+    endMapPinCenter: {
+        width: 17,
+        height: 17,
+        borderRadius: 8.5,
+        backgroundColor: "#B71C1C",
     },
-    endpointMarkerText: {
-        color: "#ffffff",
-        fontSize: 13,
-        fontWeight: "bold",
+
+    endMapPinTail: {
+        width: 0,
+        height: 0,
+
+        marginTop: -5,
+
+        borderLeftWidth: 11,
+        borderRightWidth: 11,
+        borderTopWidth: 20,
+
+        borderLeftColor: "transparent",
+        borderRightColor: "transparent",
+        borderTopColor: "#F44336",
+
+        zIndex: 1,
     },
     memoRow: {
         flexDirection: "row",

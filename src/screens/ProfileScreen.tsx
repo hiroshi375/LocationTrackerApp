@@ -17,6 +17,7 @@ import {
 
 import { getUrl, uploadData } from "aws-amplify/storage";
 import * as ImagePicker from "expo-image-picker";
+import { useSubscription } from "../hooks/useSubscription";
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import {
@@ -47,6 +48,7 @@ export default function ProfileScreen({ navigation }: Props) {
     const [profileId, setProfileId] = useState<string | null>(null);
     const [email, setEmail] = useState("");
     const [displayName, setDisplayName] = useState("");
+    const [profileRole, setProfileRole] = useState<string | null>(null);
     const [iconImageUrl, setIconImageUrl] = useState<string | null>(null);
     const [uploadingIcon, setUploadingIcon] = useState(false);
     const [selectedIconUri, setSelectedIconUri] = useState<string | null>(null);
@@ -54,6 +56,11 @@ export default function ProfileScreen({ navigation }: Props) {
     const [premiumPriceText, setPremiumPriceText] = useState("");
     const [purchasingPremium, setPurchasingPremium] = useState(false);
     const [restoringPremium, setRestoringPremium] = useState(false);
+    const {
+        tier: subscriptionTier,
+        loading: subscriptionLoading,
+        refresh: refreshSubscription,
+    } = useSubscription();
 
     const isProcessing =
         saving ||
@@ -61,6 +68,17 @@ export default function ProfileScreen({ navigation }: Props) {
         deletingAccount ||
         purchasingPremium ||
         restoringPremium;
+
+    const isAdmin = profileRole === "admin";
+
+    const isPremiumPlan =
+        subscriptionTier === "PREMIUM" || premiumPurchased || isAdmin;
+
+    const currentPlanText = isAdmin
+        ? "Premium（管理者）"
+        : isPremiumPlan
+          ? "Premium"
+          : "FREE";
 
     const loadProfile = useCallback(async () => {
         try {
@@ -71,6 +89,7 @@ export default function ProfileScreen({ navigation }: Props) {
             setProfileId(profile.id);
             setEmail(profile.email ?? "");
             setDisplayName(profile.displayName ?? "");
+            setProfileRole(profile.role ?? null);
 
             const nextIconImagePath = profile.iconImagePath ?? null;
 
@@ -127,6 +146,16 @@ export default function ProfileScreen({ navigation }: Props) {
             return;
         }
 
+        if (isPremiumPlan) {
+            Alert.alert(
+                "Premium利用中",
+                isAdmin
+                    ? "管理者ユーザーはPremium機能を利用できます。"
+                    : "すでにPremiumプランをご利用いただいています。",
+            );
+            return;
+        }
+
         try {
             setPurchasingPremium(true);
 
@@ -137,6 +166,8 @@ export default function ProfileScreen({ navigation }: Props) {
             }
 
             setPremiumPurchased(true);
+
+            await refreshSubscription();
 
             Alert.alert("購入完了", "Premium機能が利用可能になりました。");
         } catch (error) {
@@ -161,6 +192,8 @@ export default function ProfileScreen({ navigation }: Props) {
             const purchased = hasPremiumEntitlement(customerInfo);
 
             setPremiumPurchased(purchased);
+
+            await refreshSubscription();
 
             Alert.alert(
                 purchased ? "復元完了" : "購入情報なし",
@@ -491,11 +524,40 @@ export default function ProfileScreen({ navigation }: Props) {
                     </Pressable>
 
                     <View style={styles.premiumBox}>
-                        <Text style={styles.premiumTitle}>Premium</Text>
+                        <Text style={styles.premiumTitle}>プラン</Text>
 
-                        {premiumPurchased ? (
+                        <View style={styles.currentPlanRow}>
+                            <Text style={styles.currentPlanLabel}>
+                                現在のプラン
+                            </Text>
+
+                            {subscriptionLoading ? (
+                                <ActivityIndicator size="small" />
+                            ) : (
+                                <Text
+                                    style={[
+                                        styles.currentPlanValue,
+                                        isPremiumPlan
+                                            ? styles.currentPlanPremium
+                                            : styles.currentPlanFree,
+                                    ]}
+                                >
+                                    {currentPlanText}
+                                </Text>
+                            )}
+                        </View>
+
+                        {isAdmin ? (
+                            <Text style={styles.premiumDescription}>
+                                管理者ユーザーのため、Premium機能を利用できます。
+                            </Text>
+                        ) : premiumPurchased ? (
                             <Text style={styles.premiumActiveText}>
                                 Premium購入済み
+                            </Text>
+                        ) : isPremiumPlan ? (
+                            <Text style={styles.premiumActiveText}>
+                                Premium利用中
                             </Text>
                         ) : (
                             <>
@@ -509,7 +571,9 @@ export default function ProfileScreen({ navigation }: Props) {
                                         purchasingPremium &&
                                             styles.disabledButton,
                                     ]}
-                                    disabled={isProcessing}
+                                    disabled={
+                                        isProcessing || subscriptionLoading
+                                    }
                                     onPress={() => {
                                         void handlePurchasePremium();
                                     }}
@@ -792,6 +856,38 @@ const styles = StyleSheet.create({
         fontSize: 18,
         fontWeight: "bold",
         color: "#333",
+    },
+
+    currentPlanRow: {
+        marginTop: 12,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderRadius: 8,
+        backgroundColor: "#ffffff",
+        borderWidth: 1,
+        borderColor: "#d7dee5",
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+    },
+
+    currentPlanLabel: {
+        fontSize: 14,
+        color: "#555",
+        fontWeight: "bold",
+    },
+
+    currentPlanValue: {
+        fontSize: 15,
+        fontWeight: "bold",
+    },
+
+    currentPlanPremium: {
+        color: "#2e7d32",
+    },
+
+    currentPlanFree: {
+        color: "#555",
     },
 
     premiumDescription: {

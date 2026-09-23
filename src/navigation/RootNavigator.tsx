@@ -15,6 +15,7 @@ import PrivacyPolicyScreen from "../screens/PrivacyPolicyScreen";
 import ProfileScreen from "../screens/ProfileScreen";
 import ShareGroupManagementScreen from "../screens/ShareGroupManagementScreen";
 import TermsOfServiceScreen from "../screens/TermsOfServiceScreen";
+import SubscriptionPlanScreen from "../screens/SubscriptionPlanScreen";
 
 export type RootStackParamList = {
     LocationHome:
@@ -71,6 +72,7 @@ export type RootStackParamList = {
     TermsOfService: undefined;
     Contact: undefined;
     ShareGroupManagement: undefined;
+    SubscriptionPlan: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -152,6 +154,14 @@ export default function RootNavigator() {
                     name="ShareGroupManagement"
                     component={ShareGroupManagementScreen}
                     options={{ title: "共有グループ管理" }}
+                />
+
+                <Stack.Screen
+                    name="SubscriptionPlan"
+                    component={SubscriptionPlanScreen}
+                    options={{
+                        title: "FREE / PREMIUM プラン",
+                    }}
                 />
             </Stack.Navigator>
         </NavigationContainer>

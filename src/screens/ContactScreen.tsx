@@ -7,7 +7,7 @@ import {
     View,
 } from "react-native";
 
-const CONTACT_EMAIL = "your-email@example.com";
+const CONTACT_EMAIL = "hi64sa10@yahoo.co.jp";
 
 export default function ContactScreen() {
     const openMailApp = async () => {

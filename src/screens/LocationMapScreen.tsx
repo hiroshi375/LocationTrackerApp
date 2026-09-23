@@ -188,7 +188,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     const insets = useSafeAreaInsets();
     const mapRef = useRef<MapView | null>(null);
     const hasFittedInitialRouteRef = useRef(false);
-
+    const isBackAfterHidingPointsRef = useRef(false);
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
     const [recordingSessionSummary, setRecordingSessionSummary] =
         useState<RecordingSessionItem | null>(null);
@@ -1372,11 +1372,51 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     useEffect(() => {
         const unsubscribeBeforeRemove = navigation.addListener(
             "beforeRemove",
-            () => {
+            (event) => {
                 console.log(
                     "[LocationMapScreen] beforeRemove:",
                     new Date().toISOString(),
                 );
+
+                /*
+                 * ポイントMarkerが表示中の場合は、
+                 * そのまま画面を閉じると大量Markerの破棄と
+                 * Navigationの画面遷移が同時に走って重くなる。
+                 *
+                 * 一度戻る操作を止めてMarkerを非表示にし、
+                 * 描画更新後に本来の戻る処理を再開する。
+                 */
+                if (showPoints && !isBackAfterHidingPointsRef.current) {
+                    event.preventDefault();
+
+                    isBackAfterHidingPointsRef.current = true;
+
+                    console.log(
+                        "[LocationMapScreen] Hide markers before back:",
+                        new Date().toISOString(),
+                    );
+
+                    setShowPoints(false);
+
+                    requestAnimationFrame(() => {
+                        requestAnimationFrame(() => {
+                            console.log(
+                                "[LocationMapScreen] Resume back after hiding markers:",
+                                new Date().toISOString(),
+                            );
+
+                            navigation.dispatch(event.data.action);
+                        });
+                    });
+
+                    return;
+                }
+
+                /*
+                 * Markerを非表示にした後の2回目のbeforeRemoveでは
+                 * Navigationをそのまま通す。
+                 */
+                isBackAfterHidingPointsRef.current = false;
             },
         );
 
@@ -1405,7 +1445,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             unsubscribeTransitionStart();
             unsubscribeTransitionEnd();
         };
-    }, [navigation]);
+    }, [navigation, showPoints]);
 
     if (!hasLoaded || loading) {
         return (

@@ -21,6 +21,7 @@ import {
 } from "react-native";
 
 import { client } from "../lib/client";
+import { SAMPLE_ACTIVITY_SESSION } from "../data/sampleActivity";
 import { useSubscription } from "../hooks/useSubscription";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import {
@@ -81,6 +82,10 @@ type RecordingSessionDisplayItem = {
     averageSpeedKmh?: number | null;
     maxSpeedKmh?: number | null;
     movingDurationSeconds?: number | null;
+    /*
+     * Guideway・操作説明用の固定サンプルかどうか。
+     */
+    isSample?: boolean;
 };
 
 type SessionPointCounts = {
@@ -114,6 +119,12 @@ type RecordingSessionListResult = {
 type HistoryViewMode = "mine" | "shared";
 
 const SESSION_PAGE_SIZE = 15;
+
+const SAMPLE_ACTIVITY_DISPLAY_ITEM: RecordingSessionDisplayItem = {
+    kind: "session",
+    ...SAMPLE_ACTIVITY_SESSION,
+    isSample: true,
+};
 
 export default function LocationLogScreen({ navigation, route }: Props) {
     const { start: startTour } = useTour();
@@ -887,7 +898,7 @@ export default function LocationLogScreen({ navigation, route }: Props) {
     const filteredItems = useMemo(() => {
         const sourceItems =
             historyViewMode === "mine"
-                ? recordingSessions
+                ? [SAMPLE_ACTIVITY_DISPLAY_ITEM, ...recordingSessions]
                 : sharedRecordingSessions;
 
         const keyword = searchText.trim().toLowerCase();
@@ -897,7 +908,9 @@ export default function LocationLogScreen({ navigation, route }: Props) {
         }
 
         return sourceItems.filter((item) => {
-            const ownerName = getUserDisplayName(item.userId).toLowerCase();
+            const ownerName = item.isSample
+                ? "サンプル"
+                : getUserDisplayName(item.userId).toLowerCase();
 
             return (
                 item.recordingSessionName.toLowerCase().includes(keyword) ||
@@ -1737,6 +1750,9 @@ export default function LocationLogScreen({ navigation, route }: Props) {
     /*
      * 「アプリ情報」→「使い方を見る」などから
      * 明示的に指定された場合だけアクティビティ履歴Tourを再生する。
+     *
+     * Guidewayでは固定のサンプルアクティビティを使用するため、
+     * 実際のRecordingSessionが0件でもTourを実行できる。
      */
     useEffect(() => {
         if (!route.params?.startTutorial) {
@@ -1746,28 +1762,20 @@ export default function LocationLogScreen({ navigation, route }: Props) {
         if (historyViewMode !== "mine") {
             return;
         }
-
         if (loading) {
             return;
         }
-
-        if (recordingSessions.length === 0) {
-            return;
-        }
-
-        const firstSession = recordingSessions[0];
-
         /*
-         * 操作ボタンのTour targetを表示するため、
-         * 先頭アクティビティを展開する。
+         * Guideway対象となるサンプルカードを展開する。
+         * これによりactivity-history-actionsも必ず表示される。
          */
         setExpandedSessionIds((current) => {
-            if (current.has(firstSession.id)) {
+            if (current.has(SAMPLE_ACTIVITY_SESSION.id)) {
                 return current;
             }
 
             const next = new Set(current);
-            next.add(firstSession.id);
+            next.add(SAMPLE_ACTIVITY_SESSION.id);
 
             return next;
         });
@@ -1790,7 +1798,6 @@ export default function LocationLogScreen({ navigation, route }: Props) {
         route.params?.startTutorial,
         historyViewMode,
         loading,
-        recordingSessions,
         navigation,
         startTour,
     ]);
@@ -1857,7 +1864,9 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                     <Text style={styles.searchInfoText}>
                         表示件数: {filteredItems.length} /{" "}
                         {historyViewMode === "mine"
-                            ? (recordingSessionTotalCount ?? "-")
+                            ? recordingSessionTotalCount === null
+                                ? "-"
+                                : recordingSessionTotalCount + 1
                             : sharedRecordingSessionTotalCount}
                     </Text>
 
@@ -1937,6 +1946,7 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                         renderItem={({ item, index }) => {
                             const isDeleting = deletingId === item.id;
                             const isExpanded = expandedSessionIds.has(item.id);
+                            const isSample = item.isSample === true;
 
                             return (
                                 <Pressable
@@ -1977,9 +1987,11 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                                     ? "共有元"
                                                     : "ユーザー"}
                                                 :{" "}
-                                                {getUserDisplayName(
-                                                    item.userId,
-                                                )}
+                                                {isSample
+                                                    ? "サンプル"
+                                                    : getUserDisplayName(
+                                                          item.userId,
+                                                      )}
                                             </Text>
                                         )}
 
@@ -2079,10 +2091,12 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                                             }
                                                         >
                                                             判定:{" "}
-                                                            {item.classificationSource ===
-                                                            "MANUAL"
-                                                                ? "手動"
-                                                                : "自動"}
+                                                            {isSample
+                                                                ? "サンプル"
+                                                                : item.classificationSource ===
+                                                                    "MANUAL"
+                                                                  ? "手動"
+                                                                  : "自動"}
                                                             {typeof item.averageSpeedKmh ===
                                                                 "number" &&
                                                                 ` / 平均 ${item.averageSpeedKmh.toFixed(
@@ -2092,52 +2106,54 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                                     )}
 
                                                     {historyViewMode ===
-                                                        "mine" && (
-                                                        <Pressable
-                                                            style={({
-                                                                pressed,
-                                                            }) => [
-                                                                styles.activityChangeButton,
-                                                                !isPremium &&
-                                                                    styles.activityChangeButtonPremiumLocked,
-                                                                pressed &&
-                                                                    styles.detailButtonPressed,
-                                                                updatingActivitySessionId ===
-                                                                    item.id &&
-                                                                    styles.deleteButtonDisabled,
-                                                            ]}
-                                                            onPress={(
-                                                                event,
-                                                            ) => {
-                                                                event.stopPropagation();
+                                                        "mine" &&
+                                                        !isSample && (
+                                                            <Pressable
+                                                                style={({
+                                                                    pressed,
+                                                                }) => [
+                                                                    styles.activityChangeButton,
+                                                                    !isPremium &&
+                                                                        styles.activityChangeButtonPremiumLocked,
+                                                                    pressed &&
+                                                                        styles.detailButtonPressed,
+                                                                    updatingActivitySessionId ===
+                                                                        item.id &&
+                                                                        styles.deleteButtonDisabled,
+                                                                ]}
+                                                                onPress={(
+                                                                    event,
+                                                                ) => {
+                                                                    event.stopPropagation();
 
-                                                                handleChangeActivityType(
-                                                                    item,
-                                                                );
-                                                            }}
-                                                            disabled={
-                                                                isDeleting ||
-                                                                updatingActivitySessionId ===
-                                                                    item.id
-                                                            }
-                                                        >
-                                                            <Text
-                                                                style={
-                                                                    styles.activityChangeButtonText
+                                                                    handleChangeActivityType(
+                                                                        item,
+                                                                    );
+                                                                }}
+                                                                disabled={
+                                                                    isDeleting ||
+                                                                    updatingActivitySessionId ===
+                                                                        item.id
                                                                 }
                                                             >
-                                                                {updatingActivitySessionId ===
-                                                                item.id
-                                                                    ? "区分を更新中..."
-                                                                    : isPremium
-                                                                      ? "区分を変更"
-                                                                      : "区分を変更 ★"}
-                                                            </Text>
-                                                        </Pressable>
-                                                    )}
+                                                                <Text
+                                                                    style={
+                                                                        styles.activityChangeButtonText
+                                                                    }
+                                                                >
+                                                                    {updatingActivitySessionId ===
+                                                                    item.id
+                                                                        ? "区分を更新中..."
+                                                                        : isPremium
+                                                                          ? "区分を変更"
+                                                                          : "区分を変更 ★"}
+                                                                </Text>
+                                                            </Pressable>
+                                                        )}
                                                 </View>
 
                                                 {historyViewMode === "mine" &&
+                                                    !isSample &&
                                                     hasBatteryRange(
                                                         item.startBatteryLevel,
                                                         item.endBatteryLevel,
@@ -2196,98 +2212,117 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                                 </Text>
                                             </Pressable>
 
-                                            {historyViewMode === "mine" && (
-                                                <>
-                                                    <Pressable
-                                                        style={({
-                                                            pressed,
-                                                        }) => [
-                                                            styles.sessionActionButton,
-                                                            pressed &&
-                                                                styles.detailButtonPressed,
-                                                        ]}
-                                                        onPress={(event) => {
-                                                            event.stopPropagation();
+                                            {historyViewMode === "mine" &&
+                                                !isSample && (
+                                                    <>
+                                                        <Pressable
+                                                            style={({
+                                                                pressed,
+                                                            }) => [
+                                                                styles.sessionActionButton,
+                                                                pressed &&
+                                                                    styles.detailButtonPressed,
+                                                            ]}
+                                                            onPress={(
+                                                                event,
+                                                            ) => {
+                                                                event.stopPropagation();
 
-                                                            openEditNameModal(
-                                                                item,
-                                                            );
-                                                        }}
-                                                        disabled={isDeleting}
-                                                    >
-                                                        <Text
-                                                            style={
-                                                                styles.sessionActionButtonText
+                                                                openEditNameModal(
+                                                                    item,
+                                                                );
+                                                            }}
+                                                            disabled={
+                                                                isDeleting
                                                             }
-                                                            numberOfLines={1}
-                                                            adjustsFontSizeToFit
                                                         >
-                                                            タイトル変更
-                                                        </Text>
-                                                    </Pressable>
+                                                            <Text
+                                                                style={
+                                                                    styles.sessionActionButtonText
+                                                                }
+                                                                numberOfLines={
+                                                                    1
+                                                                }
+                                                                adjustsFontSizeToFit
+                                                            >
+                                                                タイトル変更
+                                                            </Text>
+                                                        </Pressable>
 
-                                                    <Pressable
-                                                        style={({
-                                                            pressed,
-                                                        }) => [
-                                                            styles.sessionActionButton,
-                                                            pressed &&
-                                                                styles.detailButtonPressed,
-                                                        ]}
-                                                        onPress={(event) => {
-                                                            event.stopPropagation();
+                                                        <Pressable
+                                                            style={({
+                                                                pressed,
+                                                            }) => [
+                                                                styles.sessionActionButton,
+                                                                pressed &&
+                                                                    styles.detailButtonPressed,
+                                                            ]}
+                                                            onPress={(
+                                                                event,
+                                                            ) => {
+                                                                event.stopPropagation();
 
-                                                            openShareModal(
-                                                                item,
-                                                            );
-                                                        }}
-                                                        disabled={isDeleting}
-                                                    >
-                                                        <Text
-                                                            style={
-                                                                styles.sessionActionButtonText
+                                                                openShareModal(
+                                                                    item,
+                                                                );
+                                                            }}
+                                                            disabled={
+                                                                isDeleting
                                                             }
-                                                            numberOfLines={1}
-                                                            adjustsFontSizeToFit
                                                         >
-                                                            共有
-                                                        </Text>
-                                                    </Pressable>
+                                                            <Text
+                                                                style={
+                                                                    styles.sessionActionButtonText
+                                                                }
+                                                                numberOfLines={
+                                                                    1
+                                                                }
+                                                                adjustsFontSizeToFit
+                                                            >
+                                                                共有
+                                                            </Text>
+                                                        </Pressable>
 
-                                                    <Pressable
-                                                        style={({
-                                                            pressed,
-                                                        }) => [
-                                                            styles.sessionDeleteButton,
-                                                            pressed &&
-                                                                !isDeleting &&
-                                                                styles.deleteButtonPressed,
-                                                            isDeleting &&
-                                                                styles.deleteButtonDisabled,
-                                                        ]}
-                                                        disabled={isDeleting}
-                                                        onPress={(event) => {
-                                                            event.stopPropagation();
-
-                                                            handleDeleteSession(
-                                                                item,
-                                                            );
-                                                        }}
-                                                    >
-                                                        <Text
-                                                            style={
-                                                                styles.sessionDeleteButtonText
+                                                        <Pressable
+                                                            style={({
+                                                                pressed,
+                                                            }) => [
+                                                                styles.sessionDeleteButton,
+                                                                pressed &&
+                                                                    !isDeleting &&
+                                                                    styles.deleteButtonPressed,
+                                                                isDeleting &&
+                                                                    styles.deleteButtonDisabled,
+                                                            ]}
+                                                            disabled={
+                                                                isDeleting
                                                             }
-                                                            numberOfLines={1}
-                                                            adjustsFontSizeToFit
+                                                            onPress={(
+                                                                event,
+                                                            ) => {
+                                                                event.stopPropagation();
+
+                                                                handleDeleteSession(
+                                                                    item,
+                                                                );
+                                                            }}
                                                         >
-                                                            {isDeleting
-                                                                ? "削除中..."
-                                                                : "削除"}
-                                                        </Text>
-                                                    </Pressable>
-                                                </>
-                                            )}
+                                                            <Text
+                                                                style={
+                                                                    styles.sessionDeleteButtonText
+                                                                }
+                                                                numberOfLines={
+                                                                    1
+                                                                }
+                                                                adjustsFontSizeToFit
+                                                            >
+                                                                {isDeleting
+                                                                    ? "削除中..."
+                                                                    : "削除"}
+                                                            </Text>
+                                                        </Pressable>
+                                                    </>
+                                                )}
                                         </View>
                                     )}
                                 </Pressable>

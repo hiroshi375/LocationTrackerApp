@@ -28,6 +28,11 @@ import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import { upsertRecordingSessionSummary } from "../services/recordingSessionService";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+    SAMPLE_ACTIVITY_LOCATION_LOGS,
+    SAMPLE_ACTIVITY_SESSION,
+    SAMPLE_ACTIVITY_SESSION_ID,
+} from "../data/sampleActivity";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationMap">;
 
@@ -219,7 +224,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
 
     const activeSessionId =
         selectedLocation?.recordingSessionId ?? routeRecordingSessionId ?? null;
-
+    const isSampleActivity = activeSessionId === SAMPLE_ACTIVITY_SESSION_ID;
     /*
      * 共有中の現在地画面から開いた地図。
      *
@@ -353,7 +358,14 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                 if (showLoading) {
                     setLoading(true);
                 }
-
+                /*
+                 * Guideway用サンプルはローカル固定データを使用する。
+                 * DynamoDB / AppSyncへはアクセスしない。
+                 */
+                if (isSampleActivity) {
+                    setLogs([...SAMPLE_ACTIVITY_LOCATION_LOGS]);
+                    return;
+                }
                 /*
                  * 非記録中の共有ではLocationLogを取得しない。
                  * 共有元が自動記録中でも、セッションIDがない場合は取得しない。
@@ -476,12 +488,34 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                 setHasLoaded(true);
             }
         },
-        [activeSessionId, isSharedLiveLocationMap, shouldShowSharedRoute],
+        [
+            activeSessionId,
+            isSampleActivity,
+            isSharedLiveLocationMap,
+            shouldShowSharedRoute,
+        ],
     );
 
     const loadRecordingSessionSummary = useCallback(
         async (recordingSessionId: string) => {
             try {
+                if (recordingSessionId === SAMPLE_ACTIVITY_SESSION_ID) {
+                    setRecordingSessionSummary({
+                        id: SAMPLE_ACTIVITY_SESSION.id,
+                        recordingSessionId:
+                            SAMPLE_ACTIVITY_SESSION.recordingSessionId,
+                        userId: SAMPLE_ACTIVITY_SESSION.userId,
+                        recordingSessionName:
+                            SAMPLE_ACTIVITY_SESSION.recordingSessionName,
+                        startedAt: SAMPLE_ACTIVITY_SESSION.startAt,
+                        endedAt: SAMPLE_ACTIVITY_SESSION.endAt,
+                        distanceMeters: SAMPLE_ACTIVITY_SESSION.distanceMeters,
+                        pointCount: SAMPLE_ACTIVITY_SESSION.pointCount,
+                        sharedOwners: [],
+                    });
+
+                    return;
+                }
                 const recordingSessionModel = client.models
                     .RecordingSession as any;
 
@@ -547,6 +581,9 @@ export default function LocationMapScreen({ route, navigation }: Props) {
 
     const deleteLocationLog = useCallback(
         async (log: LocationLogItem) => {
+            if (isSampleActivity) {
+                return;
+            }
             if (!activeSessionId) {
                 return;
             }
@@ -612,6 +649,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         },
         [
             activeSessionId,
+            isSampleActivity,
             loadLogs,
             loadRecordingSessionSummary,
             recordingSessionSummary,
@@ -2387,29 +2425,35 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                                             {accuracyText}
                                         </Text>
 
-                                        <Pressable
-                                            style={[
-                                                styles.locationLogDeleteButton,
-                                                deletingLogId === item.id &&
-                                                    styles.locationLogDeleteButtonDisabled,
-                                            ]}
-                                            disabled={deletingLogId === item.id}
-                                            onPress={(event) => {
-                                                event.stopPropagation();
-
-                                                handleDeleteLocationLog(item);
-                                            }}
-                                        >
-                                            <Text
-                                                style={
-                                                    styles.locationLogDeleteButtonText
+                                        {!isSampleActivity && (
+                                            <Pressable
+                                                style={[
+                                                    styles.locationLogDeleteButton,
+                                                    deletingLogId === item.id &&
+                                                        styles.locationLogDeleteButtonDisabled,
+                                                ]}
+                                                disabled={
+                                                    deletingLogId === item.id
                                                 }
+                                                onPress={(event) => {
+                                                    event.stopPropagation();
+
+                                                    handleDeleteLocationLog(
+                                                        item,
+                                                    );
+                                                }}
                                             >
-                                                {deletingLogId === item.id
-                                                    ? "..."
-                                                    : "削除"}
-                                            </Text>
-                                        </Pressable>
+                                                <Text
+                                                    style={
+                                                        styles.locationLogDeleteButtonText
+                                                    }
+                                                >
+                                                    {deletingLogId === item.id
+                                                        ? "..."
+                                                        : "削除"}
+                                                </Text>
+                                            </Pressable>
+                                        )}
                                     </Pressable>
                                 );
                             }}

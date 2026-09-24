@@ -36,6 +36,7 @@ import {
     updateRecordingSessionActivityType,
 } from "../services/recordingSessionService";
 import { getUrl } from "aws-amplify/storage";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationLog">;
 
@@ -1974,6 +1975,9 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                             const isDeleting = deletingId === item.id;
                             const isExpanded = expandedSessionIds.has(item.id);
                             const isSample = item.isSample === true;
+                            const activityIconSpec = getActivityTypeIconSpec(
+                                item.activityType,
+                            );
 
                             return (
                                 <Pressable
@@ -2007,46 +2011,80 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                             </Text>
                                         </View>
 
-                                        {/* 展開時のみユーザーを表示 */}
-                                        {(isExpanded ||
-                                            historyViewMode === "shared") && (
-                                            <Text style={styles.memoText}>
-                                                {historyViewMode === "shared"
-                                                    ? "共有元"
-                                                    : "ユーザー"}
-                                                :{" "}
-                                                {isSample
-                                                    ? "サンプル"
-                                                    : getUserDisplayName(
-                                                          item.userId,
-                                                      )}
-                                            </Text>
-                                        )}
+                                        {/* 区分アイコン + 期間・距離 */}
+                                        <View style={styles.cardSummaryRow}>
+                                            <View
+                                                style={
+                                                    styles.cardActivityIconContainer
+                                                }
+                                            >
+                                                <View
+                                                    style={[
+                                                        styles.cardActivityIconCircle,
+                                                        {
+                                                            backgroundColor:
+                                                                activityIconSpec.backgroundColor,
+                                                        },
+                                                    ]}
+                                                >
+                                                    <MaterialCommunityIcons
+                                                        name={
+                                                            activityIconSpec.name
+                                                        }
+                                                        size={26}
+                                                        color="#ffffff"
+                                                    />
+                                                </View>
+                                            </View>
 
-                                        {/* 期間：折りたたみ・展開の両方で表示 */}
-                                        <Text style={styles.memoText}>
-                                            期間:{" "}
-                                            {formatPeriod(
-                                                item.startAt,
-                                                item.endAt,
-                                            )}
-                                        </Text>
+                                            <View
+                                                style={
+                                                    styles.cardSummaryTextContainer
+                                                }
+                                            >
+                                                <Text style={styles.memoText}>
+                                                    期間:{" "}
+                                                    {formatPeriod(
+                                                        item.startAt,
+                                                        item.endAt,
+                                                    )}
+                                                </Text>
 
-                                        {/* 距離・ポイント：折りたたみ・展開の両方で表示 */}
-                                        <Text style={styles.memoText}>
-                                            距離:{" "}
-                                            {formatDistance(
-                                                item.distanceMeters,
-                                            )}{" "}
-                                            記録ポイント: {item.pointCount}
-                                            件（F:
-                                            {item.foregroundPointCount}件、B:
-                                            {item.backgroundPointCount}件）
-                                        </Text>
+                                                <Text style={styles.memoText}>
+                                                    距離:{" "}
+                                                    {formatDistance(
+                                                        item.distanceMeters,
+                                                    )}
+                                                </Text>
+                                            </View>
+                                        </View>
 
                                         {/* 以下は展開時のみ表示 */}
                                         {isExpanded && (
                                             <>
+                                                {/* ユーザー */}
+                                                <Text style={styles.memoText}>
+                                                    {historyViewMode ===
+                                                    "shared"
+                                                        ? "共有元"
+                                                        : "ユーザー"}
+                                                    :{" "}
+                                                    {getUserDisplayName(
+                                                        item.userId,
+                                                    )}
+                                                </Text>
+
+                                                {/* 記録ポイント */}
+                                                <Text style={styles.memoText}>
+                                                    記録ポイント:{" "}
+                                                    {item.pointCount}件（F:
+                                                    {item.foregroundPointCount}
+                                                    件、B:
+                                                    {item.backgroundPointCount}
+                                                    件）
+                                                </Text>
+
+                                                {/* ここから既存の展開時表示 */}
                                                 <View
                                                     style={
                                                         styles.recordingSettingsBox
@@ -2617,6 +2655,56 @@ export default function LocationLogScreen({ navigation, route }: Props) {
     );
 }
 
+function getActivityTypeIconSpec(activityType: ActivityType): {
+    name:
+        | "walk"
+        | "run"
+        | "bike"
+        | "car"
+        | "transit-connection-variant"
+        | "help-circle-outline";
+    backgroundColor: string;
+} {
+    switch (activityType) {
+        case "WALKING":
+            return {
+                name: "walk",
+                backgroundColor: "#15B8A6",
+            };
+
+        case "RUNNING":
+            return {
+                name: "run",
+                backgroundColor: "#5AA9F7",
+            };
+
+        case "CYCLING":
+            return {
+                name: "bike",
+                backgroundColor: "#F5B32F",
+            };
+
+        case "VEHICLE":
+            return {
+                name: "car",
+                backgroundColor: "#F26B6B",
+            };
+
+        case "MIXED":
+            return {
+                name: "transit-connection-variant",
+                backgroundColor: "#8B7CF6",
+            };
+
+        case "UNKNOWN":
+        default:
+            return {
+                name: "help-circle-outline",
+                backgroundColor: "#9AA5B1",
+            };
+    }
+}
+
 function formatDateTime(value: string) {
     const date = new Date(value);
 
@@ -2915,13 +3003,38 @@ const styles = StyleSheet.create({
         opacity: 0.85,
     },
 
+    cardSummaryRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        marginTop: 4,
+    },
+
+    cardSummaryTextContainer: {
+        flex: 1,
+        justifyContent: "center",
+        gap: 2,
+    },
+
+    cardActivityIconContainer: {
+        width: 60,
+        alignItems: "flex-start",
+        justifyContent: "center",
+    },
+
+    cardActivityIconCircle: {
+        width: 46,
+        height: 46,
+        borderRadius: 23,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
     cardTitleRow: {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
         gap: 8,
     },
-
     expandIcon: {
         fontSize: 12,
         color: "#666",

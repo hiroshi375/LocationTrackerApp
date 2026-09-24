@@ -1154,8 +1154,6 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
 
                 setBackgroundHeartbeatStatus(status);
                 setBackgroundHeartbeatCheckedAt(Date.now());
-
-                console.log("Background location heartbeat status:", status);
             } catch (error) {
                 console.error(
                     "Check background location heartbeat error:",

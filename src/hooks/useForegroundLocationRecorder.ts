@@ -11,6 +11,7 @@ import {
     isBackgroundLocationDisclosureDeclined,
     isBackgroundLocationPermissionError,
     isForegroundLocationPermissionError,
+    startBackgroundLiveSharing,
     startBackgroundLocationRecording,
     stopBackgroundLocationRecording,
     updateBackgroundRecordingLiveLocationId,
@@ -2333,11 +2334,38 @@ export function useForegroundLocationRecorder({
                 return;
             }
 
-            if (liveSharingSubscriptionRef.current) {
-                return;
-            }
-
             try {
+                /*
+                 * 自動記録中でなければ、
+                 * 共有専用のBackground Location taskを開始・更新する。
+                 *
+                 * 「共有先をすべて解除」でtaskが停止した後でも、
+                 * 再度共有先を選択した時点でここから再開する。
+                 */
+                if (!isRecordingRef.current) {
+                    const currentUser = await getCurrentUser();
+
+                    await startBackgroundLiveSharing({
+                        userId: currentUser.userId,
+                        intervalMs,
+                        distanceMeters,
+                        liveShareOwnerValues: normalizedLiveShareOwnerValues,
+                        liveLocationId: liveLocationIdRef.current,
+                    });
+                }
+
+                if (cancelled) {
+                    return;
+                }
+
+                /*
+                 * Foreground watcherがすでに存在する場合でも、
+                 * Background taskの開始・更新は上で実施済み。
+                 */
+                if (liveSharingSubscriptionRef.current) {
+                    return;
+                }
+
                 const subscription = await Location.watchPositionAsync(
                     {
                         accuracy: Location.Accuracy.Balanced,
@@ -2366,10 +2394,7 @@ export function useForegroundLocationRecorder({
 
                 await updateLiveLocation(currentLocation);
             } catch (error) {
-                console.error(
-                    "Start foreground live sharing watcher error:",
-                    error,
-                );
+                console.error("Start live sharing tracking error:", error);
             }
         };
 

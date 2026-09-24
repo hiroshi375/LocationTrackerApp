@@ -813,6 +813,12 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                      * 保存済みの追跡モードを復元せずルート全体表示に固定する。
                      */
                     setRouteViewMode("route");
+                } else if (isOwnLiveRecordingMap) {
+                    /*
+                     * 自動記録中の地図は、
+                     * 常に現在地表示から開始する。
+                     */
+                    setRouteViewMode("current");
                 } else if (
                     savedRouteViewMode === "current" ||
                     savedRouteViewMode === "route" ||
@@ -828,7 +834,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         };
 
         void loadMapPreferences();
-    }, [isActivityHistoryMap]);
+    }, [isActivityHistoryMap, isOwnLiveRecordingMap]);
 
     useEffect(() => {
         if (!hasLoadedMapPreferences) {
@@ -2141,7 +2147,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                         numberOfLines={1}
                     >
                         {isOwnLiveRecordingMap
-                            ? "自動記録中"
+                            ? formatCurrentDateTime(currentDateTime)
                             : activityHeaderDateTimeText}
                     </Text>
 
@@ -3033,6 +3039,17 @@ function formatActivityHeaderDateTime(value: string) {
     return `${yyyy}/${mm}/${dd} ${hh}:${mi}`;
 }
 
+function formatCurrentDateTime(date: Date) {
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const dd = String(date.getDate()).padStart(2, "0");
+    const hh = String(date.getHours()).padStart(2, "0");
+    const mi = String(date.getMinutes()).padStart(2, "0");
+    const ss = String(date.getSeconds()).padStart(2, "0");
+
+    return `${yyyy}/${mm}/${dd} ${hh}:${mi}:${ss}`;
+}
+
 async function getBestAddressText(latitude: number, longitude: number) {
     const googleAddress = await fetchGoogleFormattedAddress(
         latitude,
@@ -3524,8 +3541,8 @@ const styles = StyleSheet.create({
         paddingTop: 14,
         paddingHorizontal: 18,
 
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
+        borderTopLeftRadius: 0,
+        borderTopRightRadius: 0,
 
         shadowColor: "#000000",
         shadowOffset: {
@@ -3617,7 +3634,7 @@ const styles = StyleSheet.create({
     activityStatValue: {
         color: "#06395f",
 
-        fontSize: 18,
+        fontSize: 21,
 
         fontWeight: "700",
     },

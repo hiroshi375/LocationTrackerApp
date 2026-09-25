@@ -507,12 +507,6 @@ async function loadTotalRanking(): Promise<RankingItem[]> {
         }));
 }
 
-function formatDistance(value: number): string {
-    return value >= 1000
-        ? `${(value / 1000).toFixed(2)}km`
-        : `${Math.round(value)}m`;
-}
-
 function formatDistanceValue(distanceMeters: number): string {
     if (distanceMeters >= 1000) {
         return (distanceMeters / 1000).toFixed(2);

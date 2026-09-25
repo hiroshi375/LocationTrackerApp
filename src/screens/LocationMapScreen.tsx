@@ -297,7 +297,10 @@ export default function LocationMapScreen({ route, navigation }: Props) {
      *
      * 共有地図は従来UIのままとする。
      */
-    const useActivityStyleMap = isActivityHistoryMap || isOwnLiveRecordingMap;
+    const useActivityStyleMap =
+        isActivityHistoryMap ||
+        isOwnLiveRecordingMap ||
+        isSharedLiveLocationMap;
 
     const shouldShowLiveCurrentLocation =
         isOwnLiveRecordingMap || isSharedLiveLocationMap;
@@ -1420,7 +1423,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     }, [shouldShowLiveCurrentLocation, currentLocation]);
 
     useEffect(() => {
-        if (!isLiveRecordingMap) {
+        if (!shouldShowLiveCurrentLocation) {
             return;
         }
 
@@ -1433,7 +1436,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         return () => {
             clearInterval(timerId);
         };
-    }, [isLiveRecordingMap]);
+    }, [shouldShowLiveCurrentLocation]);
 
     useEffect(() => {
         console.log("[LocationMapScreen] mounted:", new Date().toISOString());
@@ -2148,7 +2151,11 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                     >
                         {isOwnLiveRecordingMap
                             ? formatCurrentDateTime(currentDateTime)
-                            : activityHeaderDateTimeText}
+                            : isSharedCurrentLocationOnlyMap
+                              ? "共有中の現在地"
+                              : isSharedLiveLocationMap
+                                ? formatCurrentDateTime(currentDateTime)
+                                : activityHeaderDateTimeText}
                     </Text>
 
                     <Pressable
@@ -2159,6 +2166,148 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                     >
                         <Text style={styles.activityHistoryMenuIcon}>•••</Text>
                     </Pressable>
+                </View>
+            )}
+
+            {useActivityStyleMap && !showLocationLogList && (
+                <View
+                    style={[
+                        styles.activityHistorySummaryCard,
+                        {
+                            paddingBottom: Math.max(insets.bottom + 8, 16),
+                        },
+                    ]}
+                >
+                    {isSharedCurrentLocationOnlyMap ? (
+                        <View style={styles.sharedCurrentLocationSummary}>
+                            <View style={styles.sharedCurrentLocationTitleRow}>
+                                <MaterialCommunityIcons
+                                    name="map-marker-account-outline"
+                                    size={30}
+                                    color="#06395f"
+                                />
+
+                                <View
+                                    style={
+                                        styles.sharedCurrentLocationTitleColumn
+                                    }
+                                >
+                                    <Text
+                                        style={
+                                            styles.sharedCurrentLocationTitle
+                                        }
+                                    >
+                                        共有中の現在地
+                                    </Text>
+
+                                    <Text
+                                        style={
+                                            styles.sharedCurrentLocationAddress
+                                        }
+                                        numberOfLines={2}
+                                    >
+                                        {addressLoading
+                                            ? "住所を取得中..."
+                                            : currentAddress || "住所情報なし"}
+                                    </Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.sharedCurrentLocationStatusRow}>
+                                <MaterialCommunityIcons
+                                    name="access-point"
+                                    size={20}
+                                    color="#12b8aa"
+                                />
+
+                                <Text
+                                    style={
+                                        styles.sharedCurrentLocationStatusText
+                                    }
+                                >
+                                    現在地をリアルタイム共有中
+                                </Text>
+                            </View>
+                        </View>
+                    ) : (
+                        <>
+                            <View style={styles.activityDistanceRow}>
+                                <MaterialCommunityIcons
+                                    name="run"
+                                    size={34}
+                                    color="#06395f"
+                                />
+
+                                <Text style={styles.activityDistanceValue}>
+                                    {activityDistanceMetersText}
+                                    <Text style={styles.activityDistanceUnit}>
+                                        {" "}
+                                        m
+                                    </Text>
+                                </Text>
+                            </View>
+
+                            <View style={styles.activityStatsDivider} />
+
+                            <View style={styles.activityStatsRow}>
+                                <View style={styles.activityStatItem}>
+                                    <MaterialCommunityIcons
+                                        name="clock-outline"
+                                        size={28}
+                                        color="#06395f"
+                                    />
+
+                                    <Text style={styles.activityStatValue}>
+                                        {activityDurationText}
+                                    </Text>
+
+                                    <Text style={styles.activityStatLabel}>
+                                        時間
+                                    </Text>
+                                </View>
+
+                                <View
+                                    style={styles.activityStatVerticalDivider}
+                                />
+
+                                <View style={styles.activityStatItem}>
+                                    <MaterialCommunityIcons
+                                        name="fire"
+                                        size={27}
+                                        color="#06395f"
+                                    />
+
+                                    <Text style={styles.activityStatValue}>
+                                        {activityCalories ?? "-"}
+                                    </Text>
+
+                                    <Text style={styles.activityStatLabel}>
+                                        kcal
+                                    </Text>
+                                </View>
+
+                                <View
+                                    style={styles.activityStatVerticalDivider}
+                                />
+
+                                <View style={styles.activityStatItem}>
+                                    <MaterialCommunityIcons
+                                        name="speedometer"
+                                        size={28}
+                                        color="#06395f"
+                                    />
+
+                                    <Text style={styles.activityStatValue}>
+                                        {activityAverageSpeedText}
+                                    </Text>
+
+                                    <Text style={styles.activityStatLabel}>
+                                        平均速度 (km/h)
+                                    </Text>
+                                </View>
+                            </View>
+                        </>
+                    )}
                 </View>
             )}
 
@@ -4314,5 +4463,54 @@ const styles = StyleSheet.create({
         lineHeight: 22,
         color: "#666",
         textAlign: "center",
+    },
+
+    sharedCurrentLocationSummary: {
+        paddingVertical: 4,
+    },
+
+    sharedCurrentLocationTitleRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+    },
+
+    sharedCurrentLocationTitleColumn: {
+        flex: 1,
+    },
+
+    sharedCurrentLocationTitle: {
+        color: "#06395f",
+        fontSize: 18,
+        fontWeight: "700",
+    },
+
+    sharedCurrentLocationAddress: {
+        marginTop: 4,
+
+        color: "#667681",
+        fontSize: 13,
+        lineHeight: 19,
+    },
+
+    sharedCurrentLocationStatusRow: {
+        marginTop: 14,
+
+        minHeight: 42,
+
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 7,
+
+        borderRadius: 10,
+
+        backgroundColor: "#e7f8f6",
+    },
+
+    sharedCurrentLocationStatusText: {
+        color: "#087f75",
+        fontSize: 14,
+        fontWeight: "700",
     },
 });

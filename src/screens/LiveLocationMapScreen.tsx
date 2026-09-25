@@ -16,7 +16,7 @@ import {
     Text,
     View,
 } from "react-native";
-import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
+import MapView, { PROVIDER_GOOGLE } from "react-native-maps";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -163,7 +163,29 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
                             );
                         });
 
-                    setLiveLocations(normalizedItems);
+                    /*
+                     * 同一ユーザーのLiveLocationが複数isActive=trueで
+                     * 残っている場合でも、最新の1件だけ表示する。
+                     *
+                     * normalizedItemsはupdatedAt降順なので、
+                     * 最初に出てきたレコードがそのユーザーの最新。
+                     */
+                    const latestLocationByUser = new Map<
+                        string,
+                        LiveLocationItem
+                    >();
+
+                    for (const item of normalizedItems) {
+                        if (!latestLocationByUser.has(item.userId)) {
+                            latestLocationByUser.set(item.userId, item);
+                        }
+                    }
+
+                    const uniqueLiveLocations = Array.from(
+                        latestLocationByUser.values(),
+                    );
+
+                    setLiveLocations(uniqueLiveLocations);
                     setLoading(false);
                 },
                 error: (error: unknown) => {

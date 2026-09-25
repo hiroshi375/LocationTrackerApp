@@ -95,25 +95,6 @@ type LocationLogListResult = {
     nextToken?: string | null;
 };
 
-type LiveLocationItem = {
-    id: string;
-    userId: string;
-    recordingSessionId?: string | null;
-    isRecording?: boolean | null;
-    latitude?: number | null;
-    longitude?: number | null;
-    updatedAt?: string | null;
-    recordedAt?: string | null;
-    isActive?: boolean | null;
-    sharedOwners?: string[] | null;
-};
-
-type LiveLocationListResult = {
-    data?: any[] | null;
-    errors?: unknown;
-    nextToken?: string | null;
-};
-
 const LOCATION_HOME_SETTINGS_STORAGE_KEY = "location-tracker-home-settings";
 
 type SavedLocationHomeSettings = {
@@ -2567,7 +2548,12 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                                         color="#ffffff"
                                     />
 
-                                    <Text style={styles.autoRecordButtonText}>
+                                    <Text
+                                        style={[
+                                            styles.autoRecordButtonText,
+                                            styles.autoRecordStopButtonText,
+                                        ]}
+                                    >
                                         {stoppingRecording
                                             ? "停止処理中..."
                                             : "自動記録停止"}
@@ -2870,7 +2856,12 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                             onPress={confirmStopRecording}
                             disabled={stoppingRecording}
                         >
-                            <Text style={styles.autoRecordButtonText}>
+                            <Text
+                                style={[
+                                    styles.autoRecordButtonText,
+                                    styles.autoRecordStopButtonText,
+                                ]}
+                            >
                                 {stoppingRecording
                                     ? "停止処理中..."
                                     : "自動記録停止"}
@@ -3863,6 +3854,15 @@ const styles = StyleSheet.create({
         textAlign: "center",
     },
 
+    autoRecordStopButtonText: {
+        marginTop: 0,
+        lineHeight: 20,
+        transform: [
+            {
+                translateY: -2,
+            },
+        ],
+    },
     autoRecordPlayIcon: {
         marginTop: 8,
     },

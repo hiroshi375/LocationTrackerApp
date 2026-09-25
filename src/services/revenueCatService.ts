@@ -12,6 +12,13 @@ export const PREMIUM_PRODUCT_ID = "premium_lifetime";
 const REVENUECAT_TEST_API_KEY =
     process.env.EXPO_PUBLIC_REVENUECAT_TEST_API_KEY ?? "";
 
+const REVENUECAT_ANDROID_API_KEY =
+    process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY ?? "";
+
+const REVENUECAT_API_KEY = __DEV__
+    ? REVENUECAT_TEST_API_KEY
+    : REVENUECAT_ANDROID_API_KEY;
+
 let revenueCatConfigured = false;
 
 const REVENUECAT_ENABLED =
@@ -33,21 +40,26 @@ export async function configureRevenueCat(): Promise<void> {
         return;
     }
 
-    if (!REVENUECAT_TEST_API_KEY) {
+    if (!REVENUECAT_API_KEY) {
         throw new Error(
-            "EXPO_PUBLIC_REVENUECAT_TEST_API_KEY is not configured.",
+            __DEV__
+                ? "EXPO_PUBLIC_REVENUECAT_TEST_API_KEY is not configured."
+                : "EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY is not configured.",
         );
     }
 
     Purchases.setLogLevel(LOG_LEVEL.DEBUG);
 
     Purchases.configure({
-        apiKey: REVENUECAT_TEST_API_KEY,
+        apiKey: REVENUECAT_API_KEY,
     });
 
     revenueCatConfigured = true;
 
-    console.log("[RevenueCat] configured");
+    console.log("[RevenueCat] configured:", {
+        environment: __DEV__ ? "development" : "production",
+        keyType: __DEV__ ? "test" : "android-production",
+    });
 }
 
 export async function identifyRevenueCatUser(

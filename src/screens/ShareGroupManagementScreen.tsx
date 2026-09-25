@@ -1,5 +1,5 @@
-import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useState } from "react";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useCallback, useLayoutEffect, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -23,6 +23,9 @@ import {
 } from "../config/subscriptionPlan";
 
 import { useSubscription } from "../hooks/useSubscription";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { StatusBar } from "expo-status-bar";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type ShareGroupMemberSummaryItem = {
     userId: string;
@@ -79,6 +82,13 @@ function getFirstGraphQLErrorMessage(
 }
 
 export default function ShareGroupManagementScreen() {
+    const navigation = useNavigation();
+    const insets = useSafeAreaInsets();
+    useLayoutEffect(() => {
+        navigation.setOptions({
+            headerShown: false,
+        });
+    }, [navigation]);
     const [groups, setGroups] = useState<ShareGroupSummaryItem[]>([]);
     const [loadingGroups, setLoadingGroups] = useState(false);
     /*
@@ -565,231 +575,454 @@ export default function ShareGroupManagementScreen() {
     };
 
     return (
-        <ScrollView
-            contentContainerStyle={styles.container}
-            keyboardShouldPersistTaps="handled"
-        >
-            <View style={styles.section}>
-                <Text style={styles.sectionTitle}>グループを作成</Text>
+        <View style={styles.screen}>
+            <StatusBar
+                style="light"
+                backgroundColor="#06395f"
+                translucent={false}
+            />
 
-                <Text style={styles.description}>
-                    位置情報を共有したい相手とのグループを作成します。
-                </Text>
-                <Text style={styles.groupLimitText}>
-                    <Text>
-                        作成済み: {ownedGroupCount}
-                        {maxOwnedShareGroups !== null
-                            ? ` / ${maxOwnedShareGroups}グループ`
-                            : " / 上限なし"}
-                    </Text>
-                </Text>
-
-                {maxOwnedShareGroups !== null ? (
-                    <Text>
-                        現在のプランでは共有グループを
-                        {maxOwnedShareGroups}件まで作成できます。
-                    </Text>
-                ) : (
-                    <Text>共有グループ数の上限はありません。</Text>
-                )}
-                <TextInput
-                    style={[
-                        styles.input,
-                        !canCreateCurrentPlanShareGroup && styles.disabledInput,
-                    ]}
-                    value={groupName}
-                    onChangeText={setGroupName}
-                    placeholder="例：家族、ランニング仲間"
-                    maxLength={50}
-                    editable={
-                        !creatingGroup &&
-                        !subscriptionLoading &&
-                        canCreateCurrentPlanShareGroup
-                    }
-                />
-
+            {/* ヘッダ */}
+            <View
+                style={[
+                    styles.appHeader,
+                    {
+                        paddingTop: Math.max(insets.top, 8),
+                    },
+                ]}
+            >
                 <Pressable
-                    style={({ pressed }) => [
-                        styles.primaryButton,
-                        pressed &&
-                            !creatingGroup &&
-                            !subscriptionLoading &&
-                            canCreateCurrentPlanShareGroup &&
-                            styles.buttonPressed,
-                        (creatingGroup ||
-                            subscriptionLoading ||
-                            !canCreateCurrentPlanShareGroup) &&
-                            styles.disabledButton,
-                    ]}
-                    onPress={() => {
-                        void handleCreateGroup();
-                    }}
-                    disabled={
-                        creatingGroup ||
-                        subscriptionLoading ||
-                        !canCreateCurrentPlanShareGroup
-                    }
+                    style={styles.headerBackButton}
+                    onPress={() => navigation.goBack()}
                 >
-                    <Text style={styles.primaryButtonText}>
-                        {creatingGroup
-                            ? "作成中..."
-                            : subscriptionLoading
-                              ? "プラン確認中..."
-                              : !canCreateCurrentPlanShareGroup
-                                ? "作成上限に達しています"
-                                : "グループを作成"}
-                    </Text>
+                    <Text style={styles.headerBackText}>‹</Text>
                 </Pressable>
 
-                {createdInviteCode && (
-                    <View style={styles.inviteCodeBox}>
-                        <Text style={styles.inviteCodeTitle}>招待コード</Text>
+                <Text style={styles.headerTitle} numberOfLines={1}>
+                    共有グループ管理
+                </Text>
 
-                        {createdGroupName && (
-                            <Text style={styles.inviteGroupName}>
-                                {createdGroupName}
+                <View style={styles.headerRightSpace} />
+            </View>
+
+            <ScrollView
+                style={styles.scrollView}
+                contentContainerStyle={styles.container}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+            >
+                {/* グループを作成 */}
+                <View style={styles.sectionCard}>
+                    <View style={styles.sectionHeader}>
+                        <View style={styles.sectionIconCircle}>
+                            <MaterialCommunityIcons
+                                name="account-multiple-plus-outline"
+                                size={21}
+                                color="#ffffff"
+                            />
+                        </View>
+
+                        <View style={styles.sectionHeaderTextArea}>
+                            <Text style={styles.sectionTitle}>
+                                新しいグループを作成
                             </Text>
-                        )}
 
-                        <Text style={styles.inviteCodeText} selectable>
-                            {createdInviteCode}
-                        </Text>
-
-                        <Text style={styles.inviteCodeHelp}>
-                            このコードを参加してほしい相手へ伝えてください。
-                        </Text>
-
-                        <Pressable
-                            style={({ pressed }) => [
-                                styles.shareInviteButton,
-                                pressed && styles.buttonPressed,
-                            ]}
-                            onPress={() => {
-                                void handleShareInviteCode();
-                            }}
-                        >
-                            <Text style={styles.shareInviteButtonText}>
-                                招待コードを共有
+                            <Text style={styles.sectionDescription}>
+                                位置情報を共有したい相手とのグループを作成します。
                             </Text>
-                        </Pressable>
+                        </View>
+                    </View>
 
-                        <Text style={styles.inviteCodeWarning}>
-                            この画面を離れると招待コードは再表示できません。
+                    <View style={styles.limitInfoRow}>
+                        <MaterialCommunityIcons
+                            name="account-group-outline"
+                            size={17}
+                            color="#71838c"
+                        />
+
+                        <Text style={styles.groupLimitText}>
+                            作成済み {ownedGroupCount}
+                            {maxOwnedShareGroups !== null
+                                ? ` / ${maxOwnedShareGroups}グループ`
+                                : " / 上限なし"}
                         </Text>
                     </View>
-                )}
-            </View>
 
-            <View style={styles.section}>
-                <Text style={styles.sectionTitle}>招待コードで参加</Text>
-
-                <Text style={styles.description}>
-                    相手から受け取った招待コードを入力します。
-                </Text>
-
-                <TextInput
-                    style={[styles.input, styles.inviteInput]}
-                    value={inviteCodeInput}
-                    onChangeText={setInviteCodeInput}
-                    placeholder="AB7K92FD"
-                    autoCapitalize="characters"
-                    autoCorrect={false}
-                    maxLength={12}
-                    editable={!joiningGroup}
-                />
-
-                <Pressable
-                    style={({ pressed }) => [
-                        styles.primaryButton,
-                        pressed && !joiningGroup && styles.buttonPressed,
-                        joiningGroup && styles.disabledButton,
-                    ]}
-                    onPress={() => {
-                        void handleJoinGroup();
-                    }}
-                    disabled={joiningGroup}
-                >
-                    <Text style={styles.primaryButtonText}>
-                        {joiningGroup ? "参加処理中..." : "グループに参加"}
-                    </Text>
-                </Pressable>
-            </View>
-
-            <View style={styles.section}>
-                <View style={styles.groupHeader}>
-                    <Text style={styles.sectionTitle}>所属グループ</Text>
+                    <TextInput
+                        style={[
+                            styles.input,
+                            !canCreateCurrentPlanShareGroup &&
+                                styles.disabledInput,
+                        ]}
+                        value={groupName}
+                        onChangeText={setGroupName}
+                        placeholder="例：家族、ランニング仲間"
+                        placeholderTextColor="#9aa8ae"
+                        maxLength={50}
+                        editable={
+                            !creatingGroup &&
+                            !subscriptionLoading &&
+                            canCreateCurrentPlanShareGroup
+                        }
+                    />
 
                     <Pressable
-                        style={styles.refreshButton}
+                        style={({ pressed }) => [
+                            styles.primaryButton,
+                            pressed &&
+                                !creatingGroup &&
+                                !subscriptionLoading &&
+                                canCreateCurrentPlanShareGroup &&
+                                styles.buttonPressed,
+                            (creatingGroup ||
+                                subscriptionLoading ||
+                                !canCreateCurrentPlanShareGroup) &&
+                                styles.disabledButton,
+                        ]}
                         onPress={() => {
-                            void loadGroups();
+                            void handleCreateGroup();
                         }}
-                        disabled={loadingGroups}
+                        disabled={
+                            creatingGroup ||
+                            subscriptionLoading ||
+                            !canCreateCurrentPlanShareGroup
+                        }
                     >
-                        <Text style={styles.refreshButtonText}>更新</Text>
+                        {creatingGroup ? (
+                            <View style={styles.buttonLoadingRow}>
+                                <ActivityIndicator
+                                    size="small"
+                                    color="#ffffff"
+                                />
+
+                                <Text style={styles.primaryButtonText}>
+                                    作成中...
+                                </Text>
+                            </View>
+                        ) : (
+                            <>
+                                <MaterialCommunityIcons
+                                    name="plus-circle-outline"
+                                    size={19}
+                                    color="#ffffff"
+                                />
+
+                                <Text style={styles.primaryButtonText}>
+                                    {subscriptionLoading
+                                        ? "プラン確認中..."
+                                        : !canCreateCurrentPlanShareGroup
+                                          ? "作成上限に達しています"
+                                          : "新しいグループを作成"}
+                                </Text>
+                            </>
+                        )}
+                    </Pressable>
+
+                    {/* 作成・再発行した招待コード */}
+                    {createdInviteCode && (
+                        <View style={styles.inviteCodeBox}>
+                            <View style={styles.inviteCodeHeader}>
+                                <MaterialCommunityIcons
+                                    name="ticket-confirmation-outline"
+                                    size={20}
+                                    color="#0e9384"
+                                />
+
+                                <Text style={styles.inviteCodeTitle}>
+                                    招待コード
+                                </Text>
+                            </View>
+
+                            {createdGroupName && (
+                                <Text style={styles.inviteGroupName}>
+                                    {createdGroupName}
+                                </Text>
+                            )}
+
+                            <Text style={styles.inviteCodeText} selectable>
+                                {createdInviteCode}
+                            </Text>
+
+                            <Text style={styles.inviteCodeHelp}>
+                                このコードを参加してほしい相手へ伝えてください。
+                            </Text>
+
+                            <Pressable
+                                style={({ pressed }) => [
+                                    styles.shareInviteButton,
+                                    pressed && styles.buttonPressed,
+                                ]}
+                                onPress={() => {
+                                    void handleShareInviteCode();
+                                }}
+                            >
+                                <MaterialCommunityIcons
+                                    name="share-variant-outline"
+                                    size={18}
+                                    color="#0e7185"
+                                />
+
+                                <Text style={styles.shareInviteButtonText}>
+                                    招待コードを共有
+                                </Text>
+                            </Pressable>
+
+                            <View style={styles.inviteWarningRow}>
+                                <MaterialCommunityIcons
+                                    name="alert-circle-outline"
+                                    size={15}
+                                    color="#a66a34"
+                                />
+
+                                <Text style={styles.inviteCodeWarning}>
+                                    この画面を離れると招待コードは
+                                    再表示できません。
+                                </Text>
+                            </View>
+                        </View>
+                    )}
+                </View>
+
+                {/* 招待コードで参加 */}
+                <View style={styles.sectionCard}>
+                    <View style={styles.sectionHeader}>
+                        <View
+                            style={[
+                                styles.sectionIconCircle,
+                                styles.joinIconCircle,
+                            ]}
+                        >
+                            <MaterialCommunityIcons
+                                name="account-arrow-left-outline"
+                                size={21}
+                                color="#ffffff"
+                            />
+                        </View>
+
+                        <View style={styles.sectionHeaderTextArea}>
+                            <Text style={styles.sectionTitle}>
+                                招待コードで参加
+                            </Text>
+
+                            <Text style={styles.sectionDescription}>
+                                相手から受け取った招待コードを入力します。
+                            </Text>
+                        </View>
+                    </View>
+
+                    <TextInput
+                        style={[styles.input, styles.inviteInput]}
+                        value={inviteCodeInput}
+                        onChangeText={setInviteCodeInput}
+                        placeholder="AB7K92FD"
+                        placeholderTextColor="#9aa8ae"
+                        autoCapitalize="characters"
+                        autoCorrect={false}
+                        maxLength={12}
+                        editable={!joiningGroup}
+                    />
+
+                    <Pressable
+                        style={({ pressed }) => [
+                            styles.secondaryPrimaryButton,
+                            pressed && !joiningGroup && styles.buttonPressed,
+                            joiningGroup && styles.disabledButton,
+                        ]}
+                        onPress={() => {
+                            void handleJoinGroup();
+                        }}
+                        disabled={joiningGroup}
+                    >
+                        {joiningGroup ? (
+                            <View style={styles.buttonLoadingRow}>
+                                <ActivityIndicator
+                                    size="small"
+                                    color="#ffffff"
+                                />
+
+                                <Text style={styles.primaryButtonText}>
+                                    参加処理中...
+                                </Text>
+                            </View>
+                        ) : (
+                            <>
+                                <MaterialCommunityIcons
+                                    name="login-variant"
+                                    size={18}
+                                    color="#ffffff"
+                                />
+
+                                <Text style={styles.primaryButtonText}>
+                                    グループに参加
+                                </Text>
+                            </>
+                        )}
                     </Pressable>
                 </View>
 
-                {loadingGroups ? (
-                    <ActivityIndicator
-                        style={{
-                            marginVertical: 20,
-                        }}
-                    />
-                ) : groups.length === 0 ? (
-                    <Text style={styles.emptyText}>
-                        所属しているグループはありません。
-                    </Text>
-                ) : (
-                    groups.map((group) => {
-                        const isOwner = group.role === "OWNER";
+                {/* 所属グループ */}
+                <View style={styles.groupsSection}>
+                    <View style={styles.groupsHeader}>
+                        <View>
+                            <Text style={styles.groupsTitle}>所属グループ</Text>
 
-                        const isRegenerating =
-                            regeneratingGroupId === group.groupId;
+                            <Text style={styles.groupsDescription}>
+                                位置情報を共有するグループを管理します。
+                            </Text>
+                        </View>
 
-                        const isDeleting = deletingGroupId === group.groupId;
+                        <Pressable
+                            style={({ pressed }) => [
+                                styles.refreshButton,
+                                pressed &&
+                                    !loadingGroups &&
+                                    styles.buttonPressed,
+                                loadingGroups && styles.disabledButton,
+                            ]}
+                            onPress={() => {
+                                void loadGroups();
+                            }}
+                            disabled={loadingGroups}
+                        >
+                            <MaterialCommunityIcons
+                                name="refresh"
+                                size={18}
+                                color="#0e7185"
+                            />
 
-                        return (
-                            <View key={group.groupId} style={styles.groupItem}>
-                                <View style={styles.groupNameArea}>
-                                    <Text style={styles.groupName}>
-                                        {group.name}
-                                    </Text>
+                            <Text style={styles.refreshButtonText}>更新</Text>
+                        </Pressable>
+                    </View>
 
-                                    <Text style={styles.groupRoleText}>
-                                        {isOwner ? "作成者" : "メンバー"}
-                                    </Text>
+                    {loadingGroups ? (
+                        <View style={styles.loadingGroupsBox}>
+                            <ActivityIndicator size="small" color="#0e9384" />
+
+                            <Text style={styles.loadingGroupsText}>
+                                グループを読み込み中...
+                            </Text>
+                        </View>
+                    ) : groups.length === 0 ? (
+                        <View style={styles.emptyCard}>
+                            <MaterialCommunityIcons
+                                name="account-group-outline"
+                                size={36}
+                                color="#99a8af"
+                            />
+
+                            <Text style={styles.emptyTitle}>
+                                所属グループはありません
+                            </Text>
+
+                            <Text style={styles.emptyText}>
+                                グループを作成するか、招待コードで参加してください。
+                            </Text>
+                        </View>
+                    ) : (
+                        groups.map((group) => {
+                            const isOwner = group.role === "OWNER";
+
+                            const isRegenerating =
+                                regeneratingGroupId === group.groupId;
+
+                            const isDeleting =
+                                deletingGroupId === group.groupId;
+
+                            const members = (group.members ?? []).filter(
+                                (
+                                    member,
+                                ): member is ShareGroupMemberSummaryItem =>
+                                    member !== null,
+                            );
+
+                            return (
+                                <View
+                                    key={group.groupId}
+                                    style={styles.groupCard}
+                                >
+                                    <View style={styles.groupCardHeader}>
+                                        <View style={styles.groupTitleArea}>
+                                            <View
+                                                style={styles.groupIconCircle}
+                                            >
+                                                <MaterialCommunityIcons
+                                                    name="account-group"
+                                                    size={22}
+                                                    color="#0e9384"
+                                                />
+                                            </View>
+
+                                            <View style={styles.groupNameArea}>
+                                                <Text
+                                                    style={styles.groupName}
+                                                    numberOfLines={1}
+                                                >
+                                                    {group.name}
+                                                </Text>
+
+                                                <Text
+                                                    style={
+                                                        styles.memberCountText
+                                                    }
+                                                >
+                                                    {members.length}
+                                                    人のメンバー
+                                                </Text>
+                                            </View>
+                                        </View>
+
+                                        <View
+                                            style={[
+                                                styles.roleBadge,
+                                                isOwner
+                                                    ? styles.ownerBadge
+                                                    : styles.memberBadge,
+                                            ]}
+                                        >
+                                            <Text
+                                                style={[
+                                                    styles.roleBadgeText,
+                                                    isOwner &&
+                                                        styles.ownerBadgeText,
+                                                ]}
+                                            >
+                                                {isOwner
+                                                    ? "作成者"
+                                                    : "メンバー"}
+                                            </Text>
+                                        </View>
+                                    </View>
+
+                                    {/* メンバー */}
                                     <View style={styles.groupMembersArea}>
                                         <Text style={styles.groupMembersTitle}>
                                             メンバー
                                         </Text>
 
                                         <View style={styles.groupMembersList}>
-                                            {(group.members ?? [])
-                                                .filter(
-                                                    (
-                                                        member,
-                                                    ): member is ShareGroupMemberSummaryItem =>
-                                                        member !== null,
-                                                )
-                                                .map((member) => {
-                                                    const displayName =
-                                                        member.displayName?.trim() ||
-                                                        "ユーザー";
+                                            {members.map((member) => {
+                                                const displayName =
+                                                    member.displayName?.trim() ||
+                                                    "ユーザー";
 
-                                                    const iconUrl =
-                                                        member.iconImagePath
-                                                            ? memberIconUrls[
-                                                                  member
-                                                                      .iconImagePath
-                                                              ]
-                                                            : undefined;
+                                                const iconUrl =
+                                                    member.iconImagePath
+                                                        ? memberIconUrls[
+                                                              member
+                                                                  .iconImagePath
+                                                          ]
+                                                        : undefined;
 
-                                                    return (
+                                                return (
+                                                    <View
+                                                        key={member.userId}
+                                                        style={
+                                                            styles.groupMemberItem
+                                                        }
+                                                    >
                                                         <View
-                                                            key={member.userId}
                                                             style={
-                                                                styles.groupMemberItem
+                                                                styles.memberIconWrapper
                                                             }
                                                         >
                                                             {iconUrl ? (
@@ -819,166 +1052,360 @@ export default function ShareGroupManagementScreen() {
                                                                 </View>
                                                             )}
 
-                                                            <Text
-                                                                style={
-                                                                    styles.groupMemberName
-                                                                }
-                                                                numberOfLines={
-                                                                    1
-                                                                }
-                                                            >
-                                                                {displayName}
-                                                            </Text>
-
                                                             {member.role ===
                                                                 "OWNER" && (
-                                                                <Text
+                                                                <View
                                                                     style={
-                                                                        styles.groupMemberOwnerText
+                                                                        styles.ownerMiniBadge
                                                                     }
                                                                 >
-                                                                    作成者
-                                                                </Text>
+                                                                    <MaterialCommunityIcons
+                                                                        name="crown"
+                                                                        size={
+                                                                            10
+                                                                        }
+                                                                        color="#ffffff"
+                                                                    />
+                                                                </View>
                                                             )}
                                                         </View>
-                                                    );
-                                                })}
+
+                                                        <Text
+                                                            style={
+                                                                styles.groupMemberName
+                                                            }
+                                                            numberOfLines={1}
+                                                        >
+                                                            {displayName}
+                                                        </Text>
+                                                    </View>
+                                                );
+                                            })}
                                         </View>
                                     </View>
+
+                                    {isOwner && (
+                                        <View style={styles.ownerActionArea}>
+                                            <Pressable
+                                                style={({ pressed }) => [
+                                                    styles.regenerateButton,
+                                                    pressed &&
+                                                        !isRegenerating &&
+                                                        !isDeleting &&
+                                                        styles.buttonPressed,
+                                                    (isRegenerating ||
+                                                        isDeleting) &&
+                                                        styles.disabledButton,
+                                                ]}
+                                                onPress={() => {
+                                                    confirmRegenerateInviteCode(
+                                                        group,
+                                                    );
+                                                }}
+                                                disabled={
+                                                    isRegenerating || isDeleting
+                                                }
+                                            >
+                                                <MaterialCommunityIcons
+                                                    name="refresh"
+                                                    size={17}
+                                                    color="#0e7185"
+                                                />
+
+                                                <Text
+                                                    style={
+                                                        styles.regenerateButtonText
+                                                    }
+                                                >
+                                                    {isRegenerating
+                                                        ? "再発行中..."
+                                                        : "招待コードを再発行"}
+                                                </Text>
+                                            </Pressable>
+
+                                            <Pressable
+                                                style={({ pressed }) => [
+                                                    styles.deleteGroupButton,
+                                                    pressed &&
+                                                        !isDeleting &&
+                                                        !isRegenerating &&
+                                                        styles.deleteGroupButtonPressed,
+                                                    (isDeleting ||
+                                                        isRegenerating) &&
+                                                        styles.disabledButton,
+                                                ]}
+                                                onPress={() => {
+                                                    confirmDeleteGroup(group);
+                                                }}
+                                                disabled={
+                                                    isDeleting || isRegenerating
+                                                }
+                                            >
+                                                <MaterialCommunityIcons
+                                                    name="delete-outline"
+                                                    size={17}
+                                                    color="#c0392b"
+                                                />
+
+                                                <Text
+                                                    style={
+                                                        styles.deleteGroupButtonText
+                                                    }
+                                                >
+                                                    {isDeleting
+                                                        ? "削除中..."
+                                                        : "グループを削除"}
+                                                </Text>
+                                            </Pressable>
+                                        </View>
+                                    )}
                                 </View>
-
-                                {isOwner && (
-                                    <View style={styles.ownerActionArea}>
-                                        <Pressable
-                                            style={({ pressed }) => [
-                                                styles.regenerateButton,
-                                                pressed &&
-                                                    !isRegenerating &&
-                                                    !isDeleting &&
-                                                    styles.buttonPressed,
-                                                (isRegenerating ||
-                                                    isDeleting) &&
-                                                    styles.disabledButton,
-                                            ]}
-                                            onPress={() => {
-                                                confirmRegenerateInviteCode(
-                                                    group,
-                                                );
-                                            }}
-                                            disabled={
-                                                isRegenerating || isDeleting
-                                            }
-                                        >
-                                            <Text
-                                                style={
-                                                    styles.regenerateButtonText
-                                                }
-                                            >
-                                                {isRegenerating
-                                                    ? "再発行中..."
-                                                    : "招待コードを再発行"}
-                                            </Text>
-                                        </Pressable>
-
-                                        <Pressable
-                                            style={({ pressed }) => [
-                                                styles.deleteGroupButton,
-                                                pressed &&
-                                                    !isDeleting &&
-                                                    !isRegenerating &&
-                                                    styles.buttonPressed,
-                                                (isDeleting ||
-                                                    isRegenerating) &&
-                                                    styles.disabledButton,
-                                            ]}
-                                            onPress={() => {
-                                                confirmDeleteGroup(group);
-                                            }}
-                                            disabled={
-                                                isDeleting || isRegenerating
-                                            }
-                                        >
-                                            <Text
-                                                style={
-                                                    styles.deleteGroupButtonText
-                                                }
-                                            >
-                                                {isDeleting
-                                                    ? "削除中..."
-                                                    : "グループを削除"}
-                                            </Text>
-                                        </Pressable>
-                                    </View>
-                                )}
-                            </View>
-                        );
-                    })
-                )}
-            </View>
-        </ScrollView>
+                            );
+                        })
+                    )}
+                </View>
+            </ScrollView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        padding: 20,
-        paddingBottom: 40,
-        gap: 16,
-        backgroundColor: "#fff",
+    screen: {
+        flex: 1,
+        backgroundColor: "#f3f7f9",
     },
 
-    section: {
-        borderWidth: 1,
-        borderColor: "#d9e0e6",
-        borderRadius: 10,
-        padding: 16,
-        gap: 12,
-        backgroundColor: "#fff",
+    appHeader: {
+        minHeight: 58,
+
+        paddingHorizontal: 10,
+        paddingBottom: 8,
+
+        flexDirection: "row",
+        alignItems: "flex-end",
+
+        backgroundColor: "#06395f",
+
+        elevation: 6,
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.16,
+        shadowRadius: 4,
     },
 
-    sectionTitle: {
-        fontSize: 18,
-        fontWeight: "bold",
-        color: "#333",
-    },
+    headerBackButton: {
+        width: 46,
+        height: 44,
 
-    description: {
-        fontSize: 14,
-        color: "#666",
-        lineHeight: 20,
-    },
-
-    input: {
-        borderWidth: 1,
-        borderColor: "#c8d0d7",
-        borderRadius: 8,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        fontSize: 16,
-        backgroundColor: "#fff",
-    },
-
-    inviteInput: {
-        letterSpacing: 2,
-        fontWeight: "bold",
-    },
-
-    primaryButton: {
-        backgroundColor: "#4b6f8f",
-        borderRadius: 8,
-        paddingVertical: 10,
         alignItems: "center",
         justifyContent: "center",
     },
 
-    primaryButtonText: {
-        color: "#fff",
+    headerBackText: {
+        color: "#ffffff",
+
+        fontSize: 42,
+        lineHeight: 42,
+        fontWeight: "300",
+    },
+
+    headerTitle: {
+        flex: 1,
+
+        paddingBottom: 9,
+
+        textAlign: "center",
+
+        color: "#ffffff",
+
+        fontSize: 18,
+        fontWeight: "700",
+    },
+
+    headerRightSpace: {
+        width: 46,
+        height: 44,
+    },
+
+    scrollView: {
+        flex: 1,
+    },
+
+    container: {
+        paddingHorizontal: 14,
+        paddingTop: 14,
+        paddingBottom: 36,
+
+        backgroundColor: "#f3f7f9",
+    },
+
+    sectionCard: {
+        marginBottom: 12,
+
+        padding: 15,
+
+        borderWidth: 1,
+        borderColor: "#dfe7ea",
+        borderRadius: 14,
+
+        backgroundColor: "#ffffff",
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+
+        elevation: 1,
+    },
+
+    sectionHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+
+        marginBottom: 14,
+    },
+
+    sectionIconCircle: {
+        width: 42,
+        height: 42,
+
+        marginRight: 11,
+
+        borderRadius: 21,
+
+        alignItems: "center",
+        justifyContent: "center",
+
+        backgroundColor: "#0e9384",
+    },
+
+    joinIconCircle: {
+        backgroundColor: "#557fc7",
+    },
+
+    sectionHeaderTextArea: {
+        flex: 1,
+    },
+
+    sectionTitle: {
+        color: "#203f4f",
+
+        fontSize: 16,
+        fontWeight: "700",
+    },
+
+    sectionDescription: {
+        marginTop: 2,
+
+        color: "#71838c",
+
+        fontSize: 11,
+        lineHeight: 16,
+    },
+
+    limitInfoRow: {
+        marginBottom: 10,
+
+        flexDirection: "row",
+        alignItems: "center",
+
+        gap: 5,
+    },
+
+    groupLimitText: {
+        color: "#71838c",
+
+        fontSize: 12,
+    },
+
+    input: {
+        height: 44,
+
+        paddingHorizontal: 12,
+
+        borderWidth: 1,
+        borderColor: "#d3dfe4",
+        borderRadius: 9,
+
+        backgroundColor: "#ffffff",
+
+        color: "#213f4d",
+
         fontSize: 15,
-        fontWeight: "bold",
+    },
+
+    inviteInput: {
+        letterSpacing: 2,
+
+        fontWeight: "700",
+        textAlign: "center",
+    },
+
+    disabledInput: {
+        backgroundColor: "#f1f4f5",
+
+        color: "#9aa5aa",
+    },
+
+    primaryButton: {
+        minHeight: 46,
+
+        marginTop: 12,
+
+        paddingHorizontal: 12,
+
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+
+        gap: 7,
+
+        borderRadius: 10,
+
+        backgroundColor: "#0e9384",
+    },
+
+    secondaryPrimaryButton: {
+        minHeight: 46,
+
+        marginTop: 12,
+
+        paddingHorizontal: 12,
+
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+
+        gap: 7,
+
+        borderRadius: 10,
+
+        backgroundColor: "#557fc7",
+    },
+
+    primaryButtonText: {
+        color: "#ffffff",
+
+        fontSize: 14,
+        fontWeight: "700",
+    },
+
+    buttonLoadingRow: {
+        flexDirection: "row",
+        alignItems: "center",
+
+        gap: 8,
     },
 
     buttonPressed: {
-        opacity: 0.75,
+        opacity: 0.7,
     },
 
     disabledButton: {
@@ -986,216 +1413,466 @@ const styles = StyleSheet.create({
     },
 
     inviteCodeBox: {
-        borderWidth: 1,
-        borderColor: "#9eb4c7",
-        borderRadius: 10,
-        padding: 16,
+        marginTop: 14,
+
+        padding: 14,
+
         alignItems: "center",
-        backgroundColor: "#f5f8fa",
+
+        borderWidth: 1,
+        borderColor: "#b9dbd5",
+        borderRadius: 12,
+
+        backgroundColor: "#f3fbf9",
+    },
+
+    inviteCodeHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+
         gap: 6,
     },
 
     inviteCodeTitle: {
-        fontSize: 14,
-        color: "#555",
-        fontWeight: "bold",
+        color: "#46616c",
+
+        fontSize: 13,
+        fontWeight: "700",
     },
 
     inviteGroupName: {
-        fontSize: 15,
-        color: "#333",
+        marginTop: 7,
+
+        color: "#536b75",
+
+        fontSize: 12,
     },
 
     inviteCodeText: {
-        fontSize: 28,
-        fontWeight: "bold",
+        marginVertical: 8,
+
+        color: "#0e7185",
+
+        fontSize: 27,
+        fontWeight: "800",
+
         letterSpacing: 3,
-        color: "#2f536f",
-        marginVertical: 4,
     },
 
     inviteCodeHelp: {
-        fontSize: 13,
-        color: "#555",
-        textAlign: "center",
-    },
+        color: "#71838c",
 
-    inviteCodeWarning: {
-        fontSize: 12,
-        color: "#8b5a3c",
         textAlign: "center",
+
+        fontSize: 11,
+        lineHeight: 16,
     },
 
     shareInviteButton: {
-        marginTop: 8,
-        backgroundColor: "#4b6f8f",
-        borderRadius: 8,
-        paddingVertical: 10,
-        paddingHorizontal: 24,
+        minHeight: 40,
+
+        marginTop: 12,
+        paddingHorizontal: 18,
+
+        flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        alignSelf: "stretch",
+
+        gap: 6,
+
+        borderWidth: 1,
+        borderColor: "#b8d4dc",
+        borderRadius: 20,
+
+        backgroundColor: "#ffffff",
     },
 
     shareInviteButtonText: {
-        color: "#fff",
-        fontSize: 15,
-        fontWeight: "bold",
+        color: "#0e7185",
+
+        fontSize: 12,
+        fontWeight: "700",
     },
 
-    groupHeader: {
+    inviteWarningRow: {
+        marginTop: 10,
+
         flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-    },
+        alignItems: "flex-start",
 
-    refreshButton: {
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-    },
-
-    refreshButtonText: {
-        color: "#4b6f8f",
-        fontWeight: "bold",
-    },
-
-    emptyText: {
-        fontSize: 14,
-        color: "#777",
-        paddingVertical: 12,
-    },
-
-    groupItem: {
-        borderTopWidth: 1,
-        borderTopColor: "#e5e8eb",
-        paddingVertical: 12,
-    },
-
-    groupNameArea: {
         gap: 4,
     },
 
-    groupName: {
-        fontSize: 16,
-        fontWeight: "bold",
-        color: "#333",
+    inviteCodeWarning: {
+        flex: 1,
+
+        color: "#a66a34",
+
+        fontSize: 10,
+        lineHeight: 15,
     },
 
-    groupRoleText: {
-        fontSize: 13,
-        color: "#777",
+    groupsSection: {
+        marginTop: 3,
     },
 
-    regenerateButton: {
-        borderWidth: 1,
-        borderColor: "#4b6f8f",
-        borderRadius: 8,
-        paddingVertical: 8,
-        paddingHorizontal: 12,
+    groupsHeader: {
+        marginBottom: 11,
+
+        paddingHorizontal: 2,
+
+        flexDirection: "row",
         alignItems: "center",
-        justifyContent: "center",
+        justifyContent: "space-between",
     },
 
-    regenerateButtonText: {
-        color: "#4b6f8f",
-        fontSize: 14,
-        fontWeight: "bold",
+    groupsTitle: {
+        color: "#203f4f",
+
+        fontSize: 17,
+        fontWeight: "700",
     },
 
-    ownerActionArea: {
-        marginTop: 10,
+    groupsDescription: {
+        marginTop: 2,
+
+        color: "#819198",
+
+        fontSize: 11,
+    },
+
+    refreshButton: {
+        minHeight: 34,
+
+        paddingHorizontal: 11,
+
+        flexDirection: "row",
+        alignItems: "center",
+
+        gap: 4,
+
+        borderWidth: 1,
+        borderColor: "#c4d9df",
+        borderRadius: 17,
+
+        backgroundColor: "#ffffff",
+    },
+
+    refreshButtonText: {
+        color: "#0e7185",
+
+        fontSize: 11,
+        fontWeight: "700",
+    },
+
+    loadingGroupsBox: {
+        paddingVertical: 30,
+
+        alignItems: "center",
+
         gap: 8,
     },
 
-    deleteGroupButton: {
+    loadingGroupsText: {
+        color: "#71838c",
+
+        fontSize: 12,
+    },
+
+    emptyCard: {
+        paddingVertical: 28,
+        paddingHorizontal: 20,
+
+        alignItems: "center",
+
         borderWidth: 1,
-        borderColor: "#c62828",
-        borderRadius: 8,
-        paddingVertical: 8,
-        paddingHorizontal: 12,
+        borderColor: "#dfe7ea",
+        borderRadius: 14,
+
+        backgroundColor: "#ffffff",
+    },
+
+    emptyTitle: {
+        marginTop: 8,
+
+        color: "#405d69",
+
+        fontSize: 14,
+        fontWeight: "700",
+    },
+
+    emptyText: {
+        marginTop: 4,
+
+        textAlign: "center",
+
+        color: "#819198",
+
+        fontSize: 11,
+        lineHeight: 17,
+    },
+
+    groupCard: {
+        marginBottom: 11,
+
+        padding: 14,
+
+        borderWidth: 1,
+        borderColor: "#dfe7ea",
+        borderRadius: 14,
+
+        backgroundColor: "#ffffff",
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+
+        elevation: 1,
+    },
+
+    groupCardHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+    },
+
+    groupTitleArea: {
+        flex: 1,
+
+        flexDirection: "row",
+        alignItems: "center",
+    },
+
+    groupIconCircle: {
+        width: 42,
+        height: 42,
+
+        marginRight: 10,
+
+        borderRadius: 21,
+
         alignItems: "center",
         justifyContent: "center",
+
+        backgroundColor: "#e3f5f1",
     },
 
-    deleteGroupButtonText: {
-        color: "#c62828",
-        fontSize: 14,
-        fontWeight: "bold",
+    groupNameArea: {
+        flex: 1,
+        minWidth: 0,
     },
 
-    groupLimitText: {
-        fontSize: 13,
-        color: "#666",
+    groupName: {
+        color: "#203f4f",
+
+        fontSize: 15,
+        fontWeight: "700",
     },
 
-    limitWarningText: {
-        fontSize: 13,
-        color: "#b45309",
-        lineHeight: 19,
+    memberCountText: {
+        marginTop: 2,
+
+        color: "#819198",
+
+        fontSize: 11,
     },
 
-    disabledInput: {
-        backgroundColor: "#f1f3f5",
-        color: "#999",
+    roleBadge: {
+        minHeight: 25,
+
+        marginLeft: 8,
+        paddingHorizontal: 9,
+
+        alignItems: "center",
+        justifyContent: "center",
+
+        borderRadius: 13,
+    },
+
+    ownerBadge: {
+        backgroundColor: "#def4ef",
+    },
+
+    memberBadge: {
+        backgroundColor: "#e8eef2",
+    },
+
+    roleBadgeText: {
+        color: "#617681",
+
+        fontSize: 10,
+        fontWeight: "700",
+    },
+
+    ownerBadgeText: {
+        color: "#0e7f72",
     },
 
     groupMembersArea: {
-        marginTop: 12,
-        gap: 8,
+        marginTop: 14,
+        paddingTop: 12,
+
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: "#dfe7ea",
     },
 
     groupMembersTitle: {
-        fontSize: 13,
-        fontWeight: "bold",
-        color: "#555",
+        marginBottom: 9,
+
+        color: "#607780",
+
+        fontSize: 12,
+        fontWeight: "700",
     },
 
     groupMembersList: {
         flexDirection: "row",
         flexWrap: "wrap",
+
         gap: 12,
     },
 
     groupMemberItem: {
-        width: 64,
+        width: 60,
+
         alignItems: "center",
+    },
+
+    memberIconWrapper: {
+        position: "relative",
     },
 
     groupMemberIcon: {
         width: 44,
         height: 44,
+
         borderRadius: 22,
+
         backgroundColor: "#e6edf3",
     },
 
     groupMemberIconPlaceholder: {
         width: 44,
         height: 44,
+
         borderRadius: 22,
-        backgroundColor: "#e6edf3",
-        borderWidth: 1,
-        borderColor: "#c8d6e0",
+
         alignItems: "center",
         justifyContent: "center",
+
+        backgroundColor: "#dfe9ed",
+
+        borderWidth: 1,
+        borderColor: "#cad8de",
     },
 
     groupMemberIconPlaceholderText: {
-        fontSize: 17,
-        fontWeight: "bold",
-        color: "#4b6f8f",
+        color: "#456575",
+
+        fontSize: 16,
+        fontWeight: "700",
+    },
+
+    ownerMiniBadge: {
+        position: "absolute",
+
+        right: -2,
+        bottom: -1,
+
+        width: 18,
+        height: 18,
+
+        borderRadius: 9,
+
+        alignItems: "center",
+        justifyContent: "center",
+
+        borderWidth: 1.5,
+        borderColor: "#ffffff",
+
+        backgroundColor: "#d6a022",
     },
 
     groupMemberName: {
-        marginTop: 4,
-        width: 64,
-        fontSize: 11,
-        color: "#444",
+        width: 60,
+
+        marginTop: 5,
+
         textAlign: "center",
+
+        color: "#526872",
+
+        fontSize: 10,
     },
 
-    groupMemberOwnerText: {
-        marginTop: 2,
-        fontSize: 9,
-        color: "#777",
+    ownerActionArea: {
+        marginTop: 14,
+
+        paddingTop: 12,
+
+        flexDirection: "row",
+
+        gap: 8,
+
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: "#dfe7ea",
+    },
+
+    regenerateButton: {
+        flex: 1,
+
+        minHeight: 40,
+
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+
+        gap: 5,
+
+        borderWidth: 1,
+        borderColor: "#b7d4dc",
+        borderRadius: 9,
+
+        backgroundColor: "#ffffff",
+    },
+
+    regenerateButtonText: {
+        color: "#0e7185",
+
+        fontSize: 11,
+        fontWeight: "700",
+    },
+
+    deleteGroupButton: {
+        flex: 1,
+
+        minHeight: 40,
+
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+
+        gap: 5,
+
+        borderWidth: 1,
+        borderColor: "#e3b9b5",
+        borderRadius: 9,
+
+        backgroundColor: "#fff8f7",
+    },
+
+    deleteGroupButtonPressed: {
+        backgroundColor: "#fdeceb",
+    },
+
+    deleteGroupButtonText: {
+        color: "#c0392b",
+
+        fontSize: 11,
+        fontWeight: "700",
     },
 });

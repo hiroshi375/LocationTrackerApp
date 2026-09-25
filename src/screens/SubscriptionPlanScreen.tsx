@@ -1,10 +1,17 @@
 import {
     ActivityIndicator,
+    Pressable,
     ScrollView,
     StyleSheet,
     Text,
     View,
 } from "react-native";
+
+import { useLayoutEffect } from "react";
+import { useNavigation } from "@react-navigation/native";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { StatusBar } from "expo-status-bar";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
     FREE_PLAN_LIMITS,
@@ -13,27 +20,123 @@ import {
 import { useSubscription } from "../hooks/useSubscription";
 
 export default function SubscriptionPlanScreen() {
+    const navigation = useNavigation();
+    const insets = useSafeAreaInsets();
+    useLayoutEffect(() => {
+        navigation.setOptions({
+            headerShown: false,
+        });
+    }, [navigation]);
     const { tier, loading } = useSubscription();
 
     return (
-        <ScrollView
-            style={styles.container}
-            contentContainerStyle={styles.content}
-        >
-            <Text style={styles.title}>FREE / PREMIUM プラン</Text>
+        <View style={styles.screen}>
+            <StatusBar
+                style="light"
+                backgroundColor="#06395f"
+                translucent={false}
+            />
 
-            <Text style={styles.description}>
-                LocationTrackerAppはFREEでも基本機能をご利用いただけます。
-                PREMIUMでは、より細かな位置記録や、
-                より多くのアクティビティ・共有機能をご利用いただけます。
-            </Text>
+            {/* ヘッダ */}
+            <View
+                style={[
+                    styles.appHeader,
+                    {
+                        paddingTop: Math.max(insets.top, 8),
+                    },
+                ]}
+            >
+                <Pressable
+                    style={styles.headerBackButton}
+                    onPress={() => navigation.goBack()}
+                >
+                    <Text style={styles.headerBackText}>‹</Text>
+                </Pressable>
 
-            <View style={styles.currentPlanCard}>
-                <Text style={styles.currentPlanLabel}>現在のプラン</Text>
+                <Text style={styles.headerTitle} numberOfLines={1}>
+                    プラン一覧
+                </Text>
 
-                {loading ? (
-                    <ActivityIndicator style={styles.currentPlanLoading} />
-                ) : (
+                <View style={styles.headerRightSpace} />
+            </View>
+
+            <ScrollView
+                style={styles.scrollView}
+                contentContainerStyle={styles.content}
+                showsVerticalScrollIndicator={false}
+            >
+                {/* 画面説明 */}
+                <View style={styles.introCard}>
+                    <View style={styles.introIconCircle}>
+                        <MaterialCommunityIcons
+                            name="shield-crown-outline"
+                            size={24}
+                            color="#ffffff"
+                        />
+                    </View>
+
+                    <View style={styles.introTextArea}>
+                        <Text style={styles.introTitle}>
+                            FREE / PREMIUM プラン
+                        </Text>
+
+                        <Text style={styles.description}>
+                            AcLog FitはFREEでも基本機能をご利用いただけます。
+                            PREMIUMでは、より細かな位置記録や、
+                            より多くのアクティビティ・共有機能をご利用いただけます。
+                        </Text>
+                    </View>
+                </View>
+
+                {/* 現在のプラン */}
+                <View style={styles.currentPlanCard}>
+                    <View style={styles.currentPlanHeader}>
+                        <View style={styles.currentPlanTitleRow}>
+                            <MaterialCommunityIcons
+                                name={
+                                    tier === "PREMIUM"
+                                        ? "crown-outline"
+                                        : "shield-outline"
+                                }
+                                size={20}
+                                color={
+                                    tier === "PREMIUM" ? "#c48a12" : "#0e9384"
+                                }
+                            />
+
+                            <Text style={styles.currentPlanLabel}>
+                                現在のプラン
+                            </Text>
+                        </View>
+
+                        {loading ? (
+                            <ActivityIndicator
+                                size="small"
+                                color="#0e9384"
+                                style={styles.currentPlanLoading}
+                            />
+                        ) : (
+                            <View
+                                style={[
+                                    styles.planBadge,
+                                    tier === "PREMIUM"
+                                        ? styles.premiumBadge
+                                        : styles.freeBadge,
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        styles.planBadgeText,
+                                        tier === "PREMIUM" &&
+                                            styles.premiumBadgeText,
+                                    ]}
+                                >
+                                    {tier}
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+
                     <Text
                         style={[
                             styles.currentPlanValue,
@@ -41,154 +144,204 @@ export default function SubscriptionPlanScreen() {
                                 styles.currentPlanValuePremium,
                         ]}
                     >
-                        {tier}
+                        {loading ? "確認中..." : tier}
                     </Text>
-                )}
-            </View>
 
-            <Text style={styles.sectionTitle}>プラン比較</Text>
+                    <Text style={styles.currentPlanDescription}>
+                        {tier === "PREMIUM"
+                            ? "PREMIUMでは、細かな記録設定や拡張共有機能を利用できます。"
+                            : "FREEでも自動位置記録や履歴表示などの基本機能をご利用いただけます。"}
+                    </Text>
+                </View>
 
-            <View style={styles.comparisonTable}>
-                <View style={styles.headerRow}>
-                    <View style={styles.featureColumn}>
-                        <Text style={styles.headerText}>機能</Text>
+                {/* プラン比較 */}
+                <View style={styles.sectionCard}>
+                    <View style={styles.sectionHeader}>
+                        <MaterialCommunityIcons
+                            name="table-large"
+                            size={21}
+                            color="#0e9384"
+                        />
+
+                        <Text style={styles.sectionTitle}>プラン比較</Text>
                     </View>
 
-                    <View style={styles.planColumn}>
-                        <Text style={styles.headerText}>FREE</Text>
-                    </View>
+                    <View style={styles.comparisonTable}>
+                        <View style={styles.headerRow}>
+                            <View style={styles.featureColumn}>
+                                <Text style={styles.headerText}>機能</Text>
+                            </View>
 
-                    <View style={styles.planColumn}>
-                        <Text style={styles.premiumHeaderText}>PREMIUM</Text>
+                            <View style={styles.planColumn}>
+                                <Text style={styles.headerText}>FREE</Text>
+                            </View>
+
+                            <View style={styles.planColumn}>
+                                <Text style={styles.premiumHeaderText}>
+                                    PREMIUM
+                                </Text>
+                            </View>
+                        </View>
+
+                        <ComparisonRow
+                            label="月間アクティビティ数"
+                            free={`${FREE_PLAN_LIMITS.maxMonthlyActivities}件まで`}
+                            premium={formatLimit(
+                                PREMIUM_PLAN_LIMITS.maxMonthlyActivities,
+                                "件",
+                            )}
+                        />
+
+                        <ComparisonRow
+                            label="1回の最大記録時間"
+                            free={formatDuration(
+                                FREE_PLAN_LIMITS.maxActivityDurationMs,
+                            )}
+                            premium={formatDuration(
+                                PREMIUM_PLAN_LIMITS.maxActivityDurationMs,
+                            )}
+                        />
+
+                        <ComparisonRow
+                            label="1アクティビティの記録ポイント数"
+                            free={`${FREE_PLAN_LIMITS.maxPointsPerActivity?.toLocaleString()}件まで`}
+                            premium={formatLimit(
+                                PREMIUM_PLAN_LIMITS.maxPointsPerActivity,
+                                "件",
+                            )}
+                        />
+
+                        <ComparisonRow
+                            label="最短記録間隔"
+                            free={`${FREE_PLAN_LIMITS.minRecordingIntervalMs / 1000}秒`}
+                            premium={`${PREMIUM_PLAN_LIMITS.minRecordingIntervalMs / 1000}秒`}
+                            highlightPremium
+                        />
+
+                        <ComparisonRow
+                            label="最小記録距離"
+                            free={`${FREE_PLAN_LIMITS.minRecordingDistanceMeters}m`}
+                            premium={`${PREMIUM_PLAN_LIMITS.minRecordingDistanceMeters}m`}
+                            highlightPremium
+                        />
+
+                        <ComparisonRow
+                            label="作成できる共有グループ"
+                            free={formatLimit(
+                                FREE_PLAN_LIMITS.maxOwnedShareGroups,
+                                "グループ",
+                            )}
+                            premium={formatLimit(
+                                PREMIUM_PLAN_LIMITS.maxOwnedShareGroups,
+                                "グループ",
+                            )}
+                            highlightPremium
+                        />
+
+                        <ComparisonRow
+                            label="1共有グループの最大人数"
+                            free={formatLimit(
+                                FREE_PLAN_LIMITS.maxUsersPerShareGroup,
+                                "人",
+                            )}
+                            premium={formatLimit(
+                                PREMIUM_PLAN_LIMITS.maxUsersPerShareGroup,
+                                "人",
+                            )}
+                            highlightPremium
+                        />
+
+                        <ComparisonRow
+                            label="アクティビティ区分の変更"
+                            free="利用不可"
+                            premium="利用可能"
+                            highlightPremium
+                        />
                     </View>
                 </View>
 
-                <ComparisonRow
-                    label="月間アクティビティ数"
-                    free={`${FREE_PLAN_LIMITS.maxMonthlyActivities}件まで`}
-                    premium={formatLimit(
-                        PREMIUM_PLAN_LIMITS.maxMonthlyActivities,
-                        "件",
-                    )}
-                />
+                {/* FREEで使える機能 */}
+                <View style={styles.sectionCard}>
+                    <View style={styles.sectionHeader}>
+                        <MaterialCommunityIcons
+                            name="check-circle-outline"
+                            size={21}
+                            color="#0e9384"
+                        />
 
-                <ComparisonRow
-                    label="1回の最大記録時間"
-                    free={formatDuration(
-                        FREE_PLAN_LIMITS.maxActivityDurationMs,
-                    )}
-                    premium={formatDuration(
-                        PREMIUM_PLAN_LIMITS.maxActivityDurationMs,
-                    )}
-                />
+                        <Text style={styles.sectionTitle}>
+                            FREEでも利用できる主な機能
+                        </Text>
+                    </View>
 
-                <ComparisonRow
-                    label="1アクティビティの記録ポイント数"
-                    free={`${FREE_PLAN_LIMITS.maxPointsPerActivity?.toLocaleString()}件まで`}
-                    premium={formatLimit(
-                        PREMIUM_PLAN_LIMITS.maxPointsPerActivity,
-                        "件",
-                    )}
-                />
+                    <Text style={styles.cardText}>
+                        ✓ 自動位置記録
+                        {"\n"}✓ アクティビティ履歴
+                        {"\n"}✓ 移動ルートの地図表示
+                        {"\n"}✓ 記録ポイントの確認
+                        {"\n"}✓ リアルタイム位置共有
+                        {"\n"}✓ アクティビティ履歴の共有
+                        {"\n"}✓ ランキング
+                        {"\n"}✓ サンプルアクティビティ・使い方ガイド
+                    </Text>
+                </View>
 
-                <ComparisonRow
-                    label="最短記録間隔"
-                    free={`${FREE_PLAN_LIMITS.minRecordingIntervalMs / 1000}秒`}
-                    premium={`${PREMIUM_PLAN_LIMITS.minRecordingIntervalMs / 1000}秒`}
-                    highlightPremium
-                />
+                {/* PREMIUMについて */}
+                <View style={styles.premiumCard}>
+                    <View style={styles.sectionHeader}>
+                        <MaterialCommunityIcons
+                            name="crown-outline"
+                            size={21}
+                            color="#b57b00"
+                        />
 
-                <ComparisonRow
-                    label="最小記録距離"
-                    free={`${FREE_PLAN_LIMITS.minRecordingDistanceMeters}m`}
-                    premium={`${PREMIUM_PLAN_LIMITS.minRecordingDistanceMeters}m`}
-                    highlightPremium
-                />
+                        <Text style={styles.premiumCardTitle}>
+                            PREMIUMについて
+                        </Text>
+                    </View>
 
-                <ComparisonRow
-                    label="作成できる共有グループ"
-                    free={formatLimit(
-                        FREE_PLAN_LIMITS.maxOwnedShareGroups,
-                        "グループ",
-                    )}
-                    premium={formatLimit(
-                        PREMIUM_PLAN_LIMITS.maxOwnedShareGroups,
-                        "グループ",
-                    )}
-                    highlightPremium
-                />
+                    <Text style={styles.premiumCardText}>
+                        PREMIUMは買い切り型です。
+                        {"\n"}
+                        月額・年額の自動更新ではありません。
+                        {"\n\n"}
+                        購入価格は、購入時にGoogle Playに表示される
+                        価格をご確認ください。
+                        {"\n\n"}
+                        購入済みの場合は、購入復元機能から
+                        Premium利用権限を復元できます。
+                    </Text>
+                </View>
 
-                <ComparisonRow
-                    label="1共有グループの最大人数"
-                    free={formatLimit(
-                        FREE_PLAN_LIMITS.maxUsersPerShareGroup,
-                        "人",
-                    )}
-                    premium={formatLimit(
-                        PREMIUM_PLAN_LIMITS.maxUsersPerShareGroup,
-                        "人",
-                    )}
-                    highlightPremium
-                />
+                {/* サンプルアクティビティ */}
+                <View style={styles.noteCard}>
+                    <View style={styles.sectionHeader}>
+                        <MaterialCommunityIcons
+                            name="information-outline"
+                            size={21}
+                            color="#3f718b"
+                        />
 
-                <ComparisonRow
-                    label="アクティビティ区分の変更"
-                    free="利用不可"
-                    premium="利用可能"
-                    highlightPremium
-                />
-            </View>
+                        <Text style={styles.noteTitle}>
+                            サンプルアクティビティについて
+                        </Text>
+                    </View>
 
-            <View style={styles.commonFeatureCard}>
-                <Text style={styles.cardTitle}>FREEでも利用できる主な機能</Text>
+                    <Text style={styles.noteText}>
+                        操作説明用のサンプルアクティビティは、 FREE /
+                        PREMIUMのどちらでも利用できます。
+                        {"\n\n"}
+                        サンプルは実際の活動実績ではないため、
+                        月間アクティビティ数やランキングには加算されません。
+                    </Text>
+                </View>
 
-                <Text style={styles.cardText}>
-                    ✓ 自動位置記録
-                    {"\n"}✓ アクティビティ履歴
-                    {"\n"}✓ 移動ルートの地図表示
-                    {"\n"}✓ 記録ポイントの確認
-                    {"\n"}✓ リアルタイム位置共有
-                    {"\n"}✓ アクティビティ履歴の共有
-                    {"\n"}✓ ランキング
-                    {"\n"}✓ サンプルアクティビティ・使い方ガイド
+                <Text style={styles.footerNote}>
+                    ※ プランの内容は、機能追加やサービス改善等により
+                    変更される場合があります。
                 </Text>
-            </View>
-
-            <View style={styles.premiumCard}>
-                <Text style={styles.premiumCardTitle}>PREMIUMについて</Text>
-
-                <Text style={styles.premiumCardText}>
-                    PREMIUMは買い切り型です。
-                    {"\n"}
-                    月額・年額の自動更新ではありません。
-                    {"\n\n"}
-                    購入価格は、購入時にGoogle Playに表示される
-                    価格をご確認ください。
-                    {"\n\n"}
-                    購入済みの場合は、購入復元機能から
-                    Premium利用権限を復元できます。
-                </Text>
-            </View>
-
-            <View style={styles.noteCard}>
-                <Text style={styles.noteTitle}>
-                    サンプルアクティビティについて
-                </Text>
-
-                <Text style={styles.noteText}>
-                    操作説明用のサンプルアクティビティは、 FREE /
-                    PREMIUMのどちらでも利用できます。
-                    {"\n\n"}
-                    サンプルは実際の活動実績ではないため、
-                    月間アクティビティ数やランキングには加算されません。
-                </Text>
-            </View>
-
-            <Text style={styles.footerNote}>
-                ※ プランの内容は、機能追加やサービス改善等により
-                変更される場合があります。
-            </Text>
-        </ScrollView>
+            </ScrollView>
+        </View>
     );
 }
 
@@ -252,51 +405,183 @@ function formatDuration(value: number | null): string {
 }
 
 const styles = StyleSheet.create({
-    container: {
+    screen: {
         flex: 1,
-        backgroundColor: "#f7f8fa",
+        backgroundColor: "#f3f7f9",
+    },
+
+    appHeader: {
+        minHeight: 58,
+
+        paddingHorizontal: 10,
+        paddingBottom: 8,
+
+        flexDirection: "row",
+        alignItems: "flex-end",
+
+        backgroundColor: "#06395f",
+
+        elevation: 6,
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.16,
+        shadowRadius: 4,
+    },
+
+    headerBackButton: {
+        width: 46,
+        height: 44,
+
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    headerBackText: {
+        color: "#ffffff",
+
+        fontSize: 42,
+        lineHeight: 42,
+        fontWeight: "300",
+    },
+
+    headerTitle: {
+        flex: 1,
+
+        paddingBottom: 9,
+
+        textAlign: "center",
+
+        color: "#ffffff",
+
+        fontSize: 18,
+        fontWeight: "700",
+    },
+
+    headerRightSpace: {
+        width: 46,
+        height: 44,
+    },
+
+    scrollView: {
+        flex: 1,
     },
 
     content: {
-        padding: 16,
-        paddingBottom: 48,
+        paddingHorizontal: 14,
+        paddingTop: 14,
+        paddingBottom: 36,
+
+        backgroundColor: "#f3f7f9",
     },
 
-    title: {
-        fontSize: 24,
-        fontWeight: "bold",
-        color: "#2f4f66",
+    introCard: {
         marginBottom: 12,
+
+        padding: 15,
+
+        flexDirection: "row",
+        alignItems: "flex-start",
+
+        borderWidth: 1,
+        borderColor: "#dfe7ea",
+        borderRadius: 14,
+
+        backgroundColor: "#ffffff",
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+
+        elevation: 1,
+    },
+
+    introIconCircle: {
+        width: 42,
+        height: 42,
+
+        marginRight: 11,
+
+        borderRadius: 21,
+
+        alignItems: "center",
+        justifyContent: "center",
+
+        backgroundColor: "#0e9384",
+    },
+
+    introTextArea: {
+        flex: 1,
+    },
+
+    introTitle: {
+        color: "#203f4f",
+
+        fontSize: 16,
+        fontWeight: "700",
+
+        marginBottom: 4,
     },
 
     description: {
-        fontSize: 14,
-        lineHeight: 22,
-        color: "#555",
-        marginBottom: 20,
+        color: "#71838c",
+
+        fontSize: 12,
+        lineHeight: 18,
     },
 
     currentPlanCard: {
-        backgroundColor: "#ffffff",
-        borderRadius: 12,
+        marginBottom: 12,
+
         padding: 16,
-        marginBottom: 24,
+
         borderWidth: 1,
-        borderColor: "#dfe5e9",
+        borderColor: "#dfe7ea",
+        borderRadius: 14,
+
+        backgroundColor: "#ffffff",
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+
+        elevation: 1,
+    },
+
+    currentPlanHeader: {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
     },
 
+    currentPlanTitleRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 7,
+    },
+
     currentPlanLabel: {
-        fontSize: 15,
-        fontWeight: "600",
-        color: "#444",
+        fontSize: 14,
+        fontWeight: "700",
+        color: "#46606c",
     },
 
     currentPlanValue: {
-        fontSize: 18,
-        fontWeight: "bold",
+        marginTop: 10,
+
+        fontSize: 24,
+        fontWeight: "800",
         color: "#546e7a",
     },
 
@@ -304,30 +589,99 @@ const styles = StyleSheet.create({
         color: "#a06b00",
     },
 
+    currentPlanDescription: {
+        marginTop: 6,
+
+        fontSize: 12,
+        lineHeight: 18,
+        color: "#74858d",
+    },
+
     currentPlanLoading: {
         marginVertical: 2,
     },
 
-    sectionTitle: {
-        fontSize: 18,
-        fontWeight: "bold",
-        color: "#333",
+    planBadge: {
+        minHeight: 28,
+
+        paddingHorizontal: 10,
+
+        alignItems: "center",
+        justifyContent: "center",
+
+        borderRadius: 14,
+    },
+
+    freeBadge: {
+        backgroundColor: "#e8eef1",
+    },
+
+    premiumBadge: {
+        backgroundColor: "#fff1c7",
+    },
+
+    planBadgeText: {
+        color: "#56727e",
+
+        fontSize: 11,
+        fontWeight: "700",
+    },
+
+    premiumBadgeText: {
+        color: "#9b6a00",
+    },
+
+    sectionCard: {
+        marginBottom: 12,
+
+        padding: 15,
+
+        borderWidth: 1,
+        borderColor: "#dfe7ea",
+        borderRadius: 14,
+
+        backgroundColor: "#ffffff",
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+
+        elevation: 1,
+    },
+
+    sectionHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+
+        gap: 8,
+
         marginBottom: 12,
     },
 
+    sectionTitle: {
+        color: "#203f4f",
+
+        fontSize: 16,
+        fontWeight: "700",
+    },
+
     comparisonTable: {
-        backgroundColor: "#ffffff",
-        borderRadius: 12,
-        overflow: "hidden",
         borderWidth: 1,
         borderColor: "#dfe5e9",
-        marginBottom: 20,
+        borderRadius: 12,
+        overflow: "hidden",
+        backgroundColor: "#ffffff",
     },
 
     headerRow: {
         flexDirection: "row",
         alignItems: "stretch",
-        backgroundColor: "#eef2f4",
+
+        backgroundColor: "#eef3f5",
         borderBottomWidth: 1,
         borderBottomColor: "#dfe5e9",
     },
@@ -335,6 +689,7 @@ const styles = StyleSheet.create({
     comparisonRow: {
         flexDirection: "row",
         alignItems: "stretch",
+
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: "#dfe5e9",
     },
@@ -356,14 +711,14 @@ const styles = StyleSheet.create({
 
     headerText: {
         fontSize: 13,
-        fontWeight: "bold",
+        fontWeight: "700",
         color: "#444",
         textAlign: "center",
     },
 
     premiumHeaderText: {
         fontSize: 13,
-        fontWeight: "bold",
+        fontWeight: "700",
         color: "#a06b00",
         textAlign: "center",
     },
@@ -389,24 +744,8 @@ const styles = StyleSheet.create({
     },
 
     premiumTextHighlighted: {
-        fontWeight: "bold",
+        fontWeight: "700",
         color: "#a06b00",
-    },
-
-    commonFeatureCard: {
-        backgroundColor: "#ffffff",
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: "#dfe5e9",
-        padding: 16,
-        marginBottom: 16,
-    },
-
-    cardTitle: {
-        fontSize: 16,
-        fontWeight: "bold",
-        color: "#2f4f66",
-        marginBottom: 10,
     },
 
     cardText: {
@@ -416,19 +755,22 @@ const styles = StyleSheet.create({
     },
 
     premiumCard: {
-        backgroundColor: "#fffaf0",
-        borderRadius: 12,
+        marginBottom: 12,
+
+        padding: 15,
+
+        borderRadius: 14,
         borderWidth: 1,
         borderColor: "#e7c97d",
-        padding: 16,
-        marginBottom: 16,
+
+        backgroundColor: "#fffaf0",
     },
 
     premiumCardTitle: {
-        fontSize: 16,
-        fontWeight: "bold",
         color: "#8a5a00",
-        marginBottom: 10,
+
+        fontSize: 16,
+        fontWeight: "700",
     },
 
     premiumCardText: {
@@ -438,17 +780,21 @@ const styles = StyleSheet.create({
     },
 
     noteCard: {
+        marginBottom: 16,
+
+        padding: 15,
+
+        borderRadius: 14,
+
         backgroundColor: "#eef6fb",
-        borderRadius: 12,
-        padding: 16,
-        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: "#d8e7f0",
     },
 
     noteTitle: {
         fontSize: 15,
-        fontWeight: "bold",
+        fontWeight: "700",
         color: "#2f4f66",
-        marginBottom: 8,
     },
 
     noteText: {

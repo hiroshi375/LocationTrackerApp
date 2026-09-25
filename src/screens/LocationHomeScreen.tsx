@@ -67,6 +67,8 @@ import {
 } from "../services/userProfileService";
 import { createMonthKey } from "../services/userActivityAggregationService";
 import { exportHeadlessDiagnosticLog } from "../services/headlessDiagnosticExportService";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import type { ComponentProps } from "react";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationHome">;
 
@@ -133,6 +135,10 @@ type ShareCandidateQueryResult = {
     data?: (ShareCandidateItem | null)[] | null;
     errors?: readonly unknown[];
 };
+
+type MaterialCommunityIconName = ComponentProps<
+    typeof MaterialCommunityIcons
+>["name"];
 
 const LOCATION_HOME_SETTINGS_VERSION = 2;
 const DEFAULT_RECORD_DISTANCE_METERS = 50;
@@ -2565,21 +2571,48 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                 contentContainerStyle={styles.container}
                 keyboardShouldPersistTaps="handled"
             >
-                <View style={styles.userInfoBox}>
-                    <Text style={styles.userInfoLabel}>ログインユーザー：</Text>
-                    <Text style={styles.userInfoName}>{loginUserName}</Text>
-                    {loginUserIconUrl ? (
-                        <Image
-                            source={{ uri: loginUserIconUrl }}
-                            style={styles.userIcon}
+                <View style={styles.homeHeader}>
+                    <View style={styles.homeHeaderBrand}>
+                        <MaterialCommunityIcons
+                            name="map-marker-path"
+                            size={27}
+                            color="#ffffff"
                         />
-                    ) : (
-                        <View style={styles.userIconPlaceholder}>
-                            <Text style={styles.userIconPlaceholderText}>
-                                {loginUserName.slice(0, 1)}
-                            </Text>
-                        </View>
-                    )}
+
+                        <Text style={styles.homeHeaderTitle}>AcLog Fit</Text>
+                    </View>
+
+                    <Pressable
+                        style={({ pressed }) => [
+                            styles.homeHeaderUser,
+                            pressed && styles.homeHeaderUserPressed,
+                        ]}
+                        onPress={() => navigation.navigate("Profile")}
+                    >
+                        <Text
+                            style={styles.homeHeaderUserName}
+                            numberOfLines={1}
+                        >
+                            {loginUserName}
+                        </Text>
+
+                        {loginUserIconUrl ? (
+                            <Image
+                                source={{ uri: loginUserIconUrl }}
+                                style={styles.homeHeaderUserIcon}
+                            />
+                        ) : (
+                            <View style={styles.homeHeaderUserIconPlaceholder}>
+                                <Text
+                                    style={
+                                        styles.homeHeaderUserIconPlaceholderText
+                                    }
+                                >
+                                    {loginUserName.slice(0, 1)}
+                                </Text>
+                            </View>
+                        )}
+                    </Pressable>
                 </View>
 
                 <View
@@ -2697,12 +2730,16 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                                     }}
                                     disabled={clearingStaleLiveSharing}
                                 >
-                                    <Text
-                                        style={styles.liveShareClearButtonText}
-                                    >
-                                        {clearingStaleLiveSharing
+                                    <MaterialCommunityIcons
+                                        name="stop"
+                                        size={26}
+                                        color="#ffffff"
+                                    />
+
+                                    <Text style={styles.autoRecordButtonText}>
+                                        {stoppingRecording
                                             ? "停止処理中..."
-                                            : "残留している現在地共有を停止"}
+                                            : "自動記録停止"}
                                     </Text>
                                 </Pressable>
                             </View>
@@ -3049,14 +3086,21 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                                         !hasBackgroundLocationPermission
                                     }
                                 >
+                                    <MaterialCommunityIcons
+                                        name="play"
+                                        size={50}
+                                        color="#ffffff"
+                                        style={styles.autoRecordPlayIcon}
+                                    />
+
                                     <Text style={styles.autoRecordButtonText}>
                                         {!hasLoadedSavedHomeSettings
-                                            ? "設定を読み込み中..."
+                                            ? "設定読込中"
                                             : startingRecording
-                                              ? "自動記録を開始中..."
+                                              ? "開始中..."
                                               : selectedLiveShareUsers.length >
                                                   0
-                                                ? "自動記録開始＋共有"
+                                                ? "記録開始＋共有"
                                                 : "自動記録開始"}
                                     </Text>
                                 </Pressable>
@@ -3109,62 +3153,90 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                     )}
                 </View>
 
-                <View
-                    ref={activityHistoryTourRef}
-                    collapsable={false}
-                    style={styles.buttonSpace}
-                >
-                    <AppButton
-                        title="アクティビティ履歴"
-                        onPress={() => navigation.navigate("LocationLog")}
-                    />
-                </View>
-                <View style={styles.buttonSpace}>
-                    <AppButton
-                        title="アクティビティカレンダー"
-                        onPress={() => navigation.navigate("ActivityCalendar")}
-                    />
-                </View>
-                <View style={styles.buttonSpace}>
-                    <AppButton
-                        title="アクティビティランキング"
-                        onPress={() => navigation.navigate("ActivityRanking")}
-                    />
-                </View>
-                <View style={styles.buttonSpace}>
-                    <AppButton
-                        title={
-                            openingSharedLiveMap
-                                ? "共有中の現在地を取得中..."
-                                : "共有中の現在地を見る"
-                        }
-                        onPress={handleOpenSharedLiveLocationMap}
-                        disabled={openingSharedLiveMap}
-                    />
-                </View>
+                <View style={styles.homeMenuSection}>
+                    <Text style={styles.homeSectionTitle}>よく使う機能</Text>
 
-                <View style={styles.buttonSpace}>
-                    <AppButton
-                        title="共有グループを管理"
-                        onPress={() =>
-                            navigation.navigate("ShareGroupManagement")
-                        }
-                        disabled={startingRecording}
-                    />
-                </View>
+                    <View style={styles.homeMenuGrid}>
+                        <View
+                            ref={activityHistoryTourRef}
+                            collapsable={false}
+                            style={styles.homeMenuItem}
+                        >
+                            <HomeMenuButton
+                                title="アクティビティ履歴"
+                                iconName="history"
+                                onPress={() =>
+                                    navigation.navigate("LocationLog")
+                                }
+                            />
+                        </View>
 
-                <View style={styles.buttonSpace}>
-                    <AppButton
-                        title="プロフィール"
-                        onPress={() => navigation.navigate("Profile")}
-                    />
-                </View>
+                        <View style={styles.homeMenuItem}>
+                            <HomeMenuButton
+                                title="カレンダー"
+                                iconName="calendar-month-outline"
+                                iconColor="#4f9cf9"
+                                onPress={() =>
+                                    navigation.navigate("ActivityCalendar")
+                                }
+                            />
+                        </View>
 
-                <View style={styles.buttonSpace}>
-                    <AppButton
-                        title="アプリ情報"
-                        onPress={() => navigation.navigate("AppInfo")}
-                    />
+                        <View style={styles.homeMenuItem}>
+                            <HomeMenuButton
+                                title="ランキング"
+                                iconName="trophy-outline"
+                                iconColor="#f5aa24"
+                                onPress={() =>
+                                    navigation.navigate("ActivityRanking")
+                                }
+                            />
+                        </View>
+
+                        <View style={styles.homeMenuItem}>
+                            <HomeMenuButton
+                                title={
+                                    openingSharedLiveMap
+                                        ? "現在地を取得中..."
+                                        : "共有中の現在地"
+                                }
+                                iconName="map-marker-account-outline"
+                                iconColor="#12b8aa"
+                                onPress={handleOpenSharedLiveLocationMap}
+                                disabled={openingSharedLiveMap}
+                            />
+                        </View>
+
+                        <View style={styles.homeMenuItem}>
+                            <HomeMenuButton
+                                title="共有グループ"
+                                iconName="account-group-outline"
+                                iconColor="#8067c9"
+                                onPress={() =>
+                                    navigation.navigate("ShareGroupManagement")
+                                }
+                                disabled={startingRecording}
+                            />
+                        </View>
+
+                        <View style={styles.homeMenuItem}>
+                            <HomeMenuButton
+                                title="プロフィール"
+                                iconName="account-circle-outline"
+                                iconColor="#4b6f8f"
+                                onPress={() => navigation.navigate("Profile")}
+                            />
+                        </View>
+
+                        <View style={styles.homeMenuItem}>
+                            <HomeMenuButton
+                                title="アプリ情報"
+                                iconName="information-outline"
+                                iconColor="#607d8b"
+                                onPress={() => navigation.navigate("AppInfo")}
+                            />
+                        </View>
+                    </View>
                 </View>
 
                 {isAdmin && (
@@ -3701,16 +3773,274 @@ function AppButton({
     );
 }
 
+type HomeMenuButtonProps = {
+    title: string;
+    iconName: MaterialCommunityIconName;
+    onPress: () => void;
+    disabled?: boolean;
+    iconColor?: string;
+};
+
+function HomeMenuButton({
+    title,
+    iconName,
+    onPress,
+    disabled = false,
+    iconColor = "#12b8aa",
+}: HomeMenuButtonProps) {
+    return (
+        <Pressable
+            style={({ pressed }) => [
+                styles.homeMenuButton,
+                pressed && !disabled && styles.homeMenuButtonPressed,
+                disabled && styles.appButtonDisabled,
+            ]}
+            onPress={onPress}
+            disabled={disabled}
+        >
+            <View style={styles.homeMenuIconCircle}>
+                <MaterialCommunityIcons
+                    name={iconName}
+                    size={30}
+                    color={iconColor}
+                />
+            </View>
+
+            <Text style={styles.homeMenuButtonText} numberOfLines={2}>
+                {title}
+            </Text>
+        </Pressable>
+    );
+}
+
 const styles = StyleSheet.create({
     keyboardAvoiding: {
         flex: 1,
-        backgroundColor: "#fff",
+        backgroundColor: "#f3f6f8",
     },
+
     container: {
-        padding: 20,
         paddingBottom: 40,
+        gap: 14,
+        backgroundColor: "#f3f6f8",
+    },
+
+    homeHeader: {
+        minHeight: 76,
+        paddingHorizontal: 18,
+        paddingVertical: 14,
+
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+
+        backgroundColor: "#06395f",
+    },
+
+    homeHeaderBrand: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 9,
+    },
+
+    homeHeaderTitle: {
+        color: "#ffffff",
+        fontSize: 22,
+        fontWeight: "700",
+    },
+
+    homeHeaderUser: {
+        maxWidth: "48%",
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: 8,
+    },
+
+    homeHeaderUserPressed: {
+        opacity: 0.75,
+    },
+
+    homeHeaderUserName: {
+        flexShrink: 1,
+        color: "#ffffff",
+        fontSize: 13,
+        fontWeight: "600",
+    },
+
+    homeHeaderUserIcon: {
+        width: 38,
+        height: 38,
+        borderRadius: 19,
+        borderWidth: 2,
+        borderColor: "#ffffff",
+    },
+
+    homeHeaderUserIconPlaceholder: {
+        width: 38,
+        height: 38,
+        borderRadius: 19,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#ffffff",
+    },
+
+    homeHeaderUserIconPlaceholderText: {
+        color: "#06395f",
+        fontSize: 16,
+        fontWeight: "700",
+    },
+
+    homeMenuSection: {
+        marginHorizontal: 16,
+        marginTop: 2,
+    },
+
+    homeSectionTitle: {
+        marginBottom: 10,
+        color: "#06395f",
+        fontSize: 17,
+        fontWeight: "700",
+    },
+
+    homeMenuGrid: {
+        flexDirection: "row",
+        flexWrap: "wrap",
         gap: 12,
     },
+
+    homeMenuItem: {
+        width: "48%",
+    },
+
+    homeMenuButton: {
+        minHeight: 112,
+        paddingVertical: 14,
+        paddingHorizontal: 8,
+
+        alignItems: "center",
+        justifyContent: "center",
+
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: "#dce4e9",
+
+        backgroundColor: "#ffffff",
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.08,
+        shadowRadius: 5,
+
+        elevation: 2,
+    },
+
+    homeMenuButtonPressed: {
+        opacity: 0.72,
+        transform: [{ scale: 0.98 }],
+    },
+
+    homeMenuIconCircle: {
+        width: 54,
+        height: 54,
+        borderRadius: 27,
+
+        alignItems: "center",
+        justifyContent: "center",
+
+        backgroundColor: "#f1f7f8",
+    },
+
+    homeMenuButtonText: {
+        marginTop: 9,
+        color: "#06395f",
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "700",
+        textAlign: "center",
+    },
+
+    autoRecordBox: {
+        marginTop: 16,
+        marginHorizontal: 16,
+
+        padding: 18,
+
+        borderWidth: 1,
+        borderColor: "#dce4e9",
+        borderRadius: 16,
+
+        backgroundColor: "#ffffff",
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 3,
+        },
+        shadowOpacity: 0.08,
+        shadowRadius: 7,
+
+        elevation: 3,
+    },
+
+    autoRecordTitle: {
+        color: "#06395f",
+        fontSize: 18,
+        fontWeight: "700",
+    },
+
+    autoRecordStartButton: {
+        width: 148,
+        height: 148,
+        borderRadius: 74,
+
+        alignSelf: "center",
+
+        alignItems: "center",
+        justifyContent: "center",
+
+        backgroundColor: "#12b8aa",
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 4,
+        },
+        shadowOpacity: 0.16,
+        shadowRadius: 7,
+
+        elevation: 5,
+    },
+
+    autoRecordStopButton: {
+        marginTop: 14,
+
+        minHeight: 48,
+
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 7,
+
+        backgroundColor: "#c84f4f",
+        borderRadius: 10,
+    },
+
+    autoRecordButtonText: {
+        marginTop: 6,
+        color: "#ffffff",
+        fontSize: 17,
+        fontWeight: "700",
+        textAlign: "center",
+    },
+
+    autoRecordPlayIcon: {
+        marginTop: 8,
+    },
+
     buttonSpace: {
         marginTop: 4,
     },
@@ -3734,40 +4064,10 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: "bold",
     },
-    autoRecordBox: {
-        marginTop: 16,
-        padding: 14,
-        borderWidth: 1,
-        borderColor: "#ddd",
-        borderRadius: 10,
-        backgroundColor: "#fff",
-    },
-    autoRecordTitle: {
-        fontSize: 16,
-        fontWeight: "bold",
-    },
     autoRecordStatus: {
         fontSize: 13,
         color: "#555",
         marginBottom: 6,
-    },
-    autoRecordStartButton: {
-        backgroundColor: "#4b6f8f",
-        borderRadius: 8,
-        paddingVertical: 10,
-        alignItems: "center",
-    },
-    autoRecordStopButton: {
-        marginTop: 10,
-        backgroundColor: "#8f4b4b",
-        borderRadius: 8,
-        paddingVertical: 10,
-        alignItems: "center",
-    },
-    autoRecordButtonText: {
-        color: "#fff",
-        fontSize: 15,
-        fontWeight: "bold",
     },
     recordingStartingBox: {
         flexDirection: "row",
@@ -4207,18 +4507,30 @@ const styles = StyleSheet.create({
         fontWeight: "bold",
     },
     liveShareBox: {
-        marginTop: 4,
-        padding: 14,
+        marginHorizontal: 16,
+        padding: 16,
+
         borderWidth: 1,
-        borderColor: "#ddd",
-        borderRadius: 10,
-        backgroundColor: "#fff",
+        borderColor: "#dce4e9",
+        borderRadius: 16,
+
+        backgroundColor: "#ffffff",
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.06,
+        shadowRadius: 5,
+
+        elevation: 2,
     },
 
     liveShareTitle: {
-        fontSize: 16,
-        fontWeight: "bold",
-        color: "#333",
+        color: "#06395f",
+        fontSize: 17,
+        fontWeight: "700",
         marginBottom: 10,
     },
 

@@ -277,18 +277,6 @@ export function createLocalDateKey(date: Date): string {
     return `${year}-${month}-${day}`;
 }
 
-function formatCalendarDistance(distanceMeters: number): string {
-    if (distanceMeters >= 1000) {
-        const distanceKm = distanceMeters / 1000;
-
-        return distanceKm >= 10
-            ? `${distanceKm.toFixed(1)}km`
-            : `${distanceKm.toFixed(2)}km`;
-    }
-
-    return `${Math.round(distanceMeters)}m`;
-}
-
 export function getActivityTypeColor(activityType: ActivityType): string {
     switch (activityType) {
         case "WALKING":

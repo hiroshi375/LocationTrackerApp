@@ -216,7 +216,6 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
     const [loadingLiveShareUsers, setLoadingLiveShareUsers] = useState(false);
     const [liveShareStatusMessage, setLiveShareStatusMessage] = useState("");
     const [planLimitStatusMessage, setPlanLimitStatusMessage] = useState("");
-    const [openingSharedLiveMap, setOpeningSharedLiveMap] = useState(false);
     const [backfillingSessions, setBackfillingSessions] = useState(false);
     const [reclassifyingAutoSessions, setReclassifyingAutoSessions] =
         useState(false);
@@ -2141,176 +2140,8 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
         });
     };
 
-    const handleOpenSharedLiveLocationMap = async () => {
-        if (openingSharedLiveMap) {
-            return;
-        }
-
-        try {
-            setOpeningSharedLiveMap(true);
-
-            const profile = await getCurrentUserProfile();
-            const ownerValue = profile?.ownerValue;
-
-            if (!ownerValue) {
-                Alert.alert(
-                    "共有情報がありません",
-                    "現在のユーザーの共有用情報を取得できませんでした。",
-                );
-                return;
-            }
-
-            console.log(
-                "[SharedLive] viewer ownerValue:",
-                JSON.stringify(ownerValue),
-            );
-
-            const liveLocationModel = client.models.LiveLocation as any;
-
-            const allData: any[] = [];
-            let nextToken: string | null = null;
-
-            do {
-                const listParams: {
-                    filter: {
-                        isActive: {
-                            eq: boolean;
-                        };
-                    };
-                    limit: number;
-                    nextToken?: string;
-                } = {
-                    filter: {
-                        isActive: {
-                            eq: true,
-                        },
-                    },
-                    limit: 1000,
-                };
-
-                if (nextToken) {
-                    listParams.nextToken = nextToken;
-                }
-
-                const result = (await liveLocationModel.list(
-                    listParams,
-                )) as LiveLocationListResult;
-
-                console.log("[SharedLive] list result:", {
-                    dataCount: result.data?.length ?? 0,
-                    errors: result.errors,
-                    nextToken: result.nextToken,
-                });
-
-                console.log(
-                    "[SharedLive] records:",
-                    (result.data ?? []).map((item) => ({
-                        id: item.id,
-                        userId: item.userId,
-                        owner: item.owner,
-                        sharedOwners: item.sharedOwners,
-                        isActive: item.isActive,
-                        isRecording: item.isRecording,
-                        recordingSessionId: item.recordingSessionId,
-                        latitude: item.latitude,
-                        longitude: item.longitude,
-                    })),
-                );
-
-                if (result.errors) {
-                    console.error("LiveLocation list errors:", result.errors);
-                    Alert.alert(
-                        "取得エラー",
-                        "共有中の現在地を取得できませんでした。",
-                    );
-                    return;
-                }
-
-                allData.push(...(result.data ?? []));
-                nextToken = result.nextToken ?? null;
-            } while (nextToken);
-
-            const sharedLiveLocations: LiveLocationItem[] = allData
-                .filter(
-                    (item): item is NonNullable<typeof item> => item != null,
-                )
-                .map((item) => ({
-                    id: item.id,
-                    userId: item.userId,
-                    recordingSessionId: item.recordingSessionId ?? null,
-                    isRecording:
-                        typeof item.isRecording === "boolean"
-                            ? item.isRecording
-                            : Boolean(item.recordingSessionId),
-                    latitude: item.latitude,
-                    longitude: item.longitude,
-                    updatedAt: item.updatedAt ?? null,
-                    recordedAt: item.recordedAt ?? null,
-                    isActive: item.isActive ?? null,
-                    sharedOwners: Array.isArray(item.sharedOwners)
-                        ? item.sharedOwners
-                        : [],
-                }))
-                .filter((item) => {
-                    if (!item.isActive) {
-                        return false;
-                    }
-
-                    if (
-                        !Number.isFinite(Number(item.latitude)) ||
-                        !Number.isFinite(Number(item.longitude))
-                    ) {
-                        return false;
-                    }
-
-                    return item.sharedOwners?.includes(ownerValue);
-                })
-                .sort((a, b) => {
-                    const aTime = new Date(
-                        a.updatedAt ?? a.recordedAt ?? 0,
-                    ).getTime();
-                    const bTime = new Date(
-                        b.updatedAt ?? b.recordedAt ?? 0,
-                    ).getTime();
-
-                    return bTime - aTime;
-                });
-
-            console.log("[SharedLive] allData:", allData);
-
-            console.log(
-                "[SharedLive] null item count:",
-                allData.filter((item) => item == null).length,
-            );
-
-            const latest = sharedLiveLocations[0];
-
-            if (!latest) {
-                Alert.alert(
-                    "共有中の現在地なし",
-                    "現在共有されているLiveLocationが見つかりませんでした。",
-                );
-                return;
-            }
-            const sharedLiveIsRecording =
-                latest.isRecording === true &&
-                Boolean(latest.recordingSessionId);
-
-            navigation.navigate("LocationMap", {
-                sharedLiveUserId: latest.userId,
-                sharedLiveLocationId: latest.id,
-                recordingSessionId: latest.recordingSessionId ?? null,
-                sharedLiveIsRecording,
-            });
-        } catch (error) {
-            console.error("Open shared live location map error:", error);
-            Alert.alert(
-                "取得エラー",
-                "共有中の現在地を開く処理に失敗しました。",
-            );
-        } finally {
-            setOpeningSharedLiveMap(false);
-        }
+    const handleOpenSharedLiveLocationMap = () => {
+        navigation.navigate("LiveLocationMap");
     };
 
     useEffect(() => {
@@ -3195,15 +3026,10 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
 
                         <View style={styles.homeMenuItem}>
                             <HomeMenuButton
-                                title={
-                                    openingSharedLiveMap
-                                        ? "現在地を取得中..."
-                                        : "共有中の現在地"
-                                }
+                                title="共有中の現在地"
                                 iconName="map-marker-account-outline"
                                 iconColor="#12b8aa"
                                 onPress={handleOpenSharedLiveLocationMap}
-                                disabled={openingSharedLiveMap}
                             />
                         </View>
 

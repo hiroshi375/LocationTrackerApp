@@ -18,7 +18,6 @@ import AppInfoScreen from "../screens/AppInfoScreen";
 import ContactScreen from "../screens/ContactScreen";
 import LiveLocationMapScreen from "../screens/LiveLocationMapScreen";
 import LocationHomeScreen from "../screens/LocationHomeScreen";
-import LocationLogDetailScreen from "../screens/LocationLogDetailScreen";
 import LocationLogScreen from "../screens/LocationLogScreen";
 import LocationMapScreen from "../screens/LocationMapScreen";
 import PrivacyPolicyScreen from "../screens/PrivacyPolicyScreen";
@@ -73,9 +72,6 @@ export type RootStackParamList = {
             sharedOwners?: string[] | null;
             source?: string | null;
         };
-    };
-    LocationLogDetail: {
-        locationLogId: string;
     };
     Profile: undefined;
     LiveLocationMap: undefined;
@@ -308,11 +304,6 @@ export default function RootNavigator() {
                             name="ActivityCalendar"
                             component={ActivityCalendarScreen}
                             options={{ title: "アクティビティカレンダー" }}
-                        />
-                        <Stack.Screen
-                            name="LocationLogDetail"
-                            component={LocationLogDetailScreen}
-                            options={{ title: "位置履歴詳細" }}
                         />
                         <Stack.Screen
                             name="LocationMap"

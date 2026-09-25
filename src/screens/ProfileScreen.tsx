@@ -1,6 +1,6 @@
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { useCallback, useState } from "react";
+import { useCallback, useLayoutEffect, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -36,10 +36,20 @@ import {
     purchasePremium,
     restorePremiumPurchases,
 } from "../services/revenueCatService";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { StatusBar } from "expo-status-bar";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Profile">;
 
 export default function ProfileScreen({ navigation }: Props) {
+    const insets = useSafeAreaInsets();
+
+    useLayoutEffect(() => {
+        navigation.setOptions({
+            headerShown: false,
+        });
+    }, [navigation]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [deletingAccount, setDeletingAccount] = useState(false);
@@ -450,263 +460,494 @@ export default function ProfileScreen({ navigation }: Props) {
         }, [loadProfile, loadPremiumPurchaseStatus]),
     );
 
-    if (loading) {
-        return (
-            <View style={styles.center}>
-                <ActivityIndicator />
-            </View>
-        );
-    }
-
     return (
-        <KeyboardAvoidingView
-            style={styles.container}
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-        >
-            <ScrollView
-                contentContainerStyle={styles.scrollContent}
-                keyboardShouldPersistTaps="handled"
+        <View style={styles.screen}>
+            <StatusBar
+                style="light"
+                backgroundColor="#06395f"
+                translucent={false}
+            />
+
+            {/* ヘッダ */}
+            <View
+                style={[
+                    styles.appHeader,
+                    {
+                        paddingTop: Math.max(insets.top, 8),
+                    },
+                ]}
             >
-                <View style={styles.card}>
-                    <Text style={styles.title}>プロフィール</Text>
+                <Pressable
+                    style={styles.headerBackButton}
+                    onPress={() => navigation.goBack()}
+                    disabled={isProcessing}
+                >
+                    <Text style={styles.headerBackText}>‹</Text>
+                </Pressable>
 
-                    <View style={styles.iconSection}>
-                        {selectedIconUri || iconImageUrl ? (
-                            <Image
-                                source={{
-                                    uri: selectedIconUri ?? iconImageUrl ?? "",
-                                }}
-                                style={styles.profileIcon}
-                            />
-                        ) : (
-                            <View style={styles.profileIconPlaceholder}>
-                                <Text style={styles.profileIconPlaceholderText}>
-                                    アイコン未登録
-                                </Text>
+                <Text style={styles.headerTitle} numberOfLines={1}>
+                    プロフィール
+                </Text>
+
+                <View style={styles.headerRightSpace} />
+            </View>
+
+            {loading ? (
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="small" color="#0e9384" />
+
+                    <Text style={styles.loadingText}>
+                        プロフィールを読み込み中...
+                    </Text>
+                </View>
+            ) : (
+                <KeyboardAvoidingView
+                    style={styles.keyboardAvoidingView}
+                    behavior={Platform.OS === "ios" ? "padding" : undefined}
+                >
+                    <ScrollView
+                        style={styles.scrollView}
+                        contentContainerStyle={styles.scrollContent}
+                        keyboardShouldPersistTaps="handled"
+                        showsVerticalScrollIndicator={false}
+                    >
+                        {/* プロフィール画像 */}
+                        <View style={styles.profileTopSection}>
+                            <View style={styles.profileImageWrapper}>
+                                {selectedIconUri || iconImageUrl ? (
+                                    <Image
+                                        source={{
+                                            uri:
+                                                selectedIconUri ??
+                                                iconImageUrl ??
+                                                "",
+                                        }}
+                                        style={styles.profileIcon}
+                                    />
+                                ) : (
+                                    <View style={styles.profileIconPlaceholder}>
+                                        <MaterialCommunityIcons
+                                            name="account"
+                                            size={56}
+                                            color="#78909c"
+                                        />
+                                    </View>
+                                )}
+
+                                <Pressable
+                                    style={({ pressed }) => [
+                                        styles.profileImageEditButton,
+                                        pressed && styles.buttonPressed,
+                                        isProcessing && styles.disabledButton,
+                                    ]}
+                                    onPress={pickProfileIcon}
+                                    disabled={isProcessing}
+                                >
+                                    <MaterialCommunityIcons
+                                        name="camera"
+                                        size={17}
+                                        color="#ffffff"
+                                    />
+                                </Pressable>
                             </View>
-                        )}
 
-                        <Pressable
-                            style={[
-                                styles.iconButton,
-                                isProcessing && styles.disabledButton,
-                            ]}
-                            onPress={pickProfileIcon}
-                            disabled={isProcessing}
-                        >
-                            <Text style={styles.iconButtonText}>
-                                画像を選択
+                            <Text
+                                style={styles.profileDisplayName}
+                                numberOfLines={1}
+                            >
+                                {displayName.trim() || "ユーザー"}
                             </Text>
-                        </Pressable>
 
-                        {selectedIconUri && (
+                            <Text style={styles.profileEmail} numberOfLines={1}>
+                                {email}
+                            </Text>
+
                             <Pressable
-                                style={[
-                                    styles.iconCancelButton,
+                                style={({ pressed }) => [
+                                    styles.changeImageButton,
+                                    pressed && styles.buttonPressed,
                                     isProcessing && styles.disabledButton,
                                 ]}
-                                onPress={() => setSelectedIconUri(null)}
+                                onPress={pickProfileIcon}
                                 disabled={isProcessing}
                             >
-                                <Text style={styles.iconCancelButtonText}>
-                                    選択を取り消す
+                                <MaterialCommunityIcons
+                                    name="image-edit-outline"
+                                    size={16}
+                                    color="#0e7185"
+                                />
+
+                                <Text style={styles.changeImageButtonText}>
+                                    アイコンを変更
                                 </Text>
                             </Pressable>
-                        )}
-                    </View>
 
-                    <Text style={styles.label}>メールアドレス</Text>
-                    <TextInput
-                        style={[styles.input, styles.readOnlyInput]}
-                        value={email}
-                        editable={false}
-                    />
-
-                    <Text style={styles.label}>ユーザー名</Text>
-                    <TextInput
-                        style={styles.input}
-                        value={displayName}
-                        onChangeText={setDisplayName}
-                        placeholder="例：佐藤"
-                        editable={!isProcessing}
-                    />
-
-                    <Text style={styles.description}>
-                        このユーザー名は、共有先ユーザー検索で表示されます。
-                    </Text>
-
-                    <Text style={styles.label}>体重</Text>
-
-                    <View style={styles.weightInputRow}>
-                        <TextInput
-                            style={[styles.input, styles.weightInput]}
-                            value={weightKg}
-                            onChangeText={setWeightKg}
-                            placeholder="例：65.0"
-                            keyboardType="decimal-pad"
-                            editable={!isProcessing}
-                            maxLength={6}
-                        />
-
-                        <Text style={styles.weightUnit}>kg</Text>
-                    </View>
-
-                    <Text style={styles.description}>
-                        消費カロリーの推定計算に使用します。
-                    </Text>
-
-                    <Pressable
-                        style={[
-                            styles.saveButton,
-                            isProcessing && styles.disabledButton,
-                        ]}
-                        onPress={saveProfile}
-                        disabled={isProcessing}
-                    >
-                        <Text style={styles.saveButtonText}>
-                            {saving || uploadingIcon ? "保存中..." : "保存"}
-                        </Text>
-                    </Pressable>
-
-                    <View style={styles.premiumBox}>
-                        <Text style={styles.premiumTitle}>プラン</Text>
-
-                        <View style={styles.currentPlanRow}>
-                            <Text style={styles.currentPlanLabel}>
-                                現在のプラン
-                            </Text>
-
-                            {subscriptionLoading ? (
-                                <ActivityIndicator size="small" />
-                            ) : (
-                                <Text
-                                    style={[
-                                        styles.currentPlanValue,
-                                        isPremiumPlan
-                                            ? styles.currentPlanPremium
-                                            : styles.currentPlanFree,
-                                    ]}
+                            {selectedIconUri && (
+                                <Pressable
+                                    style={styles.cancelImageButton}
+                                    onPress={() => setSelectedIconUri(null)}
+                                    disabled={isProcessing}
                                 >
-                                    {currentPlanText}
-                                </Text>
+                                    <Text style={styles.cancelImageButtonText}>
+                                        選択を取り消す
+                                    </Text>
+                                </Pressable>
                             )}
                         </View>
 
-                        {isAdmin ? (
-                            <Text style={styles.premiumDescription}>
-                                管理者ユーザーのため、Premium機能を利用できます。
-                            </Text>
-                        ) : premiumPurchased ? (
-                            <Text style={styles.premiumActiveText}>
-                                Premium購入済み
-                            </Text>
-                        ) : isPremiumPlan ? (
-                            <Text style={styles.premiumActiveText}>
-                                Premium利用中
-                            </Text>
-                        ) : (
-                            <>
-                                <Text style={styles.premiumDescription}>
-                                    買い切りでPremium機能を利用できます。
+                        {/* 基本情報 */}
+                        <View style={styles.sectionCard}>
+                            <View style={styles.sectionHeader}>
+                                <MaterialCommunityIcons
+                                    name="account-outline"
+                                    size={21}
+                                    color="#0e9384"
+                                />
+
+                                <Text style={styles.sectionTitle}>
+                                    基本情報
                                 </Text>
+                            </View>
 
-                                <Pressable
-                                    style={[
-                                        styles.premiumPurchaseButton,
-                                        purchasingPremium &&
-                                            styles.disabledButton,
-                                    ]}
-                                    disabled={
-                                        isProcessing || subscriptionLoading
-                                    }
-                                    onPress={() => {
-                                        void handlePurchasePremium();
-                                    }}
-                                >
-                                    <Text
-                                        style={styles.premiumPurchaseButtonText}
-                                    >
-                                        {purchasingPremium
-                                            ? "購入処理中..."
-                                            : premiumPriceText
-                                              ? `Premiumを購入 ${premiumPriceText}`
-                                              : "Premiumを購入"}
+                            <View style={styles.formItem}>
+                                <View style={styles.formLabelRow}>
+                                    <MaterialCommunityIcons
+                                        name="email-outline"
+                                        size={19}
+                                        color="#71838c"
+                                    />
+
+                                    <Text style={styles.formLabel}>
+                                        メールアドレス
                                     </Text>
-                                </Pressable>
-                            </>
-                        )}
+                                </View>
 
-                        <Pressable
-                            style={[
-                                styles.premiumRestoreButton,
-                                restoringPremium && styles.disabledButton,
-                            ]}
-                            disabled={isProcessing}
-                            onPress={() => {
-                                void handleRestorePremium();
-                            }}
-                        >
-                            <Text style={styles.premiumRestoreButtonText}>
-                                {restoringPremium ? "復元中..." : "購入を復元"}
-                            </Text>
-                        </Pressable>
-                    </View>
+                                <TextInput
+                                    style={[styles.input, styles.readOnlyInput]}
+                                    value={email}
+                                    editable={false}
+                                />
+                            </View>
 
-                    <Pressable
-                        style={[
-                            styles.backButton,
-                            isProcessing && styles.disabledButton,
-                        ]}
-                        onPress={() => navigation.goBack()}
-                        disabled={isProcessing}
-                    >
-                        <Text style={styles.backButtonText}>戻る</Text>
-                    </Pressable>
+                            <View style={styles.formDivider} />
 
-                    <View style={styles.dangerZone}>
-                        <Text style={styles.dangerZoneTitle}>
-                            アカウント管理
-                        </Text>
+                            <View style={styles.formItem}>
+                                <View style={styles.formLabelRow}>
+                                    <MaterialCommunityIcons
+                                        name="account-edit-outline"
+                                        size={19}
+                                        color="#71838c"
+                                    />
 
-                        <Text style={styles.dangerZoneDescription}>
-                            アカウントを削除すると、位置履歴、アクティビティ履歴、
-                            プロフィール、プロフィール画像、共有情報などが削除されます。
-                            この操作は元に戻せません。
-                        </Text>
+                                    <Text style={styles.formLabel}>表示名</Text>
+                                </View>
 
-                        <Pressable
-                            style={[
-                                styles.deleteAccountButton,
-                                deletingAccount && styles.disabledButton,
-                            ]}
-                            onPress={handleDeleteAccount}
-                            disabled={isProcessing}
-                        >
-                            {deletingAccount ? (
-                                <View style={styles.deleteAccountProgressRow}>
-                                    <ActivityIndicator
-                                        size="small"
-                                        color="#ffffff"
+                                <TextInput
+                                    style={styles.input}
+                                    value={displayName}
+                                    onChangeText={setDisplayName}
+                                    placeholder="例：佐藤"
+                                    editable={!isProcessing}
+                                />
+
+                                <Text style={styles.helperText}>
+                                    ランキングや共有先ユーザー検索で
+                                    表示されます。
+                                </Text>
+                            </View>
+
+                            <View style={styles.formDivider} />
+
+                            <View style={styles.formItem}>
+                                <View style={styles.formLabelRow}>
+                                    <MaterialCommunityIcons
+                                        name="weight-kilogram"
+                                        size={19}
+                                        color="#71838c"
+                                    />
+
+                                    <Text style={styles.formLabel}>体重</Text>
+                                </View>
+
+                                <View style={styles.weightInputRow}>
+                                    <TextInput
+                                        style={[
+                                            styles.input,
+                                            styles.weightInput,
+                                        ]}
+                                        value={weightKg}
+                                        onChangeText={setWeightKg}
+                                        placeholder="例：65.0"
+                                        keyboardType="decimal-pad"
+                                        editable={!isProcessing}
+                                        maxLength={6}
+                                    />
+
+                                    <Text style={styles.weightUnit}>kg</Text>
+                                </View>
+
+                                <Text style={styles.helperText}>
+                                    消費カロリーの推定計算に使用します。
+                                </Text>
+                            </View>
+
+                            <Pressable
+                                style={({ pressed }) => [
+                                    styles.saveButton,
+                                    pressed &&
+                                        !isProcessing &&
+                                        styles.buttonPressed,
+                                    isProcessing && styles.disabledButton,
+                                ]}
+                                onPress={saveProfile}
+                                disabled={isProcessing}
+                            >
+                                {saving || uploadingIcon ? (
+                                    <View style={styles.buttonLoadingRow}>
+                                        <ActivityIndicator
+                                            size="small"
+                                            color="#ffffff"
+                                        />
+
+                                        <Text style={styles.saveButtonText}>
+                                            保存中...
+                                        </Text>
+                                    </View>
+                                ) : (
+                                    <Text style={styles.saveButtonText}>
+                                        変更を保存
+                                    </Text>
+                                )}
+                            </Pressable>
+                        </View>
+
+                        {/* プラン */}
+                        <View style={styles.sectionCard}>
+                            <View style={styles.sectionHeader}>
+                                <MaterialCommunityIcons
+                                    name={
+                                        isPremiumPlan
+                                            ? "crown-outline"
+                                            : "shield-outline"
+                                    }
+                                    size={21}
+                                    color={
+                                        isPremiumPlan ? "#d49a16" : "#0e9384"
+                                    }
+                                />
+
+                                <Text style={styles.sectionTitle}>
+                                    サブスクリプション
+                                </Text>
+                            </View>
+
+                            <View style={styles.planCurrentRow}>
+                                <View>
+                                    <Text style={styles.planLabel}>
+                                        現在のプラン
+                                    </Text>
+
+                                    <Text
+                                        style={[
+                                            styles.planValue,
+                                            isPremiumPlan &&
+                                                styles.planPremiumValue,
+                                        ]}
+                                    >
+                                        {subscriptionLoading
+                                            ? "確認中..."
+                                            : currentPlanText}
+                                    </Text>
+                                </View>
+
+                                <View
+                                    style={[
+                                        styles.planBadge,
+                                        isPremiumPlan
+                                            ? styles.premiumBadge
+                                            : styles.freeBadge,
+                                    ]}
+                                >
+                                    <MaterialCommunityIcons
+                                        name={
+                                            isPremiumPlan
+                                                ? "crown"
+                                                : "check-circle-outline"
+                                        }
+                                        size={16}
+                                        color={
+                                            isPremiumPlan
+                                                ? "#9b6a00"
+                                                : "#56727e"
+                                        }
                                     />
 
                                     <Text
-                                        style={styles.deleteAccountButtonText}
+                                        style={[
+                                            styles.planBadgeText,
+                                            isPremiumPlan &&
+                                                styles.premiumBadgeText,
+                                        ]}
                                     >
-                                        {getDeleteAccountProgressText(
-                                            deleteAccountProgress,
-                                        )}
+                                        {isPremiumPlan ? "Premium" : "Free"}
                                     </Text>
                                 </View>
-                            ) : (
-                                <Text style={styles.deleteAccountButtonText}>
-                                    アカウントを削除
+                            </View>
+
+                            {isAdmin ? (
+                                <Text style={styles.planDescription}>
+                                    管理者ユーザーのため、
+                                    Premium機能を利用できます。
                                 </Text>
+                            ) : premiumPurchased ? (
+                                <Text style={styles.premiumActiveText}>
+                                    Premium購入済み
+                                </Text>
+                            ) : isPremiumPlan ? (
+                                <Text style={styles.premiumActiveText}>
+                                    Premium利用中
+                                </Text>
+                            ) : (
+                                <>
+                                    <Text style={styles.planDescription}>
+                                        Premiumでは、
+                                        すべての機能をご利用いただけます。
+                                    </Text>
+
+                                    <Pressable
+                                        style={({ pressed }) => [
+                                            styles.premiumPurchaseButton,
+                                            pressed &&
+                                                !isProcessing &&
+                                                styles.buttonPressed,
+                                            isProcessing &&
+                                                styles.disabledButton,
+                                        ]}
+                                        disabled={
+                                            isProcessing || subscriptionLoading
+                                        }
+                                        onPress={() => {
+                                            void handlePurchasePremium();
+                                        }}
+                                    >
+                                        <MaterialCommunityIcons
+                                            name="crown"
+                                            size={19}
+                                            color="#ffffff"
+                                        />
+
+                                        <Text
+                                            style={
+                                                styles.premiumPurchaseButtonText
+                                            }
+                                        >
+                                            {purchasingPremium
+                                                ? "購入処理中..."
+                                                : premiumPriceText
+                                                  ? `Premiumを購入  ${premiumPriceText}`
+                                                  : "Premiumを購入"}
+                                        </Text>
+                                    </Pressable>
+                                </>
                             )}
-                        </Pressable>
-                    </View>
-                </View>
-            </ScrollView>
-        </KeyboardAvoidingView>
+
+                            <Pressable
+                                style={({ pressed }) => [
+                                    styles.restoreButton,
+                                    pressed && styles.buttonPressed,
+                                ]}
+                                disabled={isProcessing}
+                                onPress={() => {
+                                    void handleRestorePremium();
+                                }}
+                            >
+                                <MaterialCommunityIcons
+                                    name="restore"
+                                    size={17}
+                                    color="#557480"
+                                />
+
+                                <Text style={styles.restoreButtonText}>
+                                    {restoringPremium
+                                        ? "復元中..."
+                                        : "購入を復元"}
+                                </Text>
+                            </Pressable>
+                        </View>
+
+                        {/* アカウント管理 */}
+                        <View
+                            style={[styles.sectionCard, styles.accountSection]}
+                        >
+                            <View style={styles.sectionHeader}>
+                                <MaterialCommunityIcons
+                                    name="account-cog-outline"
+                                    size={21}
+                                    color="#71838c"
+                                />
+
+                                <Text style={styles.sectionTitle}>
+                                    アカウント管理
+                                </Text>
+                            </View>
+
+                            <Text style={styles.accountDescription}>
+                                アカウントを削除すると、位置履歴、
+                                アクティビティ履歴、プロフィール、
+                                共有情報などがすべて削除されます。
+                            </Text>
+
+                            <Pressable
+                                style={({ pressed }) => [
+                                    styles.deleteAccountButton,
+                                    pressed &&
+                                        !isProcessing &&
+                                        styles.deleteAccountButtonPressed,
+                                    deletingAccount && styles.disabledButton,
+                                ]}
+                                onPress={handleDeleteAccount}
+                                disabled={isProcessing}
+                            >
+                                {deletingAccount ? (
+                                    <View style={styles.buttonLoadingRow}>
+                                        <ActivityIndicator
+                                            size="small"
+                                            color="#c0392b"
+                                        />
+
+                                        <Text
+                                            style={
+                                                styles.deleteAccountButtonText
+                                            }
+                                        >
+                                            {getDeleteAccountProgressText(
+                                                deleteAccountProgress,
+                                            )}
+                                        </Text>
+                                    </View>
+                                ) : (
+                                    <>
+                                        <MaterialCommunityIcons
+                                            name="delete-outline"
+                                            size={19}
+                                            color="#c0392b"
+                                        />
+
+                                        <Text
+                                            style={
+                                                styles.deleteAccountButtonText
+                                            }
+                                        >
+                                            アカウントを削除
+                                        </Text>
+                                    </>
+                                )}
+                            </Pressable>
+                        </View>
+                    </ScrollView>
+                </KeyboardAvoidingView>
+            )}
+        </View>
     );
 }
 
@@ -753,48 +994,320 @@ function getDeleteAccountProgressText(
 }
 
 const styles = StyleSheet.create({
-    container: {
+    screen: {
         flex: 1,
-        padding: 20,
-        backgroundColor: "#f7f7f7",
+        backgroundColor: "#f3f7f9",
     },
-    center: {
-        flex: 1,
+
+    appHeader: {
+        minHeight: 58,
+
+        paddingHorizontal: 10,
+        paddingBottom: 8,
+
+        flexDirection: "row",
+        alignItems: "flex-end",
+
+        backgroundColor: "#06395f",
+
+        elevation: 6,
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.16,
+        shadowRadius: 4,
+    },
+
+    headerBackButton: {
+        width: 46,
+        height: 44,
+
         alignItems: "center",
         justifyContent: "center",
     },
-    card: {
-        padding: 18,
-        borderRadius: 12,
-        backgroundColor: "#fff",
-        borderWidth: 1,
-        borderColor: "#ddd",
+
+    headerBackText: {
+        color: "#ffffff",
+
+        fontSize: 42,
+        lineHeight: 42,
+        fontWeight: "300",
     },
-    title: {
-        fontSize: 20,
-        fontWeight: "bold",
-        marginBottom: 18,
-        color: "#333",
+
+    headerTitle: {
+        flex: 1,
+
+        paddingBottom: 9,
+
+        textAlign: "center",
+
+        color: "#ffffff",
+
+        fontSize: 18,
+        fontWeight: "700",
     },
-    label: {
-        fontSize: 14,
-        fontWeight: "bold",
-        marginBottom: 6,
-        color: "#333",
-    },
-    input: {
+
+    headerRightSpace: {
+        width: 46,
         height: 44,
-        borderWidth: 1,
-        borderColor: "#ccc",
-        borderRadius: 8,
-        paddingHorizontal: 12,
-        fontSize: 16,
-        backgroundColor: "#fff",
+    },
+
+    keyboardAvoidingView: {
+        flex: 1,
+    },
+
+    scrollView: {
+        flex: 1,
+    },
+
+    scrollContent: {
+        paddingHorizontal: 14,
+        paddingTop: 12,
+        paddingBottom: 36,
+    },
+
+    loadingContainer: {
+        flex: 1,
+
+        alignItems: "center",
+        justifyContent: "center",
+
+        gap: 8,
+    },
+
+    loadingText: {
+        color: "#71838c",
+
+        fontSize: 13,
+    },
+
+    profileTopSection: {
+        alignItems: "center",
+
         marginBottom: 14,
     },
+
+    profileImageWrapper: {
+        position: "relative",
+    },
+
+    profileIcon: {
+        width: 92,
+        height: 92,
+
+        borderRadius: 46,
+
+        borderWidth: 3,
+        borderColor: "#ffffff",
+
+        backgroundColor: "#dce7eb",
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.12,
+        shadowRadius: 5,
+
+        elevation: 3,
+    },
+
+    profileIconPlaceholder: {
+        width: 92,
+        height: 92,
+
+        borderRadius: 46,
+
+        alignItems: "center",
+        justifyContent: "center",
+
+        borderWidth: 3,
+        borderColor: "#ffffff",
+
+        backgroundColor: "#dfe9ed",
+    },
+
+    profileImageEditButton: {
+        position: "absolute",
+
+        right: -1,
+        bottom: 0,
+
+        width: 31,
+        height: 31,
+
+        borderRadius: 16,
+
+        alignItems: "center",
+        justifyContent: "center",
+
+        borderWidth: 2,
+        borderColor: "#ffffff",
+
+        backgroundColor: "#0e9384",
+    },
+
+    profileDisplayName: {
+        marginTop: 7,
+
+        color: "#183b50",
+
+        fontSize: 20,
+        fontWeight: "700",
+    },
+
+    profileEmail: {
+        marginTop: 1,
+
+        color: "#7a8b93",
+
+        fontSize: 12,
+    },
+
+    changeImageButton: {
+        marginTop: 8,
+
+        minHeight: 32,
+
+        paddingHorizontal: 12,
+
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+
+        gap: 5,
+
+        borderRadius: 16,
+
+        borderWidth: 1,
+        borderColor: "#bfd8df",
+
+        backgroundColor: "#ffffff",
+    },
+    changeImageButtonText: {
+        color: "#0e7185",
+
+        fontSize: 12,
+        fontWeight: "700",
+    },
+
+    cancelImageButton: {
+        marginTop: 5,
+    },
+
+    cancelImageButtonText: {
+        color: "#87969d",
+
+        fontSize: 11,
+        textDecorationLine: "underline",
+    },
+
+    sectionCard: {
+        marginBottom: 12,
+
+        padding: 14,
+
+        borderRadius: 14,
+
+        borderWidth: 1,
+        borderColor: "#dfe7ea",
+
+        backgroundColor: "#ffffff",
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+
+        elevation: 1,
+    },
+
+    sectionHeader: {
+        marginBottom: 15,
+
+        flexDirection: "row",
+        alignItems: "center",
+
+        gap: 8,
+    },
+
+    sectionTitle: {
+        color: "#203f4f",
+
+        fontSize: 16,
+        fontWeight: "700",
+    },
+
+    formItem: {
+        paddingVertical: 2,
+    },
+
+    formLabelRow: {
+        marginBottom: 7,
+
+        flexDirection: "row",
+        alignItems: "center",
+
+        gap: 7,
+    },
+
+    formLabel: {
+        color: "#49606b",
+
+        fontSize: 13,
+        fontWeight: "700",
+    },
+
+    input: {
+        height: 42,
+
+        paddingHorizontal: 12,
+
+        borderWidth: 1,
+        borderColor: "#d3dfe4",
+        borderRadius: 9,
+
+        backgroundColor: "#ffffff",
+
+        color: "#213f4d",
+
+        fontSize: 15,
+    },
+
+    readOnlyInput: {
+        backgroundColor: "#f3f6f7",
+
+        color: "#7a8b93",
+    },
+
+    formDivider: {
+        height: StyleSheet.hairlineWidth,
+
+        marginVertical: 11,
+
+        backgroundColor: "#e0e7ea",
+    },
+
+    helperText: {
+        marginTop: 6,
+
+        color: "#819198",
+
+        fontSize: 11,
+        lineHeight: 16,
+    },
+
     weightInputRow: {
         flexDirection: "row",
         alignItems: "center",
+
         gap: 10,
     },
 
@@ -803,240 +1316,216 @@ const styles = StyleSheet.create({
     },
 
     weightUnit: {
-        marginBottom: 14,
-        fontSize: 16,
-        color: "#555555",
-        fontWeight: "600",
+        minWidth: 24,
+
+        color: "#607780",
+
+        fontSize: 14,
+        fontWeight: "700",
     },
 
-    readOnlyInput: {
-        backgroundColor: "#f0f0f0",
-        color: "#666",
-    },
-    description: {
-        fontSize: 13,
-        color: "#666",
-        marginBottom: 18,
-        lineHeight: 18,
-    },
     saveButton: {
-        backgroundColor: "#4b6f8f",
-        borderRadius: 8,
-        paddingVertical: 11,
+        minHeight: 44,
+
+        marginTop: 16,
+
         alignItems: "center",
-        marginBottom: 10,
+        justifyContent: "center",
+
+        borderRadius: 10,
+
+        backgroundColor: "#0e9384",
     },
+
     saveButtonText: {
-        color: "#fff",
-        fontSize: 16,
-        fontWeight: "bold",
+        color: "#ffffff",
+
+        fontSize: 14,
+        fontWeight: "700",
     },
-    backButton: {
-        backgroundColor: "#e6edf3",
-        borderRadius: 8,
-        paddingVertical: 11,
+
+    buttonLoadingRow: {
+        flexDirection: "row",
         alignItems: "center",
-        borderWidth: 1,
-        borderColor: "#c8d6e0",
+        justifyContent: "center",
+
+        gap: 8,
     },
-    backButtonText: {
-        color: "#2f4f66",
-        fontSize: 16,
-        fontWeight: "bold",
+
+    buttonPressed: {
+        opacity: 0.7,
     },
+
     disabledButton: {
         opacity: 0.5,
     },
-    iconSection: {
-        alignItems: "center",
-        marginBottom: 20,
-    },
-    profileIcon: {
-        width: 96,
-        height: 96,
-        borderRadius: 48,
-        backgroundColor: "#e6edf3",
-    },
-    profileIconPlaceholder: {
-        width: 96,
-        height: 96,
-        borderRadius: 48,
-        backgroundColor: "#e6edf3",
-        alignItems: "center",
-        justifyContent: "center",
-        borderWidth: 1,
-        borderColor: "#c8d6e0",
-    },
-    profileIconPlaceholderText: {
-        color: "#4b6f8f",
-        fontSize: 12,
-        fontWeight: "bold",
-    },
-    iconButton: {
-        marginTop: 12,
-        backgroundColor: "#4b6f8f",
-        borderRadius: 8,
-        paddingVertical: 10,
-        paddingHorizontal: 16,
-        alignItems: "center",
-    },
-    iconButtonText: {
-        color: "#fff",
-        fontSize: 14,
-        fontWeight: "bold",
-    },
-    iconCancelButton: {
-        marginTop: 8,
-        backgroundColor: "#e6edf3",
-        borderRadius: 8,
-        paddingVertical: 8,
-        paddingHorizontal: 16,
-        alignItems: "center",
-        borderWidth: 1,
-        borderColor: "#c8d6e0",
-    },
-    iconCancelButtonText: {
-        color: "#2f4f66",
-        fontSize: 13,
-        fontWeight: "bold",
-    },
-    scrollContent: {
-        paddingBottom: 40,
-    },
 
-    premiumBox: {
-        marginTop: 20,
-        marginBottom: 16,
-        padding: 16,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: "#d7dee5",
-        backgroundColor: "#f8fafc",
-    },
-
-    premiumTitle: {
-        fontSize: 18,
-        fontWeight: "bold",
-        color: "#333",
-    },
-
-    currentPlanRow: {
-        marginTop: 12,
-        paddingVertical: 10,
-        paddingHorizontal: 12,
-        borderRadius: 8,
-        backgroundColor: "#ffffff",
-        borderWidth: 1,
-        borderColor: "#d7dee5",
+    planCurrentRow: {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
+
+        padding: 12,
+
+        borderRadius: 10,
+
+        backgroundColor: "#f7fafb",
     },
 
-    currentPlanLabel: {
-        fontSize: 14,
-        color: "#555",
-        fontWeight: "bold",
+    planLabel: {
+        color: "#7a8b93",
+
+        fontSize: 11,
+        fontWeight: "600",
     },
 
-    currentPlanValue: {
-        fontSize: 15,
-        fontWeight: "bold",
+    planValue: {
+        marginTop: 2,
+
+        color: "#365565",
+
+        fontSize: 16,
+        fontWeight: "700",
     },
 
-    currentPlanPremium: {
-        color: "#2e7d32",
+    planPremiumValue: {
+        color: "#a36c00",
     },
 
-    currentPlanFree: {
-        color: "#555",
+    planBadge: {
+        minHeight: 30,
+
+        paddingHorizontal: 10,
+
+        flexDirection: "row",
+        alignItems: "center",
+
+        gap: 4,
+
+        borderRadius: 15,
     },
 
-    premiumDescription: {
-        marginTop: 8,
-        fontSize: 13,
-        lineHeight: 20,
-        color: "#666",
+    freeBadge: {
+        backgroundColor: "#e8eef1",
+    },
+
+    premiumBadge: {
+        backgroundColor: "#fff1c7",
+    },
+
+    planBadgeText: {
+        color: "#56727e",
+
+        fontSize: 11,
+        fontWeight: "700",
+    },
+
+    premiumBadgeText: {
+        color: "#9b6a00",
+    },
+
+    planDescription: {
+        marginTop: 12,
+
+        color: "#71838c",
+
+        fontSize: 12,
+        lineHeight: 18,
     },
 
     premiumActiveText: {
-        marginTop: 10,
-        fontSize: 15,
-        fontWeight: "bold",
-        color: "#2e7d32",
+        marginTop: 12,
+
+        color: "#0e9384",
+
+        fontSize: 13,
+        fontWeight: "700",
     },
 
     premiumPurchaseButton: {
-        marginTop: 14,
         minHeight: 46,
-        borderRadius: 8,
-        backgroundColor: "#4b6f8f",
+
+        marginTop: 14,
+
+        paddingHorizontal: 14,
+
+        flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        paddingHorizontal: 16,
+
+        gap: 7,
+
+        borderRadius: 10,
+
+        backgroundColor: "#d6a022",
     },
 
     premiumPurchaseButtonText: {
         color: "#ffffff",
-        fontSize: 15,
-        fontWeight: "bold",
-    },
 
-    premiumRestoreButton: {
-        marginTop: 10,
-        minHeight: 40,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-
-    premiumRestoreButtonText: {
-        color: "#4b6f8f",
         fontSize: 14,
-        fontWeight: "bold",
+        fontWeight: "700",
     },
 
-    dangerZone: {
-        marginTop: 28,
-        paddingTop: 20,
-        borderTopWidth: 1,
-        borderTopColor: "#e0b4b4",
-    },
+    restoreButton: {
+        minHeight: 40,
 
-    dangerZoneTitle: {
-        fontSize: 16,
-        fontWeight: "bold",
-        color: "#a12622",
-        marginBottom: 8,
-    },
+        marginTop: 7,
 
-    dangerZoneDescription: {
-        fontSize: 13,
-        lineHeight: 20,
-        color: "#666",
-        marginBottom: 14,
-    },
-
-    deleteAccountButton: {
-        minHeight: 48,
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        borderRadius: 8,
-        backgroundColor: "#c62828",
-        alignItems: "center",
-        justifyContent: "center",
-    },
-
-    deleteAccountProgressRow: {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        gap: 8,
+
+        gap: 5,
+    },
+
+    restoreButtonText: {
+        color: "#557480",
+
+        fontSize: 12,
+        fontWeight: "700",
+    },
+
+    accountSection: {
+        marginBottom: 0,
+    },
+
+    accountDescription: {
+        marginBottom: 14,
+
+        color: "#71838c",
+
+        fontSize: 12,
+        lineHeight: 18,
+    },
+
+    deleteAccountButton: {
+        minHeight: 44,
+
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+
+        gap: 6,
+
+        borderWidth: 1,
+        borderColor: "#e4b9b5",
+
+        borderRadius: 10,
+
+        backgroundColor: "#fff7f6",
+    },
+
+    deleteAccountButtonPressed: {
+        backgroundColor: "#fdeceb",
     },
 
     deleteAccountButtonText: {
-        color: "#ffffff",
-        fontSize: 14,
-        fontWeight: "bold",
+        color: "#c0392b",
+
+        fontSize: 13,
+        fontWeight: "700",
+
         textAlign: "center",
     },
 });

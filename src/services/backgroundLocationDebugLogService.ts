@@ -50,7 +50,7 @@ const MAX_DETAILS_JSON_LENGTH = 4000;
  * ERROR_ONLY:
  *   異常系イベントだけ保存する。
  */
-const BACKGROUND_DEBUG_LOG_MODE: BackgroundDebugLogMode = "ALL";
+const BACKGROUND_DEBUG_LOG_MODE: BackgroundDebugLogMode = "IMPORTANT";
 
 const NORMAL_EVENT_NAMES = new Set([
     // バックグラウンドタスクの正常動作確認

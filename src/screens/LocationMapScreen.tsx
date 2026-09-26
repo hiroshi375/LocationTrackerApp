@@ -72,7 +72,7 @@ type UserProfileItem = {
 };
 
 type MapLayerMode = "standard" | "satellite" | "retro" | "pixel";
-type RouteViewMode = "current" | "route" | "none";
+type RouteViewMode = "current" | "route";
 
 type MapLayerOption = {
     value: MapLayerMode;
@@ -98,6 +98,8 @@ const CURRENT_LOCATION_LONGITUDE_DELTA = 0.005;
 
 const MAP_LAYER_MODE_STORAGE_KEY = "location-map-layer-mode";
 const ROUTE_VIEW_MODE_STORAGE_KEY = "location-map-route-view-mode";
+const CURRENT_LOCATION_TRACKING_STORAGE_KEY =
+    "location-map-current-location-tracking";
 const SHOW_POINTS_STORAGE_KEY = "location-map-show-points";
 
 const MAP_LAYER_OPTIONS: MapLayerOption[] = [
@@ -218,6 +220,8 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     const [mapLayerMode, setMapLayerMode] = useState<MapLayerMode>("standard");
     const [isMapVisible, setIsMapVisible] = useState(true);
     const [routeViewMode, setRouteViewMode] = useState<RouteViewMode>("route");
+    const [isCurrentLocationTracking, setIsCurrentLocationTracking] =
+        useState(true);
     const [mapReady, setMapReady] = useState(false);
     const [currentUserIconUrl, setCurrentUserIconUrl] = useState<string | null>(
         null,
@@ -789,12 +793,15 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     useEffect(() => {
         const loadMapPreferences = async () => {
             try {
-                const [savedShowPoints, savedRouteViewMode] = await Promise.all(
-                    [
-                        AsyncStorage.getItem(SHOW_POINTS_STORAGE_KEY),
-                        AsyncStorage.getItem(ROUTE_VIEW_MODE_STORAGE_KEY),
-                    ],
-                );
+                const [
+                    savedShowPoints,
+                    savedRouteViewMode,
+                    savedCurrentLocationTracking,
+                ] = await Promise.all([
+                    AsyncStorage.getItem(SHOW_POINTS_STORAGE_KEY),
+                    AsyncStorage.getItem(ROUTE_VIEW_MODE_STORAGE_KEY),
+                    AsyncStorage.getItem(CURRENT_LOCATION_TRACKING_STORAGE_KEY),
+                ]);
 
                 if (isActivityHistoryMap) {
                     /*
@@ -813,21 +820,50 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                 if (isActivityHistoryMap) {
                     /*
                      * 過去アクティビティでは、
-                     * 保存済みの追跡モードを復元せずルート全体表示に固定する。
+                     * 保存値に関係なく常にルート全体表示にする。
                      */
                     setRouteViewMode("route");
                 } else if (isOwnLiveRecordingMap) {
                     /*
-                     * 自動記録中の地図は、
-                     * 常に現在地表示から開始する。
+                     * 自動記録中の地図では、
+                     * 前回保存した表示方法を復元する。
                      */
-                    setRouteViewMode("current");
+                    if (
+                        savedRouteViewMode === "current" ||
+                        savedRouteViewMode === "route"
+                    ) {
+                        setRouteViewMode(savedRouteViewMode);
+                    } else if (savedRouteViewMode === "none") {
+                        /*
+                         * 旧仕様の "none" は、
+                         * 「現在地を表示 + 追跡しない」として移行する。
+                         */
+                        setRouteViewMode("current");
+                        setIsCurrentLocationTracking(false);
+                    }
+
+                    /*
+                     * 新仕様の追跡設定を復元する。
+                     */
+                    if (savedCurrentLocationTracking === "true") {
+                        setIsCurrentLocationTracking(true);
+                    } else if (savedCurrentLocationTracking === "false") {
+                        setIsCurrentLocationTracking(false);
+                    }
                 } else if (
                     savedRouteViewMode === "current" ||
-                    savedRouteViewMode === "route" ||
-                    savedRouteViewMode === "none"
+                    savedRouteViewMode === "route"
                 ) {
+                    /*
+                     * その他の地図については、
+                     * 従来どおり保存済みの表示方法があれば復元する。
+                     */
                     setRouteViewMode(savedRouteViewMode);
+                } else if (savedRouteViewMode === "none") {
+                    /*
+                     * 旧設定との互換性。
+                     */
+                    setRouteViewMode("current");
                 }
             } catch (error) {
                 console.error("Load map preferences error:", error);
@@ -863,6 +899,16 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             return;
         }
 
+        /*
+         * 表示方法は、自分の自動記録中の地図で選択した値だけを保存する。
+         *
+         * 過去アクティビティでは常に route を使用するが、
+         * その route で保存済み設定を上書きしない。
+         */
+        if (!isOwnLiveRecordingMap) {
+            return;
+        }
+
         const saveRouteViewMode = async () => {
             try {
                 await AsyncStorage.setItem(
@@ -875,7 +921,44 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         };
 
         void saveRouteViewMode();
-    }, [hasLoadedMapPreferences, routeViewMode]);
+    }, [hasLoadedMapPreferences, isOwnLiveRecordingMap, routeViewMode]);
+
+    useEffect(() => {
+        if (!hasLoadedMapPreferences) {
+            return;
+        }
+
+        /*
+         * 「追跡する / 追跡しない」は、
+         * 自分の自動記録中の地図で選択した値だけを保存する。
+         *
+         * 過去アクティビティを開いたことで
+         * 保存済みの追跡設定を上書きしない。
+         */
+        if (!isOwnLiveRecordingMap) {
+            return;
+        }
+
+        const saveCurrentLocationTracking = async () => {
+            try {
+                await AsyncStorage.setItem(
+                    CURRENT_LOCATION_TRACKING_STORAGE_KEY,
+                    String(isCurrentLocationTracking),
+                );
+            } catch (error) {
+                console.error(
+                    "Save current location tracking setting error:",
+                    error,
+                );
+            }
+        };
+
+        void saveCurrentLocationTracking();
+    }, [
+        hasLoadedMapPreferences,
+        isOwnLiveRecordingMap,
+        isCurrentLocationTracking,
+    ]);
 
     useEffect(() => {
         const loadMapLayerMode = async () => {
@@ -1137,7 +1220,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             return;
         }
 
-        if (routeViewMode !== "current") {
+        if (routeViewMode !== "current" || !isCurrentLocationTracking) {
             return;
         }
 
@@ -1151,6 +1234,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         shouldShowLiveCurrentLocation,
         currentLocation,
         routeViewMode,
+        isCurrentLocationTracking,
     ]);
 
     useEffect(() => {
@@ -1734,14 +1818,14 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             return;
         }
 
+        /*
+         * 「現在地を表示」を押した瞬間は、
+         * 追跡設定に関係なく一度現在地へ移動する。
+         */
         mapRef.current?.animateToRegion(
             getCurrentLocationRegion(currentLocation),
             500,
         );
-    };
-
-    const disableTracking = () => {
-        setRouteViewMode("none");
     };
 
     const toggleRouteViewMode = () => {
@@ -1750,23 +1834,18 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             return;
         }
 
-        if (routeViewMode === "current") {
-            disableTracking();
-            return;
-        }
-
         showRouteOverview();
     };
 
+    const toggleCurrentLocationTracking = () => {
+        setIsCurrentLocationTracking((current) => !current);
+    };
+
     const isRouteFitButtonActive =
-        isLiveRecordingMap && routeViewMode !== "none";
+        isLiveRecordingMap && routeViewMode === "current";
 
     const routeFitButtonText =
-        routeViewMode === "route"
-            ? "現在地を表示"
-            : routeViewMode === "current"
-              ? "追跡しない"
-              : "ルート全体を表示";
+        routeViewMode === "route" ? "現在地を表示" : "ルート全体を表示";
 
     const routeDistanceMeters =
         activeSessionId && routeLogs.length >= 2
@@ -2468,6 +2547,32 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                                         : "ルート全体を表示"}
                                 </Text>
                             </Pressable>
+
+                            {/* 現在地追跡 */}
+                            {isOwnLiveRecordingMap &&
+                                routeViewMode === "current" && (
+                                    <Pressable
+                                        style={({ pressed }) => [
+                                            styles.activityHistoryMenuItem,
+                                            pressed &&
+                                                styles.activityHistoryMenuItemPressed,
+                                        ]}
+                                        onPress={() => {
+                                            toggleCurrentLocationTracking();
+                                            setShowActivityHistoryMenu(false);
+                                        }}
+                                    >
+                                        <Text
+                                            style={
+                                                styles.activityHistoryMenuItemText
+                                            }
+                                        >
+                                            {isCurrentLocationTracking
+                                                ? "追跡しない"
+                                                : "追跡する"}
+                                        </Text>
+                                    </Pressable>
+                                )}
                         </View>
                     </>
                 )}

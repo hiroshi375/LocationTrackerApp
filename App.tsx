@@ -10,6 +10,9 @@ import {
     ActivityIndicator,
     Alert,
     AppState,
+    Pressable,
+    StyleSheet,
+    Text,
     type AppStateStatus,
     View,
 } from "react-native";
@@ -24,7 +27,11 @@ import {
     SafeAreaProvider,
     useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import { TourProvider, type TourDefinition } from "guideway";
+import {
+    TourProvider,
+    type TourDefinition,
+    type TooltipRenderProps,
+} from "guideway";
 
 import outputs from "./amplify_outputs.json";
 import RootNavigator, {
@@ -44,6 +51,32 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SAMPLE_ACTIVITY_SESSION_ID } from "./src/data/sampleActivity";
 
 Amplify.configure(outputs);
+
+/*
+ * 3部構成のGuidewayを、
+ * 全体で1〜12の通し番号として表示する。
+ */
+const GUIDEWAY_TOTAL_STEPS = 12;
+
+const GUIDEWAY_GLOBAL_STEP_NUMBER: Record<string, number> = {
+    // 1部：ホーム
+    "home-auto-recording": 1,
+    "home-recording-map": 2,
+    "home-activity-history": 3,
+    "home-sharing": 4,
+
+    // 2部：アクティビティ履歴
+    "activity-history-search": 5,
+    "activity-history-list": 6,
+    "activity-history-card": 7,
+    "activity-history-actions": 8,
+
+    // 3部：アクティビティ地図
+    "activity-map-layer": 9,
+    "activity-map-points": 10,
+    "activity-map-route": 11,
+    "activity-map-log-list": 12,
+};
 
 const appTours: TourDefinition[] = [
     {
@@ -187,6 +220,78 @@ const appTours: TourDefinition[] = [
         ],
     },
 ];
+
+function GlobalGuidewayTooltip({
+    step,
+    isFirst,
+    isLast,
+    next,
+    back,
+    skip,
+}: TooltipRenderProps) {
+    const globalStepNumber = GUIDEWAY_GLOBAL_STEP_NUMBER[step.id] ?? 1;
+
+    return (
+        <View style={styles.guidewayTooltip}>
+            {step.title ? (
+                <Text style={styles.guidewayTooltipTitle}>{step.title}</Text>
+            ) : null}
+
+            {typeof step.body === "string" ? (
+                <Text style={styles.guidewayTooltipBody}>{step.body}</Text>
+            ) : (
+                step.body
+            )}
+
+            <View style={styles.guidewayProgressRow}>
+                <Text style={styles.guidewayProgressText}>
+                    {globalStepNumber}/{GUIDEWAY_TOTAL_STEPS}
+                </Text>
+            </View>
+
+            <View style={styles.guidewayButtonRow}>
+                <Pressable
+                    style={({ pressed }) => [
+                        styles.guidewaySkipButton,
+                        pressed && styles.guidewayButtonPressed,
+                    ]}
+                    onPress={skip}
+                >
+                    <Text style={styles.guidewaySkipButtonText}>スキップ</Text>
+                </Pressable>
+
+                <View style={styles.guidewayNavigationButtons}>
+                    {!isFirst && (
+                        <Pressable
+                            style={({ pressed }) => [
+                                styles.guidewayBackButton,
+                                pressed && styles.guidewayButtonPressed,
+                            ]}
+                            onPress={back}
+                        >
+                            <Text style={styles.guidewayBackButtonText}>
+                                戻る
+                            </Text>
+                        </Pressable>
+                    )}
+
+                    <Pressable
+                        style={({ pressed }) => [
+                            styles.guidewayNextButton,
+                            pressed && styles.guidewayButtonPressed,
+                        ]}
+                        onPress={next}
+                    >
+                        <Text style={styles.guidewayNextButtonText}>
+                            {isLast ? "完了" : "次へ"}
+                        </Text>
+                    </Pressable>
+                </View>
+            </View>
+        </View>
+    );
+}
+
 /*
  * Amplify Authenticatorを日本語表示にする。
  */
@@ -528,6 +633,7 @@ function AppTourProvider({ children }: { children: ReactNode }) {
             storage={AsyncStorage}
             colorScheme="light"
             overlayTapBehavior="skip"
+            tooltipComponent={GlobalGuidewayTooltip}
             theme={{
                 labels: {
                     next: "次へ",
@@ -570,3 +676,133 @@ export default function App() {
         </Authenticator.Provider>
     );
 }
+
+const styles = StyleSheet.create({
+    guidewayTooltip: {
+        width: "100%",
+        maxWidth: 320,
+
+        padding: 16,
+
+        borderRadius: 16,
+
+        backgroundColor: "#ffffff",
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 3,
+        },
+        shadowOpacity: 0.16,
+        shadowRadius: 8,
+
+        elevation: 8,
+    },
+
+    guidewayTooltipTitle: {
+        marginBottom: 8,
+
+        color: "#203f4f",
+
+        fontSize: 17,
+        fontWeight: "700",
+    },
+
+    guidewayTooltipBody: {
+        color: "#526772",
+
+        fontSize: 14,
+        lineHeight: 21,
+    },
+
+    guidewayProgressRow: {
+        marginTop: 12,
+
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    guidewayProgressText: {
+        color: "#78909c",
+
+        fontSize: 13,
+        fontWeight: "700",
+    },
+
+    guidewayButtonRow: {
+        marginTop: 14,
+
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+    },
+
+    guidewayNavigationButtons: {
+        flexDirection: "row",
+        alignItems: "center",
+
+        gap: 8,
+    },
+
+    guidewaySkipButton: {
+        minHeight: 38,
+
+        paddingHorizontal: 10,
+
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    guidewaySkipButtonText: {
+        color: "#71838c",
+
+        fontSize: 13,
+        fontWeight: "600",
+    },
+
+    guidewayBackButton: {
+        minHeight: 38,
+
+        paddingHorizontal: 14,
+
+        alignItems: "center",
+        justifyContent: "center",
+
+        borderWidth: 1,
+        borderColor: "#cfdce1",
+        borderRadius: 9,
+
+        backgroundColor: "#ffffff",
+    },
+
+    guidewayBackButtonText: {
+        color: "#405d69",
+
+        fontSize: 13,
+        fontWeight: "700",
+    },
+
+    guidewayNextButton: {
+        minHeight: 38,
+
+        paddingHorizontal: 17,
+
+        alignItems: "center",
+        justifyContent: "center",
+
+        borderRadius: 9,
+
+        backgroundColor: "#0e9384",
+    },
+
+    guidewayNextButtonText: {
+        color: "#ffffff",
+
+        fontSize: 13,
+        fontWeight: "700",
+    },
+
+    guidewayButtonPressed: {
+        opacity: 0.72,
+    },
+});

@@ -2069,9 +2069,20 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     const activityAverageSpeedText =
         activityAverageSpeedKmh > 0 ? activityAverageSpeedKmh.toFixed(1) : "-";
 
-    const activityHeaderDateTimeText = sessionStartAt
-        ? formatActivityHeaderDateTime(sessionStartAt)
-        : "";
+    const activityHeaderTitleText = (() => {
+        const sessionName =
+            recordingSessionSummary?.recordingSessionName?.trim();
+
+        if (sessionName) {
+            return sessionName.length > 20
+                ? `${sessionName.slice(0, 20)}...`
+                : sessionName;
+        }
+
+        return sessionStartAt
+            ? formatActivityHeaderDateTime(sessionStartAt)
+            : "";
+    })();
 
     const liveRecordingPeriodText =
         isLiveRecordingMap && sessionStartAt
@@ -2308,7 +2319,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                               ? "共有中の現在地"
                               : isSharedLiveLocationMap
                                 ? formatCurrentDateTime(currentDateTime)
-                                : activityHeaderDateTimeText}
+                                : activityHeaderTitleText}
                     </Text>
 
                     <Pressable

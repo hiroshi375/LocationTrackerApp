@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import { getBackgroundRecordingStatus } from "../services/backgroundLocationService";
+import * as Application from "expo-application";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AppInfo">;
 
@@ -257,17 +258,12 @@ export default function AppInfoScreen({ navigation }: Props) {
         }
     }, [forcingEasUpdate]);
 
-    const appVersion = Constants.expoConfig?.version ?? "不明";
+    const appVersion =
+        Application.nativeApplicationVersion ??
+        Constants.expoConfig?.version ??
+        "不明";
 
-    const buildVersion = useMemo(() => {
-        if (Platform.OS === "ios") {
-            return Constants.expoConfig?.ios?.buildNumber ?? "不明";
-        }
-
-        const versionCode = Constants.expoConfig?.android?.versionCode;
-
-        return versionCode != null ? String(versionCode) : "不明";
-    }, []);
+    const buildVersion = Application.nativeBuildVersion ?? "不明";
 
     const packageName = useMemo(() => {
         if (Platform.OS === "ios") {

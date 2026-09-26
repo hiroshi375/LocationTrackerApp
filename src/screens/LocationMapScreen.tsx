@@ -92,6 +92,19 @@ type LocationLogListResult = {
 
 const DEFAULT_LATITUDE_DELTA = 0.01;
 const DEFAULT_LONGITUDE_DELTA = 0.01;
+const ROUTE_OVERVIEW_EDGE_PADDING = {
+    top: 180,
+    right: 80,
+    bottom: 280,
+    left: 80,
+};
+
+const HISTORY_ROUTE_EDGE_PADDING = {
+    top: 180,
+    right: 80,
+    bottom: 280,
+    left: 80,
+};
 
 const CURRENT_LOCATION_LATITUDE_DELTA = 0.005;
 const CURRENT_LOCATION_LONGITUDE_DELTA = 0.005;
@@ -196,6 +209,8 @@ const CAMERA_CENTER_LATITUDE_OFFSET = 0.0015;
 
 const START_PIN_IMAGE = require("../../assets/images/map-start-pin-marker.png");
 const GOAL_PIN_IMAGE = require("../../assets/images/map-goal-pin-marker.png");
+const ROUTE_ENDPOINT_MARKER_SIZE = 108;
+const ROUTE_ENDPOINT_MARKER_ANCHOR_Y = 0.82;
 
 export default function LocationMapScreen({ route, navigation }: Props) {
     const insets = useSafeAreaInsets();
@@ -334,7 +349,15 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             x: number;
             y: number;
         } | null>(null);
+    const [startLocationScreenPoint, setStartLocationScreenPoint] = useState<{
+        x: number;
+        y: number;
+    } | null>(null);
 
+    const [endLocationScreenPoint, setEndLocationScreenPoint] = useState<{
+        x: number;
+        y: number;
+    } | null>(null);
     const currentLocationOpacity = useRef(new Animated.Value(1)).current;
 
     const [currentAddress, setCurrentAddress] = useState<string>("");
@@ -376,6 +399,74 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             setCurrentLocationScreenPoint(null);
         }
     }, [mapReady, shouldShowLiveCurrentLocation, currentLocation]);
+
+    const updateRouteEndpointScreenPoints = useCallback(async () => {
+        if (!mapReady || !mapRef.current || isSharedCurrentLocationOnlyMap) {
+            setStartLocationScreenPoint(null);
+            setEndLocationScreenPoint(null);
+            return;
+        }
+
+        const sessionRouteLogs = activeSessionId
+            ? buildRouteLogs(
+                  logs.filter(
+                      (log) => log.recordingSessionId === activeSessionId,
+                  ),
+              )
+            : [];
+
+        const startLocation =
+            sessionRouteLogs.length > 0 ? sessionRouteLogs[0] : null;
+
+        /*
+         * 自動記録中は従来どおりゴールを表示しない。
+         */
+        const endLocation =
+            !isLiveRecordingMap && sessionRouteLogs.length > 1
+                ? sessionRouteLogs[sessionRouteLogs.length - 1]
+                : null;
+
+        try {
+            if (startLocation) {
+                const point = await mapRef.current.pointForCoordinate({
+                    latitude: startLocation.latitude,
+                    longitude: startLocation.longitude,
+                });
+
+                setStartLocationScreenPoint({
+                    x: point.x,
+                    y: point.y,
+                });
+            } else {
+                setStartLocationScreenPoint(null);
+            }
+
+            if (endLocation) {
+                const point = await mapRef.current.pointForCoordinate({
+                    latitude: endLocation.latitude,
+                    longitude: endLocation.longitude,
+                });
+
+                setEndLocationScreenPoint({
+                    x: point.x,
+                    y: point.y,
+                });
+            } else {
+                setEndLocationScreenPoint(null);
+            }
+        } catch (error) {
+            console.error("Route endpoint screen point error:", error);
+
+            setStartLocationScreenPoint(null);
+            setEndLocationScreenPoint(null);
+        }
+    }, [
+        mapReady,
+        isSharedCurrentLocationOnlyMap,
+        activeSessionId,
+        logs,
+        isLiveRecordingMap,
+    ]);
 
     const loadLogs = useCallback(
         async (showLoading: boolean = true) => {
@@ -1292,12 +1383,14 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             }
 
             mapRef.current?.fitToCoordinates(coordinates, {
-                edgePadding: {
-                    top: isOwnLiveRecordingMap ? 110 : 100,
-                    right: 60,
-                    bottom: isOwnLiveRecordingMap ? 210 : 320,
-                    left: 60,
-                },
+                edgePadding: isOwnLiveRecordingMap
+                    ? ROUTE_OVERVIEW_EDGE_PADDING
+                    : {
+                          top: 100,
+                          right: 60,
+                          bottom: 320,
+                          left: 60,
+                      },
                 animated: true,
             });
         }, 300);
@@ -1375,12 +1468,14 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             }
 
             mapRef.current?.fitToCoordinates(coordinates, {
-                edgePadding: {
-                    top: isActivityHistoryMap ? 110 : 80,
-                    right: 40,
-                    bottom: isActivityHistoryMap ? 210 : 360,
-                    left: 40,
-                },
+                edgePadding: isActivityHistoryMap
+                    ? HISTORY_ROUTE_EDGE_PADDING
+                    : {
+                          top: 80,
+                          right: 60,
+                          bottom: 360,
+                          left: 60,
+                      },
                 animated: true,
             });
         }, 300);
@@ -1416,6 +1511,10 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     useEffect(() => {
         void updateCurrentLocationScreenPoint();
     }, [updateCurrentLocationScreenPoint]);
+
+    useEffect(() => {
+        void updateRouteEndpointScreenPoints();
+    }, [updateRouteEndpointScreenPoints]);
 
     useFocusEffect(
         useCallback(() => {
@@ -1801,12 +1900,14 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         }
 
         mapRef.current?.fitToCoordinates(fitTargetCoordinates, {
-            edgePadding: {
-                top: useActivityStyleMap ? 110 : 100,
-                right: 60,
-                bottom: useActivityStyleMap ? 210 : 360,
-                left: 60,
-            },
+            edgePadding: useActivityStyleMap
+                ? ROUTE_OVERVIEW_EDGE_PADDING
+                : {
+                      top: 100,
+                      right: 60,
+                      bottom: 360,
+                      left: 60,
+                  },
             animated: true,
         });
     };
@@ -2035,6 +2136,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                     onMapReady={() => setMapReady(true)}
                     onRegionChangeComplete={() => {
                         void updateCurrentLocationScreenPoint();
+                        void updateRouteEndpointScreenPoints();
                     }}
                     initialRegion={{
                         latitude: adjustedInitialCenter.latitude,
@@ -2113,34 +2215,6 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                                 </Marker>
                             );
                         })}
-
-                    {!isSharedCurrentLocationOnlyMap && startLog && (
-                        <Marker
-                            coordinate={{
-                                latitude: startLog.latitude,
-                                longitude: startLog.longitude,
-                            }}
-                            image={START_PIN_IMAGE}
-                            anchor={{ x: 0.5, y: 0.82 }}
-                            zIndex={200}
-                            title="開始位置"
-                            description={buildMarkerDescription(startLog)}
-                        />
-                    )}
-
-                    {!isSharedCurrentLocationOnlyMap && endLog && (
-                        <Marker
-                            coordinate={{
-                                latitude: endLog.latitude,
-                                longitude: endLog.longitude,
-                            }}
-                            image={GOAL_PIN_IMAGE}
-                            anchor={{ x: 0.5, y: 0.82 }}
-                            zIndex={201}
-                            title="終了位置"
-                            description={buildMarkerDescription(endLog)}
-                        />
-                    )}
 
                     {!isSharedCurrentLocationOnlyMap &&
                         showPoints &&
@@ -2576,6 +2650,56 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                         </View>
                     </>
                 )}
+
+            {!isPixelMapLayer && startLocationScreenPoint && (
+                <View
+                    pointerEvents="none"
+                    style={[
+                        styles.routeEndpointOverlayMarker,
+                        {
+                            left:
+                                startLocationScreenPoint.x -
+                                ROUTE_ENDPOINT_MARKER_SIZE / 2,
+                            top:
+                                startLocationScreenPoint.y -
+                                ROUTE_ENDPOINT_MARKER_SIZE *
+                                    ROUTE_ENDPOINT_MARKER_ANCHOR_Y,
+                        },
+                    ]}
+                >
+                    <Image
+                        source={START_PIN_IMAGE}
+                        style={styles.routeEndpointOverlayMarkerImage}
+                        resizeMode="contain"
+                        fadeDuration={0}
+                    />
+                </View>
+            )}
+
+            {!isPixelMapLayer && endLocationScreenPoint && (
+                <View
+                    pointerEvents="none"
+                    style={[
+                        styles.routeEndpointOverlayMarker,
+                        {
+                            left:
+                                endLocationScreenPoint.x -
+                                ROUTE_ENDPOINT_MARKER_SIZE / 2,
+                            top:
+                                endLocationScreenPoint.y -
+                                ROUTE_ENDPOINT_MARKER_SIZE *
+                                    ROUTE_ENDPOINT_MARKER_ANCHOR_Y,
+                        },
+                    ]}
+                >
+                    <Image
+                        source={GOAL_PIN_IMAGE}
+                        style={styles.routeEndpointOverlayMarkerImage}
+                        resizeMode="contain"
+                        fadeDuration={0}
+                    />
+                </View>
+            )}
 
             {!isPixelMapLayer &&
                 shouldShowLiveCurrentLocation &&
@@ -4617,5 +4741,20 @@ const styles = StyleSheet.create({
         color: "#087f75",
         fontSize: 14,
         fontWeight: "700",
+    },
+
+    routeEndpointOverlayMarker: {
+        position: "absolute",
+        width: ROUTE_ENDPOINT_MARKER_SIZE,
+        height: ROUTE_ENDPOINT_MARKER_SIZE,
+        zIndex: 900,
+        elevation: 900,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    routeEndpointOverlayMarkerImage: {
+        width: "100%",
+        height: "100%",
     },
 });

@@ -179,7 +179,7 @@ export default function ActivityRankingScreen() {
                         <MaterialCommunityIcons
                             name="calendar-month-outline"
                             size={18}
-                            color={mode === "MONTHLY" ? "#ffffff" : "#607783"}
+                            color={mode === "MONTHLY" ? "#ffffff" : "#63747d"}
                         />
 
                         <Text
@@ -204,7 +204,7 @@ export default function ActivityRankingScreen() {
                         <MaterialCommunityIcons
                             name="chart-line"
                             size={18}
-                            color={mode === "TOTAL" ? "#ffffff" : "#607783"}
+                            color={mode === "TOTAL" ? "#ffffff" : "#63747d"}
                         />
 
                         <Text
@@ -607,45 +607,27 @@ const styles = StyleSheet.create({
 
     modeSegment: {
         padding: 4,
-
         flexDirection: "row",
-
         borderRadius: 12,
-
         backgroundColor: "#e4ebef",
     },
 
     modeSegmentButton: {
         flex: 1,
-
         minHeight: 42,
-
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-
         gap: 6,
-
         borderRadius: 9,
     },
 
     modeSegmentButtonSelected: {
-        backgroundColor: "#0e9384",
-
-        shadowColor: "#000000",
-        shadowOffset: {
-            width: 0,
-            height: 1,
-        },
-        shadowOpacity: 0.12,
-        shadowRadius: 2,
-
-        elevation: 2,
+        backgroundColor: "#06395f",
     },
 
     modeSegmentText: {
-        color: "#607783",
-
+        color: "#63747d",
         fontSize: 14,
         fontWeight: "700",
     },

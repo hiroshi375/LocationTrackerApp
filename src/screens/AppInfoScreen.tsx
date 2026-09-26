@@ -507,6 +507,8 @@ export default function AppInfoScreen({ navigation }: Props) {
                                 }
                             />
 
+                            <InfoRow label="ビルド番号" value={buildVersion} />
+
                             <InfoRow
                                 label="Channel"
                                 value={easUpdateInfo.channel ?? "取得不可"}

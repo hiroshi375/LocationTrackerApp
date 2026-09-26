@@ -114,6 +114,19 @@ type UserProfileItem = {
     iconImagePath?: string | null;
 };
 
+type ShareCandidateItem = {
+    userId: string;
+    ownerValue: string;
+    displayName?: string | null;
+    email?: string | null;
+    iconImagePath?: string | null;
+};
+
+type ShareCandidateQueryResult = {
+    data?: (ShareCandidateItem | null)[] | null;
+    errors?: readonly unknown[];
+};
+
 type LocationLogListResult = {
     data?: any[] | null;
     errors?: unknown;
@@ -1378,42 +1391,65 @@ export default function LocationLogScreen({ navigation, route }: Props) {
 
             const currentUser = await getCurrentUser();
 
-            const result = await client.models.UserProfile.list({
-                limit: 1000,
-            });
+            /*
+             * UserProfile全件ではなく、
+             * 自分と同じShareGroupに所属するユーザーだけを取得する。
+             *
+             * LocationHomeScreenの現在地共有と同じ方式。
+             */
+            const result = (await (client.queries.listMyShareCandidates as any)(
+                {},
+            )) as ShareCandidateQueryResult;
 
-            if (result.errors) {
-                console.error("UserProfile list errors:", result.errors);
+            if (result.errors?.length) {
+                console.error("listMyShareCandidates errors:", result.errors);
+
+                /*
+                 * 取得失敗時に古い候補を残さない。
+                 * 別グループへの誤共有を防ぐためfail closedとする。
+                 */
+                setShareUsers([]);
+                setSelectedShareUsers([]);
+                setShareUserIconUrls({});
+
                 Alert.alert(
                     "取得エラー",
-                    "共有先ユーザーを取得できませんでした。",
+                    "共有可能なグループメンバーを取得できませんでした。",
                 );
+
                 return;
             }
 
             const users: UserProfileItem[] = (result.data ?? [])
-                .map((user) => ({
-                    id: user.id,
-                    userId: user.userId,
-                    email: user.email ?? null,
-                    displayName: user.displayName ?? null,
-                    ownerValue: user.ownerValue ?? null,
-                    searchText: user.searchText ?? null,
-                    iconImagePath: user.iconImagePath ?? null,
-                }))
-                .filter((user) => {
-                    if (!user.ownerValue) {
-                        return false;
-                    }
-
-                    // 自分自身は共有先候補から除外
-                    return user.userId !== currentUser.userId;
-                })
+                .filter(
+                    (user): user is ShareCandidateItem =>
+                        user !== null &&
+                        typeof user.userId === "string" &&
+                        user.userId.length > 0 &&
+                        typeof user.ownerValue === "string" &&
+                        user.ownerValue.length > 0 &&
+                        user.userId !== currentUser.userId,
+                )
+                .map(
+                    (user: ShareCandidateItem): UserProfileItem => ({
+                        /*
+                         * listMyShareCandidatesでは
+                         * UserProfile.idではなくuserIdを識別子として使用する。
+                         */
+                        id: user.userId,
+                        userId: user.userId,
+                        email: user.email ?? null,
+                        displayName: user.displayName ?? null,
+                        ownerValue: user.ownerValue,
+                        searchText: null,
+                        iconImagePath: user.iconImagePath ?? null,
+                    }),
+                )
                 .sort((a, b) => {
                     const aName = a.displayName || a.email || "";
                     const bName = b.displayName || b.email || "";
 
-                    return aName.localeCompare(bName);
+                    return aName.localeCompare(bName, "ja");
                 });
 
             const iconEntries = await Promise.all(
@@ -1446,10 +1482,31 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             setShareUserIconUrls(Object.fromEntries(iconEntries));
 
             setShareUsers(users);
+
+            /*
+             * Modalを開き直した場合も
+             * 前回選択を引き継がない。
+             */
             setSelectedShareUsers([]);
+
+            console.log("[LocationLogScreen] Share candidates loaded:", {
+                candidateCount: users.length,
+                candidateUserIds: users.map((user) => user.userId),
+            });
         } catch (error) {
-            console.error("UserProfile list error:", error);
-            Alert.alert("取得エラー", "共有先ユーザーの取得に失敗しました。");
+            console.error("Load share candidates error:", error);
+
+            /*
+             * エラー時は候補を空にする。
+             */
+            setShareUsers([]);
+            setSelectedShareUsers([]);
+            setShareUserIconUrls({});
+
+            Alert.alert(
+                "取得エラー",
+                "共有可能なグループメンバーの取得に失敗しました。",
+            );
         } finally {
             setShareSearching(false);
         }
@@ -1460,7 +1517,17 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             return;
         }
 
+        /*
+         * 現在取得済みの同一グループ共有候補だけを有効とする。
+         * selectedShareUsersに古い状態などが残っていても
+         * 別グループへ共有しないための防御。
+         */
+        const validShareUserIds = new Set(
+            shareUsers.map((user) => user.userId),
+        );
+
         const selectedOwnerValues = selectedShareUsers
+            .filter((user) => validShareUserIds.has(user.userId))
             .map((user) => user.ownerValue)
             .filter(
                 (ownerValue): ownerValue is string =>
@@ -2572,10 +2639,9 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                     />
                                 ) : filteredShareUsers.length === 0 ? (
                                     <Text style={styles.shareEmptyText}>
-                                        共有先ユーザーが見つかりません。
+                                        共有可能なユーザーが見つかりません。
                                         {"\n"}
-                                        UserProfile
-                                        に他のユーザーが存在するか確認してください。
+                                        同じグループに所属するユーザーがいるか確認してください。
                                     </Text>
                                 ) : (
                                     filteredShareUsers.map((user) => {

@@ -69,7 +69,7 @@ export default function PrivacyPolicyScreen() {
                         </Text>
 
                         <Text style={styles.intro}>
-                            LocationTrackerApp（以下「本アプリ」といいます。）では、
+                            AcLog Fit（以下「本アプリ」といいます。）では、
                             ユーザーの移動履歴を記録・表示・共有するために、
                             位置情報などの情報を取り扱います。
                             本ポリシーでは、取得する情報とその利用方法について説明します。

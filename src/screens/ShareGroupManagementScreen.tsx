@@ -559,7 +559,7 @@ export default function ShareGroupManagementScreen() {
         try {
             await Share.share({
                 message: [
-                    "LocationTrackerAppの共有グループに招待します。",
+                    "AcLog Fitの共有グループに招待します。",
                     "",
                     `グループ名: ${createdGroupName || "共有グループ"}`,
                     `招待コード: ${createdInviteCode}`,

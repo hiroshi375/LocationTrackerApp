@@ -65,7 +65,7 @@ export default function TermsOfServiceScreen() {
                         <Text style={styles.introTitle}>利用規約</Text>
 
                         <Text style={styles.intro}>
-                            この利用規約は、LocationTrackerApp
+                            この利用規約は、AcLog Fit
                             （以下「本アプリ」といいます。）の利用条件を定めるものです。
                             本アプリをご利用いただく前に、内容をご確認ください。
                         </Text>

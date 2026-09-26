@@ -26,7 +26,7 @@ export default function ContactScreen() {
     }, [navigation]);
     const openMailApp = async () => {
         const subject = encodeURIComponent(
-            "LocationTrackerAppへのお問い合わせ",
+            "AcLog Fitへのお問い合わせ",
         );
 
         const body = encodeURIComponent(
@@ -34,7 +34,7 @@ export default function ContactScreen() {
                 "お問い合わせ内容をご記入ください。",
                 "",
                 "--------------------------------",
-                "アプリ名: LocationTrackerApp",
+                "アプリ名: AcLog Fit",
                 "--------------------------------",
             ].join("\n"),
         );

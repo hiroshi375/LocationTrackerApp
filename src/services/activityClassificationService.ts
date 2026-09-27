@@ -220,6 +220,12 @@ export function classifyActivitySession(
         35,
     );
 
+    const secondsAtOrAbove12 = sumDurationAtOrAbove(analysisSegments, 12);
+
+    const secondsAtOrAbove15 = sumDurationAtOrAbove(analysisSegments, 15);
+
+    const secondsAtOrAbove18 = sumDurationAtOrAbove(analysisSegments, 18);
+
     const secondsAtOrAbove25 = sumDurationAtOrAbove(analysisSegments, 25);
 
     const secondsAtOrAbove35 = sumDurationAtOrAbove(analysisSegments, 35);
@@ -316,18 +322,40 @@ export function classifyActivitySession(
         );
     }
 
+    /*
+     * 街乗り自転車の補助判定。
+     *
+     * 信号待ち・交差点・買い物などを含む市街地走行では、
+     * 平均速度が低下し、
+     * 18km/h以上を60秒連続できないことがある。
+     *
+     * 単発の高速区間だけでCYCLINGにしないため、
+     * 複数の速度帯で十分な累積時間があることを要求する。
+     */
+    const hasUrbanCyclingSpeedPattern =
+        p90SpeedKmh >= 17 &&
+        secondsAtOrAbove12 >= 240 &&
+        secondsAtOrAbove15 >= 120 &&
+        secondsAtOrAbove18 >= 45;
+
     if (
         maxContinuousSecondsAtOrAbove18 >= 60 ||
         p90SpeedKmh >= 20 ||
-        averageSpeedKmh >= 14
+        averageSpeedKmh >= 14 ||
+        hasUrbanCyclingSpeedPattern
     ) {
         return createResult(
             hasClearlyMixedMovement ? "MIXED" : "CYCLING",
             [
-                "自転車相当の速度が継続しました。",
+                hasUrbanCyclingSpeedPattern
+                    ? "街乗り自転車相当の速度分布を検出しました。"
+                    : "自転車相当の速度が継続しました。",
                 `平均${averageSpeedKmh.toFixed(1)}km/h`,
                 `90%点${p90SpeedKmh.toFixed(1)}km/h`,
                 `最高${maxSpeedKmh.toFixed(1)}km/h`,
+                `12km/h以上累計${Math.round(secondsAtOrAbove12)}秒`,
+                `15km/h以上累計${Math.round(secondsAtOrAbove15)}秒`,
+                `18km/h以上累計${Math.round(secondsAtOrAbove18)}秒`,
                 `18km/h以上連続${Math.round(
                     maxContinuousSecondsAtOrAbove18,
                 )}秒`,

@@ -219,6 +219,18 @@ export default function ActivityRankingScreen() {
                     </Pressable>
                 </View>
 
+                <View style={styles.rankingTargetNotice}>
+                    <MaterialCommunityIcons
+                        name="information-outline"
+                        size={16}
+                        color="#607d8b"
+                    />
+
+                    <Text style={styles.rankingTargetNoticeText}>
+                        ランキングには「ウォーキング」と「ランニング」の記録のみ集計されます。
+                    </Text>
+                </View>
+
                 {/* 対象期間 */}
                 {mode === "MONTHLY" ? (
                     <View style={styles.periodCard}>
@@ -965,5 +977,24 @@ const styles = StyleSheet.create({
     plainRankTextSmall: {
         fontSize: 15,
         fontWeight: "600",
+    },
+
+    rankingTargetNotice: {
+        marginTop: 8,
+        paddingHorizontal: 4,
+
+        flexDirection: "row",
+        alignItems: "center",
+
+        gap: 5,
+    },
+
+    rankingTargetNoticeText: {
+        flex: 1,
+
+        color: "#607d8b",
+
+        fontSize: 12,
+        lineHeight: 17,
     },
 });

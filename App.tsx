@@ -1,5 +1,5 @@
 import "react-native-get-random-values";
-import "./src/tasks/backgroundLocationTask";
+import { cleanupLegacyBackgroundTaskStageDiagnosticsOnce } from "./src/tasks/backgroundLocationTask";
 
 import { Authenticator } from "@aws-amplify/ui-react-native";
 import { Amplify } from "aws-amplify";
@@ -648,6 +648,63 @@ function AppTourProvider({ children }: { children: ReactNode }) {
     );
 }
 
+function StartupCleanupGate({ children }: { children: ReactNode }) {
+    const [cleanupCompleted, setCleanupCompleted] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const initialize = async () => {
+            try {
+                /*
+                 * 過去版で無制限に蓄積された
+                 * Background task stage診断を削除する。
+                 *
+                 * Authenticator表示前に実行することで、
+                 * AsyncStorage肥大化による認証失敗から
+                 * 自己回復できるようにする。
+                 */
+                await cleanupLegacyBackgroundTaskStageDiagnosticsOnce();
+            } catch (error) {
+                /*
+                 * cleanup失敗だけでアプリ起動を止めない。
+                 */
+                console.error(
+                    "[StartupCleanup] Background task stage cleanup failed:",
+                    error,
+                );
+            } finally {
+                if (!cancelled) {
+                    setCleanupCompleted(true);
+                }
+            }
+        };
+
+        void initialize();
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    if (!cleanupCompleted) {
+        return (
+            <View
+                style={{
+                    flex: 1,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: "#ffffff",
+                }}
+            >
+                <ActivityIndicator />
+            </View>
+        );
+    }
+
+    return <>{children}</>;
+}
+
 function AppContent() {
     return (
         <SafeAreaProvider>
@@ -662,18 +719,20 @@ function AppContent() {
 
 export default function App() {
     return (
-        <Authenticator.Provider>
-            <StatusBar
-                style="dark"
-                hidden={false}
-                backgroundColor="#ffffff"
-                translucent={false}
-            />
+        <StartupCleanupGate>
+            <Authenticator.Provider>
+                <StatusBar
+                    style="dark"
+                    hidden={false}
+                    backgroundColor="#ffffff"
+                    translucent={false}
+                />
 
-            <Authenticator>
-                <AppContent />
-            </Authenticator>
-        </Authenticator.Provider>
+                <Authenticator>
+                    <AppContent />
+                </Authenticator>
+            </Authenticator.Provider>
+        </StartupCleanupGate>
     );
 }
 

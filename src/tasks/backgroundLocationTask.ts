@@ -75,6 +75,45 @@ export const BACKGROUND_LOCATION_TASK_HEARTBEAT_KEY =
 export const BACKGROUND_LOCATION_TASK_STAGE_PREFIX =
     "location-tracker-background-location-task-stage:";
 
+/**
+ * Background task のstage診断をAsyncStorageへ保存するか。
+ *
+ * true:
+ *   Development Buildでstage診断を保存する。
+ *
+ * false:
+ *   Production / Google Play Closed Testでは保存しない。
+ *
+ * React Nativeの__DEV__は、
+ * 開発実行時=true、release build=false。
+ */
+const ENABLE_BACKGROUND_LOCATION_TASK_STAGE_DIAGNOSTICS = __DEV__;
+
+/**
+ * stage診断を有効化した場合でも、
+ * AsyncStorageへ無制限に蓄積させない。
+ *
+ * 1 eventId = 1 Background callback。
+ */
+const BACKGROUND_LOCATION_TASK_STAGE_MAX_ENTRIES = 200;
+
+/**
+ * prune時に大量のキーを一度に削除しないための単位。
+ */
+const BACKGROUND_LOCATION_TASK_STAGE_DELETE_BATCH_SIZE = 200;
+
+/**
+ * 過去版で無制限に作成されていたstage診断を
+ * 一度だけ削除したことを記録するキー。
+ */
+const BACKGROUND_LOCATION_TASK_STAGE_CLEANUP_VERSION_KEY =
+    "location-tracker-background-location-task-stage-cleanup-version";
+
+/**
+ * cleanup内容を変更した場合は、この値を上げる。
+ */
+const BACKGROUND_LOCATION_TASK_STAGE_CLEANUP_VERSION = "1";
+
 type BackgroundLocationTaskStage =
     | "TASK_ENTRY"
     | "KEEPALIVE_TIMER_SCHEDULED"
@@ -123,6 +162,16 @@ function recordBackgroundTaskStage(
     stage: BackgroundLocationTaskStage,
     details?: Record<string, unknown>,
 ): void {
+    /*
+     * Production / Closed Testではstage診断自体を生成・保存しない。
+     *
+     * 過去版ではeventIdごとにAsyncStorageキーが増え続けたため、
+     * 長期間利用時にAsyncStorage DBが肥大化する可能性があった。
+     */
+    if (!ENABLE_BACKGROUND_LOCATION_TASK_STAGE_DIAGNOSTICS) {
+        return;
+    }
+
     const stageAtMs = Date.now();
 
     const payload = {
@@ -140,22 +189,130 @@ function recordBackgroundTaskStage(
     console.log("[BG_TASK_STAGE]", payload);
 
     /*
-     * 非常に重要：
-     * 診断保存のためにBackground task本体をawaitしない。
+     * stage保存はBackground task本体をブロックしない。
      *
-     * 保存に失敗してもLocation記録処理へ影響させない。
+     * 同じeventIdでは同じキーへ上書きされる。
      */
     void AsyncStorage.setItem(
         `${BACKGROUND_LOCATION_TASK_STAGE_PREFIX}${context.eventId}`,
         JSON.stringify(payload),
-    ).catch((stageLogError) => {
-        console.error("[BG_TASK_STAGE_SAVE_FAILED]", {
-            runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
-            eventId: context.eventId,
-            stage,
-            error: getErrorMessage(stageLogError),
+    )
+        .then(() => {
+            /*
+             * 1 callbackの最後にだけ古いstage診断を整理する。
+             *
+             * stageごとにgetAllKeys()を実行すると負荷が大きいため、
+             * TASK_FINALLY時だけ実施する。
+             */
+            if (stage === "TASK_FINALLY") {
+                void pruneBackgroundLocationTaskStageDiagnostics().catch(
+                    (pruneError) => {
+                        console.error("[BG_TASK_STAGE_PRUNE_FAILED]", {
+                            runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
+                            eventId: context.eventId,
+                            error: getErrorMessage(pruneError),
+                        });
+                    },
+                );
+            }
+        })
+        .catch((stageLogError) => {
+            console.error("[BG_TASK_STAGE_SAVE_FAILED]", {
+                runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
+                eventId: context.eventId,
+                stage,
+                error: getErrorMessage(stageLogError),
+            });
         });
+}
+
+async function pruneBackgroundLocationTaskStageDiagnostics(): Promise<void> {
+    if (!ENABLE_BACKGROUND_LOCATION_TASK_STAGE_DIAGNOSTICS) {
+        return;
+    }
+
+    const allKeys = await AsyncStorage.getAllKeys();
+
+    const stageKeys = allKeys.filter((key) =>
+        key.startsWith(BACKGROUND_LOCATION_TASK_STAGE_PREFIX),
+    );
+
+    if (stageKeys.length <= BACKGROUND_LOCATION_TASK_STAGE_MAX_ENTRIES) {
+        return;
+    }
+
+    /*
+     * eventId自体は時系列順とは限らないため、
+     * value内のstageAtMsを使って並べる。
+     */
+    const entries = await AsyncStorage.multiGet(stageKeys);
+
+    const entriesWithTimestamp = entries.map(([key, value]) => {
+        let stageAtMs = 0;
+
+        if (value) {
+            try {
+                const parsed = JSON.parse(value) as {
+                    stageAtMs?: unknown;
+                };
+
+                if (
+                    typeof parsed.stageAtMs === "number" &&
+                    Number.isFinite(parsed.stageAtMs)
+                ) {
+                    stageAtMs = parsed.stageAtMs;
+                }
+            } catch {
+                /*
+                 * 壊れた診断値は最古扱いにして削除候補とする。
+                 */
+                stageAtMs = 0;
+            }
+        }
+
+        return {
+            key,
+            stageAtMs,
+        };
     });
+
+    entriesWithTimestamp.sort((a, b) => a.stageAtMs - b.stageAtMs);
+
+    const deleteCount =
+        entriesWithTimestamp.length -
+        BACKGROUND_LOCATION_TASK_STAGE_MAX_ENTRIES;
+
+    const keysToDelete = entriesWithTimestamp
+        .slice(0, deleteCount)
+        .map((entry) => entry.key);
+
+    await removeAsyncStorageKeysInBatches(keysToDelete);
+
+    console.log("[BG_TASK_STAGE_PRUNED]", {
+        beforeCount: stageKeys.length,
+        deletedCount: keysToDelete.length,
+        remainingCount: stageKeys.length - keysToDelete.length,
+        maxEntries: BACKGROUND_LOCATION_TASK_STAGE_MAX_ENTRIES,
+    });
+}
+
+async function removeAsyncStorageKeysInBatches(keys: string[]): Promise<void> {
+    for (
+        let index = 0;
+        index < keys.length;
+        index += BACKGROUND_LOCATION_TASK_STAGE_DELETE_BATCH_SIZE
+    ) {
+        const batch = keys.slice(
+            index,
+            index + BACKGROUND_LOCATION_TASK_STAGE_DELETE_BATCH_SIZE,
+        );
+
+        if (batch.length === 0) {
+            continue;
+        }
+
+        await AsyncStorage.multiRemove(batch);
+    }
 }
 
 /*
@@ -3466,4 +3623,90 @@ function shouldSaveLocation(
     }
 
     return false;
+}
+
+/**
+ * 過去版で無制限に蓄積された
+ * Background task stage診断キーを一度だけ削除する。
+ *
+ * この関数はAuthenticator表示前のアプリ起動時に呼び出す。
+ *
+ * 削除対象：
+ *   location-tracker-background-location-task-stage:*
+ *
+ * 削除しないもの：
+ *   - Background recording state
+ *   - heartbeat
+ *   - Location SQLite queue
+ *   - LocationLog
+ *   - Cognito認証情報
+ *   - その他のAsyncStorageデータ
+ */
+export async function cleanupLegacyBackgroundTaskStageDiagnosticsOnce(): Promise<void> {
+    let cleanupCompletedVersion: string | null = null;
+
+    /*
+     * AsyncStorage DBが既に上限付近の場合、
+     * getItem自体が失敗する可能性がある。
+     *
+     * その場合でもcleanupを諦めず、
+     * stageキー削除へ進む。
+     */
+    try {
+        cleanupCompletedVersion = await AsyncStorage.getItem(
+            BACKGROUND_LOCATION_TASK_STAGE_CLEANUP_VERSION_KEY,
+        );
+    } catch (versionReadError) {
+        console.warn(
+            "[BG_TASK_STAGE_LEGACY_CLEANUP_VERSION_READ_FAILED]",
+            versionReadError,
+        );
+    }
+
+    if (
+        cleanupCompletedVersion ===
+        BACKGROUND_LOCATION_TASK_STAGE_CLEANUP_VERSION
+    ) {
+        return;
+    }
+
+    try {
+        const allKeys = await AsyncStorage.getAllKeys();
+
+        const stageKeys = allKeys.filter((key) =>
+            key.startsWith(BACKGROUND_LOCATION_TASK_STAGE_PREFIX),
+        );
+
+        /*
+         * 完了マーカーを書き込む前に、
+         * まず容量を圧迫しているstageキーを削除する。
+         */
+        if (stageKeys.length > 0) {
+            await removeAsyncStorageKeysInBatches(stageKeys);
+        }
+
+        /*
+         * stageキー削除後にcleanup完了マーカーを保存する。
+         *
+         * この保存だけ失敗した場合でも、
+         * 次回起動時には再度cleanupが走るだけなので安全。
+         */
+        await AsyncStorage.setItem(
+            BACKGROUND_LOCATION_TASK_STAGE_CLEANUP_VERSION_KEY,
+            BACKGROUND_LOCATION_TASK_STAGE_CLEANUP_VERSION,
+        );
+
+        console.log("[BG_TASK_STAGE_LEGACY_CLEANUP_COMPLETED]", {
+            removedCount: stageKeys.length,
+            cleanupVersion: BACKGROUND_LOCATION_TASK_STAGE_CLEANUP_VERSION,
+        });
+    } catch (cleanupError) {
+        /*
+         * cleanup失敗だけでアプリを起動不能にはしない。
+         *
+         * cleanup-versionが保存されなければ、
+         * 次回起動時に再試行される。
+         */
+        console.error("[BG_TASK_STAGE_LEGACY_CLEANUP_FAILED]", cleanupError);
+    }
 }

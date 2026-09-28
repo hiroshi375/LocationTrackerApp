@@ -14,6 +14,13 @@ type MonthlyAggregate = {
     sessionCount: number;
 };
 
+type WeeklyAggregate = {
+    weekKey: string;
+    distanceMeters: number;
+    durationSeconds: number;
+    sessionCount: number;
+};
+
 export function createMonthKey(value: string | Date): string {
     const date = value instanceof Date ? value : new Date(value);
 
@@ -25,6 +32,30 @@ export function createMonthKey(value: string | Date): string {
     const month = String(date.getMonth() + 1).padStart(2, "0");
 
     return `${year}-${month}`;
+}
+
+export function createWeekKey(value: string | Date): string {
+    const date = value instanceof Date ? new Date(value) : new Date(value);
+
+    if (!Number.isFinite(date.getTime())) {
+        return "";
+    }
+
+    date.setHours(0, 0, 0, 0);
+
+    // JavaScript:
+    // 日=0, 月=1, 火=2 ... 土=6
+    // 月曜日を週の開始日にする
+    const day = date.getDay();
+    const daysFromMonday = day === 0 ? 6 : day - 1;
+
+    date.setDate(date.getDate() - daysFromMonday);
+
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const dayOfMonth = String(date.getDate()).padStart(2, "0");
+
+    return `${year}-${month}-${dayOfMonth}`;
 }
 
 export async function recalculateUserActivityAggregates(
@@ -63,6 +94,7 @@ export async function recalculateUserActivityAggregates(
     );
 
     const monthlyMap = new Map<string, MonthlyAggregate>();
+    const weeklyMap = new Map<string, WeeklyAggregate>();
 
     let totalDistanceMeters = 0;
     let totalDurationSeconds = 0;
@@ -75,25 +107,40 @@ export async function recalculateUserActivityAggregates(
                 ? session.monthKey
                 : createMonthKey(session.endedAt);
 
+        const weekKey = createWeekKey(session.endedAt);
+
         totalDistanceMeters += distanceMeters;
         totalDurationSeconds += durationSeconds;
 
-        if (!monthKey) {
-            continue;
+        if (monthKey) {
+            const currentMonth = monthlyMap.get(monthKey) ?? {
+                monthKey,
+                distanceMeters: 0,
+                durationSeconds: 0,
+                sessionCount: 0,
+            };
+
+            currentMonth.distanceMeters += distanceMeters;
+            currentMonth.durationSeconds += durationSeconds;
+            currentMonth.sessionCount += 1;
+
+            monthlyMap.set(monthKey, currentMonth);
         }
 
-        const current = monthlyMap.get(monthKey) ?? {
-            monthKey,
-            distanceMeters: 0,
-            durationSeconds: 0,
-            sessionCount: 0,
-        };
+        if (weekKey) {
+            const currentWeek = weeklyMap.get(weekKey) ?? {
+                weekKey,
+                distanceMeters: 0,
+                durationSeconds: 0,
+                sessionCount: 0,
+            };
 
-        current.distanceMeters += distanceMeters;
-        current.durationSeconds += durationSeconds;
-        current.sessionCount += 1;
+            currentWeek.distanceMeters += distanceMeters;
+            currentWeek.durationSeconds += durationSeconds;
+            currentWeek.sessionCount += 1;
 
-        monthlyMap.set(monthKey, current);
+            weeklyMap.set(weekKey, currentWeek);
+        }
     }
 
     const currentMonthKey = createMonthKey(new Date());
@@ -123,7 +170,10 @@ export async function recalculateUserActivityAggregates(
         );
     }
 
-    await synchronizeMonthlySummaries(userId, profile, monthlyMap);
+    await Promise.all([
+        synchronizeMonthlySummaries(userId, profile, monthlyMap),
+        synchronizeWeeklySummaries(userId, profile, weeklyMap),
+    ]);
 }
 
 async function listAllRecordingSessionsByUser(userId: string): Promise<any[]> {
@@ -268,6 +318,81 @@ async function synchronizeMonthlySummaries(
     }
 }
 
+async function synchronizeWeeklySummaries(
+    userId: string,
+    profile: any,
+    weeklyMap: Map<string, WeeklyAggregate>,
+): Promise<void> {
+    const model = client.models.UserActivityWeeklySummary as any;
+
+    const existingSummaries = await listWeeklySummariesByUser(userId);
+
+    const existingMap = new Map<string, any>();
+
+    existingSummaries.forEach((summary) => {
+        if (typeof summary?.weekKey === "string") {
+            existingMap.set(summary.weekKey, summary);
+        }
+    });
+
+    for (const aggregate of weeklyMap.values()) {
+        const existing = existingMap.get(aggregate.weekKey);
+
+        const payload = {
+            userId,
+            weekKey: aggregate.weekKey,
+
+            distanceMeters: roundNumber(aggregate.distanceMeters, 2),
+
+            durationSeconds: Math.round(aggregate.durationSeconds),
+
+            sessionCount: aggregate.sessionCount,
+
+            displayName: profile.displayName ?? profile.email ?? "ユーザー",
+
+            iconImagePath: profile.iconImagePath ?? null,
+        };
+
+        const result = existing?.id
+            ? await model.update({
+                  id: existing.id,
+                  ...payload,
+              })
+            : await model.create({
+                  id: createWeeklySummaryId(userId, aggregate.weekKey),
+                  ...payload,
+              });
+
+        if (result.errors) {
+            throw new Error(
+                `Weekly summary upsert failed: ${JSON.stringify(
+                    result.errors,
+                )}`,
+            );
+        }
+
+        existingMap.delete(aggregate.weekKey);
+    }
+
+    for (const staleSummary of existingMap.values()) {
+        if (!staleSummary?.id) {
+            continue;
+        }
+
+        const result = await model.delete({
+            id: staleSummary.id,
+        });
+
+        if (result.errors) {
+            throw new Error(
+                `Weekly summary delete failed: ${JSON.stringify(
+                    result.errors,
+                )}`,
+            );
+        }
+    }
+}
+
 async function listMonthlySummariesByUser(userId: string): Promise<any[]> {
     const model = client.models.UserActivityMonthlySummary as any;
     const allData: any[] = [];
@@ -288,6 +413,34 @@ async function listMonthlySummariesByUser(userId: string): Promise<any[]> {
         }
 
         allData.push(...(result.data ?? []));
+        nextToken = result.nextToken ?? null;
+    } while (nextToken);
+
+    return allData;
+}
+
+async function listWeeklySummariesByUser(userId: string): Promise<any[]> {
+    const model = client.models.UserActivityWeeklySummary as any;
+
+    const allData: any[] = [];
+    let nextToken: string | null = null;
+
+    do {
+        const result = (await model.listWeeklyActivitySummariesByUser({
+            userId,
+            sortDirection: "DESC",
+            limit: 1000,
+            nextToken: nextToken ?? undefined,
+        })) as ListResult;
+
+        if (result.errors) {
+            throw new Error(
+                `Weekly summary list failed: ${JSON.stringify(result.errors)}`,
+            );
+        }
+
+        allData.push(...(result.data ?? []));
+
         nextToken = result.nextToken ?? null;
     } while (nextToken);
 
@@ -318,6 +471,10 @@ function getSessionDurationSeconds(session: any): number {
 
 function createMonthlySummaryId(userId: string, monthKey: string): string {
     return `activity-month#${userId}#${monthKey}`;
+}
+
+function createWeeklySummaryId(userId: string, weekKey: string): string {
+    return `activity-week#${userId}#${weekKey}`;
 }
 
 function roundNumber(value: number, digits: number): number {

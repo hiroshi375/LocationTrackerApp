@@ -14,12 +14,15 @@ import {
 } from "react-native";
 
 import { client } from "../lib/client";
-import { createMonthKey } from "../services/userActivityAggregationService";
+import {
+    createMonthKey,
+    createWeekKey,
+} from "../services/userActivityAggregationService";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-type RankingMode = "MONTHLY" | "TOTAL";
+type RankingMode = "WEEKLY" | "MONTHLY" | "TOTAL";
 
 type RankingItem = {
     id: string;
@@ -63,11 +66,15 @@ export default function ActivityRankingScreen() {
 
         return new Date(now.getFullYear(), now.getMonth(), 1);
     });
-
     const monthKey = useMemo(
         () => createMonthKey(selectedMonth),
         [selectedMonth],
     );
+    const [selectedWeek, setSelectedWeek] = useState(() =>
+        getWeekStart(new Date()),
+    );
+
+    const weekKey = useMemo(() => createWeekKey(selectedWeek), [selectedWeek]);
 
     const moveMonth = useCallback((amount: number) => {
         setSelectedMonth((current) => {
@@ -83,14 +90,33 @@ export default function ActivityRankingScreen() {
 
     const canMoveToNextMonth = monthKey < currentMonthKey;
 
+    const moveWeek = useCallback((amount: number) => {
+        setSelectedWeek((current) => {
+            const next = new Date(current);
+
+            next.setDate(next.getDate() + amount * 7);
+
+            return getWeekStart(next);
+        });
+    }, []);
+
+    const currentWeekKey = useMemo(() => createWeekKey(new Date()), []);
+
+    const canMoveToNextWeek = weekKey < currentWeekKey;
+
     const loadRanking = useCallback(async () => {
         try {
             setLoading(true);
 
-            const nextItems =
-                mode === "MONTHLY"
-                    ? await loadMonthlyRanking(monthKey)
-                    : await loadTotalRanking();
+            let nextItems: RankingItem[];
+
+            if (mode === "WEEKLY") {
+                nextItems = await loadWeeklyRanking(weekKey);
+            } else if (mode === "MONTHLY") {
+                nextItems = await loadMonthlyRanking(monthKey);
+            } else {
+                nextItems = await loadTotalRanking();
+            }
 
             setItems(
                 nextItems.sort(
@@ -126,7 +152,7 @@ export default function ActivityRankingScreen() {
         } finally {
             setLoading(false);
         }
-    }, [mode, monthKey]);
+    }, [mode, monthKey, weekKey]);
 
     useFocusEffect(
         useCallback(() => {
@@ -168,6 +194,31 @@ export default function ActivityRankingScreen() {
             <View style={styles.container}>
                 {/* 月間 / トータル */}
                 <View style={styles.modeSegment}>
+                    <Pressable
+                        style={[
+                            styles.modeSegmentButton,
+                            mode === "WEEKLY" &&
+                                styles.modeSegmentButtonSelected,
+                        ]}
+                        onPress={() => setMode("WEEKLY")}
+                    >
+                        <MaterialCommunityIcons
+                            name="calendar-week"
+                            size={18}
+                            color={mode === "WEEKLY" ? "#ffffff" : "#63747d"}
+                        />
+
+                        <Text
+                            style={[
+                                styles.modeSegmentText,
+                                mode === "WEEKLY" &&
+                                    styles.modeSegmentTextSelected,
+                            ]}
+                        >
+                            週間
+                        </Text>
+                    </Pressable>
+
                     <Pressable
                         style={[
                             styles.modeSegmentButton,
@@ -232,7 +283,57 @@ export default function ActivityRankingScreen() {
                 </View>
 
                 {/* 対象期間 */}
-                {mode === "MONTHLY" ? (
+                {mode === "WEEKLY" ? (
+                    <View style={styles.periodCard}>
+                        <Pressable
+                            style={({ pressed }) => [
+                                styles.monthArrowButton,
+                                pressed && !loading && styles.buttonPressed,
+                            ]}
+                            onPress={() => moveWeek(-1)}
+                            disabled={loading}
+                        >
+                            <Text style={styles.monthArrowText}>‹</Text>
+                        </Pressable>
+
+                        <View style={styles.periodCenter}>
+                            <Text style={styles.periodLabel}>
+                                週間ランキング
+                            </Text>
+
+                            <Text style={styles.periodText}>
+                                {formatWeekLabel(selectedWeek)}
+                            </Text>
+                        </View>
+
+                        <Pressable
+                            style={({ pressed }) => [
+                                styles.monthArrowButton,
+
+                                !canMoveToNextWeek &&
+                                    styles.monthArrowButtonDisabled,
+
+                                pressed &&
+                                    canMoveToNextWeek &&
+                                    !loading &&
+                                    styles.buttonPressed,
+                            ]}
+                            onPress={() => moveWeek(1)}
+                            disabled={!canMoveToNextWeek || loading}
+                        >
+                            <Text
+                                style={[
+                                    styles.monthArrowText,
+
+                                    !canMoveToNextWeek &&
+                                        styles.monthArrowTextDisabled,
+                                ]}
+                            >
+                                ›
+                            </Text>
+                        </Pressable>
+                    </View>
+                ) : mode === "MONTHLY" ? (
                     <View style={styles.periodCard}>
                         <Pressable
                             style={({ pressed }) => [
@@ -258,8 +359,10 @@ export default function ActivityRankingScreen() {
                         <Pressable
                             style={({ pressed }) => [
                                 styles.monthArrowButton,
+
                                 !canMoveToNextMonth &&
                                     styles.monthArrowButtonDisabled,
+
                                 pressed &&
                                     canMoveToNextMonth &&
                                     !loading &&
@@ -271,6 +374,7 @@ export default function ActivityRankingScreen() {
                             <Text
                                 style={[
                                     styles.monthArrowText,
+
                                     !canMoveToNextMonth &&
                                         styles.monthArrowTextDisabled,
                                 ]}
@@ -455,6 +559,45 @@ export default function ActivityRankingScreen() {
     );
 }
 
+async function loadWeeklyRanking(weekKey: string): Promise<RankingItem[]> {
+    const model = client.models.UserActivityWeeklySummary as any;
+
+    const allData: any[] = [];
+    let nextToken: string | null = null;
+
+    do {
+        const result = (await model.listWeeklyActivityRanking({
+            weekKey,
+            sortDirection: "DESC",
+            limit: 1000,
+            nextToken: nextToken ?? undefined,
+        })) as ListResult;
+
+        if (result.errors) {
+            throw new Error(JSON.stringify(result.errors));
+        }
+
+        allData.push(...(result.data ?? []));
+
+        nextToken = result.nextToken ?? null;
+    } while (nextToken);
+
+    return allData.map((item) => ({
+        id: item.id,
+        userId: item.userId,
+
+        displayName: item.displayName ?? "ユーザー",
+
+        iconImagePath: item.iconImagePath ?? null,
+
+        distanceMeters: Number(item.distanceMeters ?? 0),
+
+        durationSeconds: Number(item.durationSeconds ?? 0),
+
+        sessionCount: Number(item.sessionCount ?? 0),
+    }));
+}
+
 async function loadMonthlyRanking(monthKey: string): Promise<RankingItem[]> {
     const model = client.models.UserActivityMonthlySummary as any;
     const allData: any[] = [];
@@ -544,6 +687,49 @@ function formatDuration(totalSeconds: number): string {
 
 function formatMonthLabel(date: Date): string {
     return `${date.getFullYear()}年${date.getMonth() + 1}月`;
+}
+
+function getWeekStart(value: Date): Date {
+    const date = new Date(value);
+
+    date.setHours(0, 0, 0, 0);
+
+    const day = date.getDay();
+
+    const daysFromMonday = day === 0 ? 6 : day - 1;
+
+    date.setDate(date.getDate() - daysFromMonday);
+
+    return date;
+}
+
+function formatWeekLabel(weekStart: Date): string {
+    const start = getWeekStart(weekStart);
+
+    const end = new Date(start);
+
+    end.setDate(end.getDate() + 6);
+
+    if (
+        start.getFullYear() === end.getFullYear() &&
+        start.getMonth() === end.getMonth()
+    ) {
+        return `${start.getFullYear()}年${
+            start.getMonth() + 1
+        }月${start.getDate()}日〜${end.getDate()}日`;
+    }
+
+    if (start.getFullYear() === end.getFullYear()) {
+        return `${start.getFullYear()}年${
+            start.getMonth() + 1
+        }月${start.getDate()}日〜${end.getMonth() + 1}月${end.getDate()}日`;
+    }
+
+    return `${start.getFullYear()}年${
+        start.getMonth() + 1
+    }月${start.getDate()}日〜${end.getFullYear()}年${
+        end.getMonth() + 1
+    }月${end.getDate()}日`;
 }
 
 const styles = StyleSheet.create({

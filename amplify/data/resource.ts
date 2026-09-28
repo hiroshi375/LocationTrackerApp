@@ -179,6 +179,31 @@ const schema = a
                 allow.owner(),
                 allow.authenticated().to(["read"]),
             ]),
+        UserActivityWeeklySummary: a
+            .model({
+                userId: a.string().required(),
+                weekKey: a.string().required(),
+
+                distanceMeters: a.float().required(),
+                durationSeconds: a.integer().required(),
+                sessionCount: a.integer().required(),
+
+                displayName: a.string(),
+                iconImagePath: a.string(),
+            })
+            .secondaryIndexes((index) => [
+                index("weekKey")
+                    .sortKeys(["distanceMeters"])
+                    .queryField("listWeeklyActivityRanking"),
+
+                index("userId")
+                    .sortKeys(["weekKey"])
+                    .queryField("listWeeklyActivitySummariesByUser"),
+            ])
+            .authorization((allow) => [
+                allow.owner(),
+                allow.authenticated().to(["read"]),
+            ]),
         LiveLocation: a
             .model({
                 userId: a.string().required(),

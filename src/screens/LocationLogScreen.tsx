@@ -1982,6 +1982,40 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                     </Pressable>
                 </View>
 
+                {historyViewMode === "mine" && (
+                    <Pressable
+                        style={({ pressed }) => [
+                            styles.analyticsLinkButton,
+                            pressed && styles.analyticsLinkButtonPressed,
+                        ]}
+                        onPress={() => navigation.navigate("ActivityAnalytics")}
+                    >
+                        <View style={styles.analyticsLinkIconCircle}>
+                            <MaterialCommunityIcons
+                                name="chart-areaspline"
+                                size={23}
+                                color="#0e9384"
+                            />
+                        </View>
+
+                        <View style={styles.analyticsLinkTextArea}>
+                            <Text style={styles.analyticsLinkTitle}>
+                                アクティビティ分析
+                            </Text>
+
+                            <Text style={styles.analyticsLinkDescription}>
+                                距離・活動時間・活動回数の推移を見る
+                            </Text>
+                        </View>
+
+                        <MaterialCommunityIcons
+                            name="chevron-right"
+                            size={25}
+                            color="#84949b"
+                        />
+                    </Pressable>
+                )}
+
                 <View
                     ref={activityHistorySearchTourRef}
                     collapsable={false}
@@ -3222,6 +3256,71 @@ const styles = StyleSheet.create({
 
     historyTabTextActive: {
         color: "#ffffff",
+    },
+
+    analyticsLinkButton: {
+        minHeight: 66,
+
+        marginBottom: 14,
+
+        paddingHorizontal: 13,
+        paddingVertical: 10,
+
+        flexDirection: "row",
+        alignItems: "center",
+
+        borderWidth: 1,
+        borderColor: "#d7e3e8",
+        borderRadius: 12,
+
+        backgroundColor: "#ffffff",
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 1,
+        },
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+
+        elevation: 1,
+    },
+
+    analyticsLinkButtonPressed: {
+        opacity: 0.75,
+    },
+
+    analyticsLinkIconCircle: {
+        width: 42,
+        height: 42,
+
+        marginRight: 11,
+
+        borderRadius: 21,
+
+        alignItems: "center",
+        justifyContent: "center",
+
+        backgroundColor: "#e1f3ef",
+    },
+
+    analyticsLinkTextArea: {
+        flex: 1,
+    },
+
+    analyticsLinkTitle: {
+        color: "#234958",
+
+        fontSize: 14,
+        fontWeight: "700",
+    },
+
+    analyticsLinkDescription: {
+        marginTop: 3,
+
+        color: "#75868e",
+
+        fontSize: 11,
     },
 
     searchSection: {

@@ -26,6 +26,7 @@ import ShareGroupManagementScreen from "../screens/ShareGroupManagementScreen";
 import TermsOfServiceScreen from "../screens/TermsOfServiceScreen";
 import SubscriptionPlanScreen from "../screens/SubscriptionPlanScreen";
 import TermsConsentScreen from "../screens/TermsConsentScreen";
+import ActivityAnalyticsScreen from "../screens/ActivityAnalyticsScreen";
 
 import { getLegalConsentStatus } from "../services/legalConsentService";
 
@@ -76,6 +77,7 @@ export type RootStackParamList = {
     Profile: undefined;
     LiveLocationMap: undefined;
     ActivityRanking: undefined;
+    ActivityAnalytics: undefined;
     AppInfo: undefined;
     PrivacyPolicy: undefined;
     TermsOfService: undefined;
@@ -308,6 +310,13 @@ export default function RootNavigator() {
                         <Stack.Screen
                             name="LocationMap"
                             component={LocationMapScreen}
+                            options={{
+                                headerShown: false,
+                            }}
+                        />
+                        <Stack.Screen
+                            name="ActivityAnalytics"
+                            component={ActivityAnalyticsScreen}
                             options={{
                                 headerShown: false,
                             }}

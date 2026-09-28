@@ -3006,6 +3006,17 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
 
                         <View style={styles.homeMenuItem}>
                             <HomeMenuButton
+                                title="分析"
+                                iconName="chart-areaspline"
+                                iconColor="#0e9384"
+                                onPress={() =>
+                                    navigation.navigate("ActivityAnalytics")
+                                }
+                            />
+                        </View>
+
+                        <View style={styles.homeMenuItem}>
+                            <HomeMenuButton
                                 title="ランキング"
                                 iconName="trophy-outline"
                                 iconColor="#f5aa24"

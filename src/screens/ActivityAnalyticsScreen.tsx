@@ -298,7 +298,11 @@ export default function ActivityAnalyticsScreen({ navigation }: Props) {
 
     const chartPoints = useMemo(
         () =>
-            createChartPoints(periodMode, periodRange.start, filteredSessions),
+            createChartPoints(
+                periodMode,
+                new Date(periodStartTime),
+                filteredSessions,
+            ),
         [periodMode, periodStartTime, filteredSessions],
     );
 

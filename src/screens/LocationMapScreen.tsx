@@ -211,7 +211,11 @@ const START_PIN_IMAGE = require("../../assets/images/map-start-pin-marker.png");
 const GOAL_PIN_IMAGE = require("../../assets/images/map-goal-pin-marker.png");
 const ROUTE_ENDPOINT_MARKER_SIZE = 108;
 const ROUTE_ENDPOINT_MARKER_ANCHOR_Y = 0.82;
-
+/*
+ * スタート／ゴールマーカーの先端位置補正。
+ * 正の値で下方向へ移動する。
+ */
+const ROUTE_ENDPOINT_MARKER_VERTICAL_OFFSET = 6;
 export default function LocationMapScreen({ route, navigation }: Props) {
     const insets = useSafeAreaInsets();
     const { start: startTour } = useTour();
@@ -401,11 +405,18 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     }, [mapReady, shouldShowLiveCurrentLocation, currentLocation]);
 
     const updateRouteEndpointScreenPoints = useCallback(async () => {
-        if (!mapReady || !mapRef.current || isSharedCurrentLocationOnlyMap) {
+        if (
+            !mapReady ||
+            !mapRef.current ||
+            !isMapVisible ||
+            isSharedCurrentLocationOnlyMap
+        ) {
             setStartLocationScreenPoint(null);
             setEndLocationScreenPoint(null);
             return;
         }
+
+        const currentMap = mapRef.current;
 
         const sessionRouteLogs = activeSessionId
             ? buildRouteLogs(
@@ -427,46 +438,83 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                 : null;
 
         try {
-            if (startLocation) {
-                const point = await mapRef.current.pointForCoordinate({
-                    latitude: startLocation.latitude,
-                    longitude: startLocation.longitude,
-                });
+            const [startPoint, endPoint] = await Promise.all([
+                startLocation
+                    ? currentMap.pointForCoordinate({
+                          latitude: startLocation.latitude,
+                          longitude: startLocation.longitude,
+                      })
+                    : Promise.resolve(null),
 
+                endLocation
+                    ? currentMap.pointForCoordinate({
+                          latitude: endLocation.latitude,
+                          longitude: endLocation.longitude,
+                      })
+                    : Promise.resolve(null),
+            ]);
+
+            /*
+             * await中に画面遷移などでMapViewが破棄された場合は、
+             * 取得結果を反映しない。
+             */
+            if (!mapRef.current || !isMapVisible) {
+                return;
+            }
+
+            if (startPoint) {
                 setStartLocationScreenPoint({
-                    x: point.x,
-                    y: point.y,
+                    x: startPoint.x,
+                    y: startPoint.y,
                 });
             } else {
                 setStartLocationScreenPoint(null);
             }
 
-            if (endLocation) {
-                const point = await mapRef.current.pointForCoordinate({
-                    latitude: endLocation.latitude,
-                    longitude: endLocation.longitude,
-                });
-
+            if (endPoint) {
                 setEndLocationScreenPoint({
-                    x: point.x,
-                    y: point.y,
+                    x: endPoint.x,
+                    y: endPoint.y,
                 });
             } else {
                 setEndLocationScreenPoint(null);
             }
         } catch (error) {
-            console.error("Route endpoint screen point error:", error);
-
-            setStartLocationScreenPoint(null);
-            setEndLocationScreenPoint(null);
+            /*
+             * MapView生成・破棄の境界では
+             * pointForCoordinate() が一時的に失敗する可能性がある。
+             */
+            console.log(
+                "[LocationMapScreen] Route endpoint screen point skipped:",
+                error,
+            );
         }
     }, [
         mapReady,
+        isMapVisible,
         isSharedCurrentLocationOnlyMap,
         activeSessionId,
         logs,
         isLiveRecordingMap,
     ]);
+
+    const refreshRouteEndpointMarkersAfterMapSettled = useCallback(() => {
+        if (!mapReady || !isMapVisible || !mapRef.current) {
+            return;
+        }
+
+        const refresh = () => {
+            if (!mapReady || !isMapVisible || !mapRef.current) {
+                return;
+            }
+
+            void updateRouteEndpointScreenPoints();
+        };
+
+        setTimeout(refresh, 150);
+        setTimeout(refresh, 450);
+        setTimeout(refresh, 800);
+    }, [mapReady, isMapVisible, updateRouteEndpointScreenPoints]);
 
     const loadLogs = useCallback(
         async (showLoading: boolean = true) => {
@@ -1379,6 +1427,9 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                         duration: 500,
                     },
                 );
+
+                refreshRouteEndpointMarkersAfterMapSettled();
+
                 return;
             }
 
@@ -1393,6 +1444,8 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                       },
                 animated: true,
             });
+
+            refreshRouteEndpointMarkersAfterMapSettled();
         }, 300);
 
         return () => {
@@ -1407,6 +1460,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         currentLocation,
         activeSessionId,
         logs,
+        refreshRouteEndpointMarkersAfterMapSettled,
     ]);
 
     useEffect(() => {
@@ -2674,7 +2728,8 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                             top:
                                 startLocationScreenPoint.y -
                                 ROUTE_ENDPOINT_MARKER_SIZE *
-                                    ROUTE_ENDPOINT_MARKER_ANCHOR_Y,
+                                    ROUTE_ENDPOINT_MARKER_ANCHOR_Y +
+                                ROUTE_ENDPOINT_MARKER_VERTICAL_OFFSET,
                         },
                     ]}
                 >
@@ -2699,7 +2754,8 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                             top:
                                 endLocationScreenPoint.y -
                                 ROUTE_ENDPOINT_MARKER_SIZE *
-                                    ROUTE_ENDPOINT_MARKER_ANCHOR_Y,
+                                    ROUTE_ENDPOINT_MARKER_ANCHOR_Y +
+                                ROUTE_ENDPOINT_MARKER_VERTICAL_OFFSET,
                         },
                     ]}
                 >

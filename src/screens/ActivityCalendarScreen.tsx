@@ -21,6 +21,7 @@ import type { RootStackParamList } from "../navigation/RootNavigator";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { getActivityTypeColor } from "../constants/activityTypeColors";
 
 type Props = NativeStackScreenProps<RootStackParamList, "ActivityCalendar">;
 
@@ -471,42 +472,44 @@ function getActivityTypeIconSpec(
         | "help-circle-outline";
     backgroundColor: string;
 } {
+    const backgroundColor = getActivityTypeColor(activityType);
+
     switch (activityType) {
         case "WALKING":
             return {
                 name: "walk",
-                backgroundColor: "#15B8A6",
+                backgroundColor,
             };
 
         case "RUNNING":
             return {
                 name: "run",
-                backgroundColor: "#5AA9F7",
+                backgroundColor,
             };
 
         case "CYCLING":
             return {
                 name: "bike",
-                backgroundColor: "#F5B32F",
+                backgroundColor,
             };
 
         case "VEHICLE":
             return {
                 name: "car",
-                backgroundColor: "#F26B6B",
+                backgroundColor,
             };
 
         case "MIXED":
             return {
                 name: "transit-connection-variant",
-                backgroundColor: "#8B7CF6",
+                backgroundColor,
             };
 
         case "UNKNOWN":
         default:
             return {
                 name: "help-circle-outline",
-                backgroundColor: "#9AA5B1",
+                backgroundColor,
             };
     }
 }

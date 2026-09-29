@@ -18,6 +18,7 @@ import Svg, {
     G,
     Line,
     Polyline,
+    Rect,
     Text as SvgText,
 } from "react-native-svg";
 import { useFocusEffect } from "@react-navigation/native";
@@ -25,6 +26,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { client } from "../lib/client";
 import type { RootStackParamList } from "../navigation/RootNavigator";
+import { ACTIVITY_TYPE_COLORS } from "../constants/activityTypeColors";
 
 type Props = NativeStackScreenProps<RootStackParamList, "ActivityAnalytics">;
 
@@ -60,6 +62,14 @@ type ChartPoint = {
     sessionCount: number;
 };
 
+type StackedChartPoint = {
+    key: string;
+    label: string;
+    walking: number;
+    running: number;
+    cycling: number;
+};
+
 type ListResult = {
     data?: any[] | null;
     errors?: unknown;
@@ -90,26 +100,31 @@ const ACTIVITY_FILTERS: {
     value: ActivityFilter;
     label: string;
     icon: keyof typeof MaterialCommunityIcons.glyphMap;
+    color: string;
 }[] = [
     {
         value: "ALL",
         label: "すべて",
         icon: "chart-line",
+        color: "#0e7185",
     },
     {
         value: "WALKING",
         label: "ウォーキング",
         icon: "walk",
+        color: ACTIVITY_TYPE_COLORS.WALKING,
     },
     {
         value: "RUNNING",
         label: "ランニング",
         icon: "run",
+        color: ACTIVITY_TYPE_COLORS.RUNNING,
     },
     {
         value: "CYCLING",
         label: "サイクリング",
         icon: "bike",
+        color: ACTIVITY_TYPE_COLORS.CYCLING,
     },
 ];
 
@@ -306,6 +321,17 @@ export default function ActivityAnalyticsScreen({ navigation }: Props) {
         [periodMode, periodStartTime, filteredSessions],
     );
 
+    const stackedChartPoints = useMemo(
+        () =>
+            createStackedChartPoints(
+                periodMode,
+                new Date(periodStartTime),
+                sessions,
+                selectedMetric,
+            ),
+        [periodMode, periodStartTime, sessions, selectedMetric],
+    );
+
     const currentPeriodStart = useMemo(
         () => getPeriodRange(periodMode, new Date()).start.getTime(),
         [periodMode],
@@ -474,22 +500,25 @@ export default function ActivityAnalyticsScreen({ navigation }: Props) {
                                 key={option.value}
                                 style={[
                                     styles.activityFilterButton,
-
-                                    selected &&
-                                        styles.activityFilterButtonSelected,
+                                    selected && {
+                                        borderColor: option.color,
+                                        backgroundColor: option.color,
+                                    },
                                 ]}
                                 onPress={() => setActivityFilter(option.value)}
                             >
                                 <MaterialCommunityIcons
                                     name={option.icon}
                                     size={17}
-                                    color={selected ? "#ffffff" : "#526873"}
+                                    color={selected ? "#ffffff" : option.color}
                                 />
 
                                 <Text
                                     style={[
                                         styles.activityFilterText,
-
+                                        !selected && {
+                                            color: option.color,
+                                        },
                                         selected &&
                                             styles.activityFilterTextSelected,
                                     ]}
@@ -601,10 +630,12 @@ export default function ActivityAnalyticsScreen({ navigation }: Props) {
                                     title={selectedChartOption.title}
                                     icon={selectedChartOption.icon}
                                     points={chartPoints}
+                                    stackedPoints={stackedChartPoints}
                                     metricKey={selectedChartOption.key}
                                     unit={selectedChartOption.unit}
                                     chartWidth={chartWidth}
                                     periodMode={periodMode}
+                                    showStackedBars={activityFilter === "ALL"}
                                 />
                             </>
                         )}
@@ -645,18 +676,22 @@ function AnalyticsChartCard({
     title,
     icon,
     points,
+    stackedPoints,
     metricKey,
     unit,
     chartWidth,
     periodMode,
+    showStackedBars,
 }: {
     title: string;
     icon: keyof typeof MaterialCommunityIcons.glyphMap;
     points: ChartPoint[];
+    stackedPoints: StackedChartPoint[];
     metricKey: MetricKey;
     unit: string;
     chartWidth: number;
     periodMode: PeriodMode;
+    showStackedBars: boolean;
 }) {
     return (
         <View style={styles.chartCard}>
@@ -666,15 +701,207 @@ function AnalyticsChartCard({
                 <Text style={styles.chartTitle}>{title}</Text>
             </View>
 
-            {/* 縦軸の単位 */}
             <Text style={styles.chartAxisNote}>縦軸：{unit}</Text>
 
-            <SimpleLineChart
-                points={points}
-                metricKey={metricKey}
-                width={chartWidth}
-                periodMode={periodMode}
-            />
+            {showStackedBars ? (
+                <>
+                    <ActivityChartLegend />
+
+                    <SimpleStackedBarChart
+                        points={stackedPoints}
+                        metricKey={metricKey}
+                        width={chartWidth}
+                        periodMode={periodMode}
+                    />
+                </>
+            ) : (
+                <SimpleLineChart
+                    points={points}
+                    metricKey={metricKey}
+                    width={chartWidth}
+                    periodMode={periodMode}
+                />
+            )}
+        </View>
+    );
+}
+
+function SimpleStackedBarChart({
+    points,
+    metricKey,
+    width,
+    periodMode,
+}: {
+    points: StackedChartPoint[];
+    metricKey: MetricKey;
+    width: number;
+    periodMode: PeriodMode;
+}) {
+    const height = 230;
+
+    const paddingLeft = 52;
+    const paddingRight = 18;
+    const paddingTop = 24;
+    const paddingBottom = 48;
+
+    const plotWidth = width - paddingLeft - paddingRight;
+
+    const plotHeight = height - paddingTop - paddingBottom;
+
+    const totals = points.map(
+        (point) => point.walking + point.running + point.cycling,
+    );
+
+    const rawMax = Math.max(0, ...totals);
+
+    const maxValue = rawMax <= 0 ? 1 : getNiceMaxValue(rawMax, metricKey);
+
+    const yStepCount = 4;
+
+    const xStep = points.length > 0 ? plotWidth / points.length : plotWidth;
+
+    /*
+     * 月間は31本近く表示するため細めにする。
+     * 週間・年間は少し太めに表示する。
+     */
+    const barWidth =
+        periodMode === "MONTHLY"
+            ? Math.max(3, Math.min(8, xStep * 0.62))
+            : periodMode === "YEARLY"
+              ? Math.max(10, Math.min(18, xStep * 0.58))
+              : Math.max(14, Math.min(28, xStep * 0.58));
+
+    return (
+        <View>
+            <Svg width={width} height={height}>
+                {/* 横グリッド＋Y軸ラベル */}
+                {Array.from({
+                    length: yStepCount + 1,
+                }).map((_, index) => {
+                    const ratio = index / yStepCount;
+
+                    const y = paddingTop + plotHeight * ratio;
+
+                    const value = maxValue * (1 - ratio);
+
+                    return (
+                        <G key={`grid-${index}`}>
+                            <Line
+                                x1={paddingLeft}
+                                y1={y}
+                                x2={width - paddingRight}
+                                y2={y}
+                                stroke="#e3eaee"
+                                strokeWidth={1}
+                            />
+
+                            <SvgText
+                                x={paddingLeft - 8}
+                                y={y + 4}
+                                textAnchor="end"
+                                fontSize={10}
+                                fill="#758790"
+                            >
+                                {formatYAxisValue(value, metricKey)}
+                            </SvgText>
+                        </G>
+                    );
+                })}
+
+                {/* Y軸 */}
+                <Line
+                    x1={paddingLeft}
+                    y1={paddingTop}
+                    x2={paddingLeft}
+                    y2={paddingTop + plotHeight}
+                    stroke="#b7c6cd"
+                    strokeWidth={1}
+                />
+
+                {/* X軸 */}
+                <Line
+                    x1={paddingLeft}
+                    y1={paddingTop + plotHeight}
+                    x2={width - paddingRight}
+                    y2={paddingTop + plotHeight}
+                    stroke="#b7c6cd"
+                    strokeWidth={1}
+                />
+
+                {points.map((point, index) => {
+                    const x = paddingLeft + xStep * index + xStep / 2;
+
+                    const walkingHeight =
+                        (point.walking / maxValue) * plotHeight;
+
+                    const runningHeight =
+                        (point.running / maxValue) * plotHeight;
+
+                    const cyclingHeight =
+                        (point.cycling / maxValue) * plotHeight;
+
+                    const baselineY = paddingTop + plotHeight;
+
+                    const walkingY = baselineY - walkingHeight;
+
+                    const runningY = walkingY - runningHeight;
+
+                    const cyclingY = runningY - cyclingHeight;
+
+                    return (
+                        <G key={point.key}>
+                            {/* ウォーキング */}
+                            {walkingHeight > 0 && (
+                                <Rect
+                                    x={x - barWidth / 2}
+                                    y={walkingY}
+                                    width={barWidth}
+                                    height={walkingHeight}
+                                    fill={ACTIVITY_TYPE_COLORS.WALKING}
+                                />
+                            )}
+
+                            {/* ランニング */}
+                            {runningHeight > 0 && (
+                                <Rect
+                                    x={x - barWidth / 2}
+                                    y={runningY}
+                                    width={barWidth}
+                                    height={runningHeight}
+                                    fill={ACTIVITY_TYPE_COLORS.RUNNING}
+                                />
+                            )}
+
+                            {/* サイクリング */}
+                            {cyclingHeight > 0 && (
+                                <Rect
+                                    x={x - barWidth / 2}
+                                    y={cyclingY}
+                                    width={barWidth}
+                                    height={cyclingHeight}
+                                    fill={ACTIVITY_TYPE_COLORS.CYCLING}
+                                />
+                            )}
+
+                            {shouldShowXAxisLabel(
+                                periodMode,
+                                index,
+                                points.length,
+                            ) && (
+                                <SvgText
+                                    x={x}
+                                    y={paddingTop + plotHeight + 22}
+                                    textAnchor="middle"
+                                    fontSize={periodMode === "YEARLY" ? 8 : 9}
+                                    fill="#71838c"
+                                >
+                                    {formatXAxisLabel(point.label, periodMode)}
+                                </SvgText>
+                            )}
+                        </G>
+                    );
+                })}
+            </Svg>
         </View>
     );
 }
@@ -959,6 +1186,42 @@ function createChartPoints(
         });
 }
 
+function createStackedChartPoints(
+    periodMode: PeriodMode,
+    periodStart: Date,
+    sessions: RecordingSessionItem[],
+    metricKey: MetricKey,
+): StackedChartPoint[] {
+    const walkingPoints = createChartPoints(
+        periodMode,
+        periodStart,
+        sessions.filter((session) => session.activityType === "WALKING"),
+    );
+
+    const runningPoints = createChartPoints(
+        periodMode,
+        periodStart,
+        sessions.filter((session) => session.activityType === "RUNNING"),
+    );
+
+    const cyclingPoints = createChartPoints(
+        periodMode,
+        periodStart,
+        sessions.filter((session) => session.activityType === "CYCLING"),
+    );
+
+    return walkingPoints.map((walkingPoint, index) => ({
+        key: walkingPoint.key,
+        label: walkingPoint.label,
+
+        walking: Number(walkingPoint[metricKey] ?? 0),
+
+        running: Number(runningPoints[index]?.[metricKey] ?? 0),
+
+        cycling: Number(cyclingPoints[index]?.[metricKey] ?? 0),
+    }));
+}
+
 function createDayPoint(
     date: Date,
     sessions: RecordingSessionItem[],
@@ -1192,6 +1455,48 @@ function formatYAxisValue(value: number, metricKey: MetricKey): string {
     return value.toFixed(1);
 }
 
+function ActivityChartLegend() {
+    return (
+        <View style={styles.activityChartLegend}>
+            <View style={styles.activityChartLegendItem}>
+                <View
+                    style={[
+                        styles.activityChartLegendColor,
+                        {
+                            backgroundColor: ACTIVITY_TYPE_COLORS.WALKING,
+                        },
+                    ]}
+                />
+                <Text style={styles.activityChartLegendText}>ウォーキング</Text>
+            </View>
+
+            <View style={styles.activityChartLegendItem}>
+                <View
+                    style={[
+                        styles.activityChartLegendColor,
+                        {
+                            backgroundColor: ACTIVITY_TYPE_COLORS.RUNNING,
+                        },
+                    ]}
+                />
+                <Text style={styles.activityChartLegendText}>ランニング</Text>
+            </View>
+
+            <View style={styles.activityChartLegendItem}>
+                <View
+                    style={[
+                        styles.activityChartLegendColor,
+                        {
+                            backgroundColor: ACTIVITY_TYPE_COLORS.CYCLING,
+                        },
+                    ]}
+                />
+                <Text style={styles.activityChartLegendText}>サイクリング</Text>
+            </View>
+        </View>
+    );
+}
+
 const styles = StyleSheet.create({
     screen: {
         flex: 1,
@@ -1381,11 +1686,6 @@ const styles = StyleSheet.create({
         backgroundColor: "#ffffff",
     },
 
-    activityFilterButtonSelected: {
-        borderColor: "#0e7185",
-        backgroundColor: "#0e7185",
-    },
-
     activityFilterText: {
         color: "#526873",
         fontSize: 12,
@@ -1563,5 +1863,33 @@ const styles = StyleSheet.create({
         color: "#7b8c94",
         fontSize: 12,
         lineHeight: 18,
+    },
+
+    activityChartLegend: {
+        flexDirection: "row",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 12,
+        marginTop: 4,
+        marginLeft: 7,
+        marginBottom: 2,
+    },
+
+    activityChartLegendItem: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+    },
+
+    activityChartLegendColor: {
+        width: 10,
+        height: 10,
+        borderRadius: 2,
+    },
+
+    activityChartLegendText: {
+        color: "#667780",
+        fontSize: 10,
+        fontWeight: "600",
     },
 });

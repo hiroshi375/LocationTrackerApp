@@ -6,6 +6,7 @@ import {
     Text,
     View,
 } from "react-native";
+import { getActivityTypeColor as getSharedActivityTypeColor } from "../constants/activityTypeColors";
 
 export type ActivityType =
     | "WALKING"
@@ -278,26 +279,7 @@ export function createLocalDateKey(date: Date): string {
 }
 
 export function getActivityTypeColor(activityType: ActivityType): string {
-    switch (activityType) {
-        case "WALKING":
-            return "#15B8A6";
-
-        case "RUNNING":
-            return "#5AA9F7";
-
-        case "CYCLING":
-            return "#F5B32F";
-
-        case "VEHICLE":
-            return "#F26B6B";
-
-        case "MIXED":
-            return "#8B7CF6";
-
-        case "UNKNOWN":
-        default:
-            return "#9AA5B1";
-    }
+    return getSharedActivityTypeColor(activityType);
 }
 
 const styles = StyleSheet.create({

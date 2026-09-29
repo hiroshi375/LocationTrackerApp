@@ -279,6 +279,8 @@ export default function ActivityRankingScreen() {
 
                     <Text style={styles.rankingTargetNoticeText}>
                         ランキングには「ウォーキング」と「ランニング」の記録のみ集計されます。
+                        {"\n"}
+                        ランキングには、共有ユーザー以外のユーザーも表示されます。
                     </Text>
                 </View>
 

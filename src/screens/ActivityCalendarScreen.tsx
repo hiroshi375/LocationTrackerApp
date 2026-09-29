@@ -425,12 +425,6 @@ export default function ActivityCalendarScreen({ navigation }: Props) {
     );
 }
 
-function formatDateLabel(dateKey: string): string {
-    const [year, month, day] = dateKey.split("-").map(Number);
-
-    return `${year}年${month}月${day}日`;
-}
-
 function formatSelectedDayTitle(dateKey: string): string {
     const [year, month, day] = dateKey.split("-").map(Number);
 

@@ -69,6 +69,11 @@ import { createMonthKey } from "../services/userActivityAggregationService";
 import { exportHeadlessDiagnosticLog } from "../services/headlessDiagnosticExportService";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import type { ComponentProps } from "react";
+import {
+    checkAppVersion,
+    openGooglePlay,
+    type AppVersionCheckResult,
+} from "../services/appVersionService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationHome">;
 
@@ -151,6 +156,12 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
         null,
     );
     const [isAdmin, setIsAdmin] = useState(false);
+    const [appVersionCheckResult, setAppVersionCheckResult] =
+        useState<AppVersionCheckResult | null>(null);
+
+    const [checkingAppVersion, setCheckingAppVersion] = useState(false);
+
+    const [updateCardDismissed, setUpdateCardDismissed] = useState(false);
 
     const { tier: subscriptionTier } = useSubscription();
     const monthlyActivityLimit =
@@ -225,6 +236,64 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             });
         });
     }, [startTour]);
+
+    const refreshAppVersion = useCallback(async (): Promise<void> => {
+        if (__DEV__) {
+            /*
+             * expo run:android等の開発ビルドでは
+             * productionのversionCode判定を行わない。
+             */
+            setAppVersionCheckResult(null);
+            return;
+        }
+
+        try {
+            setCheckingAppVersion(true);
+
+            const result = await checkAppVersion();
+
+            console.log("[AppVersion] Check result:", result);
+
+            setAppVersionCheckResult(result);
+
+            /*
+             * 新しいbuildが公開された場合は、
+             * 前回カードを閉じていたとしても再表示する。
+             */
+            if (result.updateAvailable) {
+                setUpdateCardDismissed(false);
+            }
+        } catch (error) {
+            /*
+             * バージョン確認失敗だけで
+             * アプリ本体を使えなくしない。
+             */
+            console.log("[AppVersion] Check skipped:", error);
+
+            setAppVersionCheckResult(null);
+        } finally {
+            setCheckingAppVersion(false);
+        }
+    }, []);
+
+    const handleOpenGooglePlay = useCallback(async (): Promise<void> => {
+        try {
+            await openGooglePlay(appVersionCheckResult?.playStoreUrl);
+        } catch (error) {
+            console.error("[AppVersion] Open Google Play error:", error);
+
+            Alert.alert(
+                "Google Playを開けません",
+                "時間をおいて、もう一度お試しください。",
+            );
+        }
+    }, [appVersionCheckResult?.playStoreUrl]);
+
+    useFocusEffect(
+        useCallback(() => {
+            void refreshAppVersion();
+        }, [refreshAppVersion]),
+    );
 
     useEffect(() => {
         void debugPrintLocationQueueRecoverySummary();
@@ -2427,6 +2496,82 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                     </Pressable>
                 </View>
 
+                {appVersionCheckResult?.updateAvailable &&
+                    !updateCardDismissed && (
+                        <View style={styles.appUpdateNoticeCard}>
+                            <View style={styles.appUpdateNoticeHeader}>
+                                <View style={styles.appUpdateNoticeTitleRow}>
+                                    <MaterialCommunityIcons
+                                        name="cellphone-arrow-down"
+                                        size={22}
+                                        color="#0e7185"
+                                    />
+
+                                    <Text style={styles.appUpdateNoticeTitle}>
+                                        新しいバージョンがあります
+                                    </Text>
+                                </View>
+
+                                {!appVersionCheckResult.updateRequired && (
+                                    <Pressable
+                                        style={({ pressed }) => [
+                                            styles.appUpdateNoticeCloseButton,
+                                            pressed && {
+                                                opacity: 0.6,
+                                            },
+                                        ]}
+                                        onPress={() =>
+                                            setUpdateCardDismissed(true)
+                                        }
+                                        hitSlop={8}
+                                    >
+                                        <MaterialCommunityIcons
+                                            name="close"
+                                            size={20}
+                                            color="#71838c"
+                                        />
+                                    </Pressable>
+                                )}
+                            </View>
+
+                            <Text style={styles.appUpdateNoticeMessage}>
+                                {appVersionCheckResult.message}
+                            </Text>
+
+                            <Text style={styles.appUpdateNoticeVersion}>
+                                現在：
+                                {appVersionCheckResult.currentVersion ?? "不明"}
+                                （{appVersionCheckResult.currentBuild ?? "不明"}
+                                ）{"\n"}
+                                最新：
+                                {appVersionCheckResult.latestVersion ||
+                                    "最新版"}
+                                （{appVersionCheckResult.latestBuild}）
+                            </Text>
+
+                            <Pressable
+                                style={({ pressed }) => [
+                                    styles.appUpdateNoticeButton,
+                                    pressed &&
+                                        styles.appUpdateNoticeButtonPressed,
+                                ]}
+                                onPress={() => {
+                                    void handleOpenGooglePlay();
+                                }}
+                            >
+                                <MaterialCommunityIcons
+                                    name="google-play"
+                                    size={19}
+                                    color="#ffffff"
+                                />
+
+                                <Text style={styles.appUpdateNoticeButtonText}>
+                                    Google Playでアップデート
+                                </Text>
+                            </Pressable>
+                        </View>
+                    )}
+
                 <View
                     ref={sharingTourRef}
                     collapsable={false}
@@ -4604,6 +4749,101 @@ const styles = StyleSheet.create({
     locationPermissionSettingsButtonText: {
         color: "#ffffff",
         fontSize: 13,
+        fontWeight: "700",
+    },
+
+    appUpdateNoticeCard: {
+        marginHorizontal: 14,
+        marginTop: 12,
+        marginBottom: 4,
+
+        padding: 14,
+
+        borderWidth: 1,
+        borderColor: "#b7dfd8",
+        borderRadius: 14,
+
+        backgroundColor: "#eef9f7",
+    },
+
+    appUpdateNoticeHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+
+        marginBottom: 8,
+    },
+
+    appUpdateNoticeTitleRow: {
+        flex: 1,
+
+        flexDirection: "row",
+        alignItems: "center",
+
+        gap: 7,
+    },
+
+    appUpdateNoticeTitle: {
+        flex: 1,
+
+        color: "#174b52",
+
+        fontSize: 15,
+        fontWeight: "800",
+    },
+
+    appUpdateNoticeCloseButton: {
+        width: 32,
+        height: 32,
+
+        alignItems: "center",
+        justifyContent: "center",
+
+        marginLeft: 8,
+    },
+
+    appUpdateNoticeMessage: {
+        color: "#526a72",
+
+        fontSize: 13,
+        lineHeight: 19,
+
+        marginBottom: 8,
+    },
+
+    appUpdateNoticeVersion: {
+        color: "#71838c",
+
+        fontSize: 11,
+        lineHeight: 17,
+
+        marginBottom: 12,
+    },
+
+    appUpdateNoticeButton: {
+        minHeight: 44,
+
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+
+        gap: 7,
+
+        paddingHorizontal: 14,
+
+        borderRadius: 11,
+
+        backgroundColor: "#0e7185",
+    },
+
+    appUpdateNoticeButtonPressed: {
+        opacity: 0.82,
+    },
+
+    appUpdateNoticeButtonText: {
+        color: "#ffffff",
+
+        fontSize: 14,
         fontWeight: "700",
     },
 });

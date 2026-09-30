@@ -19,6 +19,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 import { getBackgroundRecordingStatus } from "../services/backgroundLocationService";
 import * as Application from "expo-application";
+import {
+    checkAppVersion,
+    openGooglePlay,
+    type AppVersionCheckResult,
+} from "../services/appVersionService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AppInfo">;
 
@@ -47,6 +52,56 @@ export default function AppInfoScreen({ navigation }: Props) {
     );
     const [versionInfoExpanded, setVersionInfoExpanded] = useState(false);
     const isDevelopmentBuild = __DEV__;
+    const [playStoreVersionInfo, setPlayStoreVersionInfo] =
+        useState<AppVersionCheckResult | null>(null);
+
+    const [checkingPlayStoreVersion, setCheckingPlayStoreVersion] =
+        useState(false);
+
+    const handleCheckPlayStoreVersion = useCallback(async (): Promise<void> => {
+        if (checkingPlayStoreVersion) {
+            return;
+        }
+
+        try {
+            setCheckingPlayStoreVersion(true);
+
+            const result = await checkAppVersion();
+
+            setPlayStoreVersionInfo(result);
+
+            if (result.updateAvailable) {
+                Alert.alert(
+                    "新しいバージョンがあります",
+                    `現在のビルド：${
+                        result.currentBuild ?? "不明"
+                    }\n最新のビルド：${result.latestBuild}`,
+                    [
+                        {
+                            text: "閉じる",
+                            style: "cancel",
+                        },
+                        {
+                            text: "Google Playを開く",
+                            onPress: () => {
+                                void openGooglePlay(result.playStoreUrl);
+                            },
+                        },
+                    ],
+                );
+
+                return;
+            }
+
+            Alert.alert("最新版です", "現在のAcLog Fitは最新バージョンです。");
+        } catch (error) {
+            console.error("Check Play Store version error:", error);
+
+            Alert.alert("確認エラー", "最新版を確認できませんでした。");
+        } finally {
+            setCheckingPlayStoreVersion(false);
+        }
+    }, [checkingPlayStoreVersion]);
 
     const handleCheckEasUpdateInfo = useCallback(async (): Promise<void> => {
         if (checkingEasUpdateInfo) {
@@ -380,6 +435,82 @@ export default function AppInfoScreen({ navigation }: Props) {
                     )}
                 </View>
 
+                <View style={styles.playStoreCard}>
+                    <View style={styles.cardHeaderRow}>
+                        <MaterialCommunityIcons
+                            name="google-play"
+                            size={20}
+                            color="#0e9384"
+                        />
+
+                        <Text style={styles.cardTitle}>Google Play</Text>
+                    </View>
+
+                    <Text style={styles.updateDescription}>
+                        Google Playで公開されている最新版を確認できます。
+                    </Text>
+
+                    <InfoRow
+                        label="現在のバージョン"
+                        value={`${appVersion}（${buildVersion}）`}
+                    />
+
+                    {playStoreVersionInfo && (
+                        <InfoRow
+                            label="Google Play最新版"
+                            value={`${
+                                playStoreVersionInfo.latestVersion || "最新版"
+                            }（${playStoreVersionInfo.latestBuild}）`}
+                        />
+                    )}
+
+                    <Pressable
+                        style={({ pressed }) => [
+                            styles.primaryButton,
+
+                            pressed &&
+                                !checkingPlayStoreVersion &&
+                                styles.buttonPressed,
+
+                            checkingPlayStoreVersion && styles.disabledButton,
+                        ]}
+                        onPress={() => {
+                            void handleCheckPlayStoreVersion();
+                        }}
+                        disabled={checkingPlayStoreVersion}
+                    >
+                        <Text style={styles.primaryButtonText}>
+                            {checkingPlayStoreVersion
+                                ? "最新版を確認中..."
+                                : "最新版を確認"}
+                        </Text>
+                    </Pressable>
+
+                    <Pressable
+                        style={({ pressed }) => [
+                            styles.secondaryButton,
+                            pressed && styles.buttonPressed,
+                        ]}
+                        onPress={() => {
+                            void openGooglePlay(
+                                playStoreVersionInfo?.playStoreUrl,
+                            );
+                        }}
+                    >
+                        <View style={styles.playStoreButtonContent}>
+                            <MaterialCommunityIcons
+                                name="google-play"
+                                size={19}
+                                color="#ffffff"
+                            />
+
+                            <Text style={styles.secondaryButtonText}>
+                                Google Playを開く
+                            </Text>
+                        </View>
+                    </Pressable>
+                </View>
+
                 <View style={styles.menuCard}>
                     <View style={[styles.cardHeaderRow, styles.menuCardHeader]}>
                         <MaterialCommunityIcons
@@ -440,12 +571,12 @@ export default function AppInfoScreen({ navigation }: Props) {
                             color="#0e9384"
                         />
 
-                        <Text style={styles.cardTitle}>アプリUpdate</Text>
+                        <Text style={styles.cardTitle}>EAS Update</Text>
                     </View>
 
                     <Text style={styles.updateDescription}>
-                        EAS Update の配信状況を確認したり、
-                        最新のUpdateを手動で適用できます。
+                        アプリ本体の再インストールを必要としない EAS
+                        Updateの配信状況を確認・適用できます。
                     </Text>
 
                     <Pressable
@@ -968,5 +1099,34 @@ const styles = StyleSheet.create({
     menuCardHeader: {
         paddingHorizontal: 15,
         marginBottom: 4,
+    },
+
+    playStoreCard: {
+        marginBottom: 12,
+        padding: 15,
+
+        borderWidth: 1,
+        borderColor: "#dfe7ea",
+        borderRadius: 16,
+
+        backgroundColor: "#ffffff",
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+
+        elevation: 1,
+    },
+
+    playStoreButtonContent: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+
+        gap: 7,
     },
 });

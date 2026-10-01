@@ -159,8 +159,6 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
     const [appVersionCheckResult, setAppVersionCheckResult] =
         useState<AppVersionCheckResult | null>(null);
 
-    const [checkingAppVersion, setCheckingAppVersion] = useState(false);
-
     const [updateCardDismissed, setUpdateCardDismissed] = useState(false);
 
     const { tier: subscriptionTier } = useSubscription();
@@ -248,8 +246,6 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
         }
 
         try {
-            setCheckingAppVersion(true);
-
             const result = await checkAppVersion();
 
             console.log("[AppVersion] Check result:", result);
@@ -271,8 +267,6 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             console.log("[AppVersion] Check skipped:", error);
 
             setAppVersionCheckResult(null);
-        } finally {
-            setCheckingAppVersion(false);
         }
     }, []);
 

@@ -1,4 +1,5 @@
 import { fetchUserAttributes, getCurrentUser } from "aws-amplify/auth";
+import * as Application from "expo-application";
 
 import { client } from "../lib/client";
 
@@ -22,6 +23,9 @@ type UserProfileRecord = {
     currentMonthSessionCount?: number | null;
     subscriptionUsageMonthKey?: string | null;
     currentMonthRecordedActivityCount?: number | null;
+    appVersion?: string | null;
+    appBuildVersion?: number | null;
+    lastAppOpenedAt?: string | null;
 };
 
 type CurrentUserProfile = {
@@ -42,6 +46,9 @@ type CurrentUserProfile = {
     currentMonthSessionCount: number;
     subscriptionUsageMonthKey: string | null;
     currentMonthRecordedActivityCount: number;
+    appVersion: string | null;
+    appBuildVersion: number | null;
+    lastAppOpenedAt: string | null;
 };
 
 export async function ensureUserProfile() {
@@ -160,6 +167,73 @@ export async function updateUserProfileWeightKg(weightKg: number | null) {
     }
 }
 
+/**
+ * 現在ログインしているユーザーの
+ * アプリVersion / Build / 最終起動日時をUserProfileへ保存する。
+ *
+ * Google Play経由で実際にどのbuildが利用されているかを
+ * 管理側で確認するために使用する。
+ */
+export async function updateCurrentUserAppUsage(): Promise<void> {
+    const user = await getCurrentUser();
+
+    let existing = await findExistingUserProfile(user.userId);
+
+    /*
+     * UserProfileがまだ存在しないユーザーの場合は、
+     * 先に通常のプロフィールを作成する。
+     */
+    if (!existing) {
+        await ensureUserProfile();
+
+        existing = await findExistingUserProfile(user.userId);
+    }
+
+    if (!existing?.id) {
+        throw new Error(
+            `UserProfileを取得できませんでした。userId: ${user.userId}`,
+        );
+    }
+
+    const appVersion = Application.nativeApplicationVersion ?? null;
+
+    const nativeBuildVersion = Application.nativeBuildVersion;
+
+    const parsedBuildVersion =
+        nativeBuildVersion !== null && nativeBuildVersion !== undefined
+            ? Number(nativeBuildVersion)
+            : NaN;
+
+    const appBuildVersion = Number.isFinite(parsedBuildVersion)
+        ? Math.trunc(parsedBuildVersion)
+        : null;
+
+    const lastAppOpenedAt = new Date().toISOString();
+
+    const updateResult = await client.models.UserProfile.update({
+        id: existing.id,
+        appVersion,
+        appBuildVersion,
+        lastAppOpenedAt,
+    });
+
+    if (updateResult.errors) {
+        console.error(
+            "[AppUsage] UserProfile update errors:",
+            updateResult.errors,
+        );
+
+        throw new Error("アプリ利用情報を更新できませんでした。");
+    }
+
+    console.log("[AppUsage] UserProfile updated:", {
+        userId: user.userId,
+        appVersion,
+        appBuildVersion,
+        lastAppOpenedAt,
+    });
+}
+
 export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
     const user = await getCurrentUser();
     const attributes = await fetchUserAttributes();
@@ -195,6 +269,9 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
 
             currentMonthRecordedActivityCount:
                 existing.currentMonthRecordedActivityCount ?? 0,
+            appVersion: existing.appVersion ?? null,
+            appBuildVersion: existing.appBuildVersion ?? null,
+            lastAppOpenedAt: existing.lastAppOpenedAt ?? null,
         };
     }
 
@@ -221,6 +298,9 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
             currentMonthSessionCount: 0,
             subscriptionUsageMonthKey: null,
             currentMonthRecordedActivityCount: 0,
+            appVersion: null,
+            appBuildVersion: null,
+            lastAppOpenedAt: null,
         };
     }
 
@@ -245,6 +325,9 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
         subscriptionUsageMonthKey: created.subscriptionUsageMonthKey ?? null,
         currentMonthRecordedActivityCount:
             created.currentMonthRecordedActivityCount ?? 0,
+        appVersion: created.appVersion ?? null,
+        appBuildVersion: created.appBuildVersion ?? null,
+        lastAppOpenedAt: created.lastAppOpenedAt ?? null,
     };
 }
 

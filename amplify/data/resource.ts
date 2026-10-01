@@ -149,6 +149,9 @@ const schema = a
                 currentMonthSessionCount: a.integer(),
                 subscriptionUsageMonthKey: a.string(),
                 currentMonthRecordedActivityCount: a.integer(),
+                appVersion: a.string(),
+                appBuildVersion: a.integer(),
+                lastAppOpenedAt: a.datetime(),
             })
             .secondaryIndexes((index) => [
                 index("userId").queryField("listUserProfilesByUserId"),

@@ -64,6 +64,7 @@ import {
 import {
     ensureUserProfile,
     getCurrentUserProfile,
+    updateCurrentUserAppUsage,
 } from "../services/userProfileService";
 import { createMonthKey } from "../services/userActivityAggregationService";
 import { exportHeadlessDiagnosticLog } from "../services/headlessDiagnosticExportService";
@@ -268,6 +269,22 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
 
             setAppVersionCheckResult(null);
         }
+    }, []);
+
+    useEffect(() => {
+        const updateAppUsage = async (): Promise<void> => {
+            try {
+                await updateCurrentUserAppUsage();
+            } catch (error) {
+                /*
+                 * 利用バージョン情報の保存失敗だけで
+                 * Home画面を利用不可にしない。
+                 */
+                console.log("[AppUsage] Initial update skipped:", error);
+            }
+        };
+
+        void updateAppUsage();
     }, []);
 
     const handleOpenGooglePlay = useCallback(async (): Promise<void> => {
@@ -1382,6 +1399,16 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                     previousAppState !== "active" &&
                     nextAppState === "active"
                 ) {
+                    /*
+                     * アプリがForegroundへ復帰した日時と
+                     * 現在インストールされているVersion/Buildを保存する。
+                     */
+                    void updateCurrentUserAppUsage().catch((error) => {
+                        console.log(
+                            "[AppUsage] Foreground update skipped:",
+                            error,
+                        );
+                    });
                     /*
                      * 設定画面から戻った場合も、
                      * 「常に許可」状態を再確認する。

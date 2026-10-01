@@ -584,20 +584,25 @@ async function loadWeeklyRanking(weekKey: string): Promise<RankingItem[]> {
         nextToken = result.nextToken ?? null;
     } while (nextToken);
 
-    return allData.map((item) => ({
-        id: item.id,
-        userId: item.userId,
+    const profileMap = await loadUserProfileMap(
+        allData
+            .map((item) => item.userId)
+            .filter((userId): userId is string => typeof userId === "string"),
+    );
 
-        displayName: item.displayName ?? "ユーザー",
+    return allData.map((item) => {
+        const profile = profileMap.get(item.userId);
 
-        iconImagePath: item.iconImagePath ?? null,
-
-        distanceMeters: Number(item.distanceMeters ?? 0),
-
-        durationSeconds: Number(item.durationSeconds ?? 0),
-
-        sessionCount: Number(item.sessionCount ?? 0),
-    }));
+        return {
+            id: item.id,
+            userId: item.userId,
+            displayName: profile?.displayName ?? item.displayName ?? "ユーザー",
+            iconImagePath: profile?.iconImagePath ?? item.iconImagePath ?? null,
+            distanceMeters: Number(item.distanceMeters ?? 0),
+            durationSeconds: Number(item.durationSeconds ?? 0),
+            sessionCount: Number(item.sessionCount ?? 0),
+        };
+    });
 }
 
 async function loadMonthlyRanking(monthKey: string): Promise<RankingItem[]> {
@@ -621,15 +626,80 @@ async function loadMonthlyRanking(monthKey: string): Promise<RankingItem[]> {
         nextToken = result.nextToken ?? null;
     } while (nextToken);
 
-    return allData.map((item) => ({
-        id: item.id,
-        userId: item.userId,
-        displayName: item.displayName ?? "ユーザー",
-        iconImagePath: item.iconImagePath ?? null,
-        distanceMeters: Number(item.distanceMeters ?? 0),
-        durationSeconds: Number(item.durationSeconds ?? 0),
-        sessionCount: Number(item.sessionCount ?? 0),
-    }));
+    const profileMap = await loadUserProfileMap(
+        allData
+            .map((item) => item.userId)
+            .filter((userId): userId is string => typeof userId === "string"),
+    );
+
+    return allData.map((item) => {
+        const profile = profileMap.get(item.userId);
+
+        return {
+            id: item.id,
+            userId: item.userId,
+            displayName: profile?.displayName ?? item.displayName ?? "ユーザー",
+            iconImagePath: profile?.iconImagePath ?? item.iconImagePath ?? null,
+            distanceMeters: Number(item.distanceMeters ?? 0),
+            durationSeconds: Number(item.durationSeconds ?? 0),
+            sessionCount: Number(item.sessionCount ?? 0),
+        };
+    });
+}
+
+async function loadUserProfileMap(
+    userIds: string[],
+): Promise<Map<string, { displayName: string; iconImagePath: string | null }>> {
+    const uniqueUserIds = Array.from(new Set(userIds));
+
+    if (uniqueUserIds.length === 0) {
+        return new Map();
+    }
+
+    const model = client.models.UserProfile as any;
+
+    const allProfiles: any[] = [];
+    let nextToken: string | null = null;
+
+    do {
+        const result = (await model.list({
+            limit: 1000,
+            nextToken: nextToken ?? undefined,
+        })) as ListResult;
+
+        if (result.errors) {
+            throw new Error(JSON.stringify(result.errors));
+        }
+
+        allProfiles.push(...(result.data ?? []));
+        nextToken = result.nextToken ?? null;
+    } while (nextToken);
+
+    const targetUserIdSet = new Set(uniqueUserIds);
+
+    const profileMap = new Map<
+        string,
+        {
+            displayName: string;
+            iconImagePath: string | null;
+        }
+    >();
+
+    for (const profile of allProfiles) {
+        if (
+            typeof profile?.userId !== "string" ||
+            !targetUserIdSet.has(profile.userId)
+        ) {
+            continue;
+        }
+
+        profileMap.set(profile.userId, {
+            displayName: profile.displayName ?? profile.email ?? "ユーザー",
+            iconImagePath: profile.iconImagePath ?? null,
+        });
+    }
+
+    return profileMap;
 }
 
 async function loadTotalRanking(): Promise<RankingItem[]> {

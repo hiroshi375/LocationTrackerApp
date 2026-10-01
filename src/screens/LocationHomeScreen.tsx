@@ -2519,77 +2519,56 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
 
                 {appVersionCheckResult?.updateAvailable &&
                     !updateCardDismissed && (
-                        <View style={styles.appUpdateNoticeCard}>
-                            <View style={styles.appUpdateNoticeHeader}>
-                                <View style={styles.appUpdateNoticeTitleRow}>
-                                    <MaterialCommunityIcons
-                                        name="cellphone-arrow-down"
-                                        size={22}
-                                        color="#0e7185"
-                                    />
+                        <View style={styles.appUpdateCard}>
+                            <View style={styles.appUpdateCardHeader}>
+                                <MaterialCommunityIcons
+                                    name="update"
+                                    size={24}
+                                    color="#0e7185"
+                                />
 
-                                    <Text style={styles.appUpdateNoticeTitle}>
-                                        新しいバージョンがあります
-                                    </Text>
-                                </View>
-
-                                {!appVersionCheckResult.updateRequired && (
-                                    <Pressable
-                                        style={({ pressed }) => [
-                                            styles.appUpdateNoticeCloseButton,
-                                            pressed && {
-                                                opacity: 0.6,
-                                            },
-                                        ]}
-                                        onPress={() =>
-                                            setUpdateCardDismissed(true)
-                                        }
-                                        hitSlop={8}
-                                    >
-                                        <MaterialCommunityIcons
-                                            name="close"
-                                            size={20}
-                                            color="#71838c"
-                                        />
-                                    </Pressable>
-                                )}
+                                <Text style={styles.appUpdateCardTitle}>
+                                    新しいバージョンがあります
+                                </Text>
                             </View>
 
-                            <Text style={styles.appUpdateNoticeMessage}>
-                                {appVersionCheckResult.message}
+                            <Text style={styles.appUpdateCardMessage}>
+                                {appVersionCheckResult.message ||
+                                    "AcLog Fitの最新版をGoogle Playからインストールしてください。"}
                             </Text>
 
-                            <Text style={styles.appUpdateNoticeVersion}>
-                                現在：
-                                {appVersionCheckResult.currentVersion ?? "不明"}
-                                （{appVersionCheckResult.currentBuild ?? "不明"}
-                                ）{"\n"}
-                                最新：
-                                {appVersionCheckResult.latestVersion ||
-                                    "最新版"}
-                                （{appVersionCheckResult.latestBuild}）
+                            <Text style={styles.appUpdateCardVersion}>
+                                現在: Build {appVersionCheckResult.currentBuild}
+                                {"\n"}
+                                最新: Build {appVersionCheckResult.latestBuild}
                             </Text>
 
                             <Pressable
-                                style={({ pressed }) => [
-                                    styles.appUpdateNoticeButton,
-                                    pressed &&
-                                        styles.appUpdateNoticeButtonPressed,
-                                ]}
+                                style={styles.appUpdateButton}
                                 onPress={() => {
                                     void handleOpenGooglePlay();
                                 }}
                             >
                                 <MaterialCommunityIcons
                                     name="google-play"
-                                    size={19}
+                                    size={20}
                                     color="#ffffff"
                                 />
 
-                                <Text style={styles.appUpdateNoticeButtonText}>
-                                    Google Playでアップデート
+                                <Text style={styles.appUpdateButtonText}>
+                                    Google Playで更新する
                                 </Text>
                             </Pressable>
+
+                            {!appVersionCheckResult.updateRequired && (
+                                <Pressable
+                                    onPress={() => setUpdateCardDismissed(true)}
+                                >
+                                    <Text style={styles.appUpdateDismissText}>
+                                        あとで
+                                    </Text>
+                                </Pressable>
+                            )}
                         </View>
                     )}
 
@@ -4773,98 +4752,93 @@ const styles = StyleSheet.create({
         fontWeight: "700",
     },
 
-    appUpdateNoticeCard: {
-        marginHorizontal: 14,
+    appUpdateCard: {
+        marginHorizontal: 16,
         marginTop: 12,
         marginBottom: 4,
-
-        padding: 14,
+        padding: 16,
 
         borderWidth: 1,
-        borderColor: "#b7dfd8",
+        borderColor: "#b8dce4",
         borderRadius: 14,
 
-        backgroundColor: "#eef9f7",
+        backgroundColor: "#f2fbfd",
+
+        shadowColor: "#000000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.06,
+        shadowRadius: 4,
+
+        elevation: 2,
     },
 
-    appUpdateNoticeHeader: {
+    appUpdateCardHeader: {
         flexDirection: "row",
         alignItems: "center",
-        justifyContent: "space-between",
+        gap: 8,
 
-        marginBottom: 8,
+        marginBottom: 10,
     },
 
-    appUpdateNoticeTitleRow: {
+    appUpdateCardTitle: {
         flex: 1,
 
-        flexDirection: "row",
-        alignItems: "center",
+        color: "#174c5c",
 
-        gap: 7,
+        fontSize: 16,
+        fontWeight: "700",
     },
 
-    appUpdateNoticeTitle: {
-        flex: 1,
-
-        color: "#174b52",
-
-        fontSize: 15,
-        fontWeight: "800",
-    },
-
-    appUpdateNoticeCloseButton: {
-        width: 32,
-        height: 32,
-
-        alignItems: "center",
-        justifyContent: "center",
-
-        marginLeft: 8,
-    },
-
-    appUpdateNoticeMessage: {
-        color: "#526a72",
+    appUpdateCardMessage: {
+        color: "#405d66",
 
         fontSize: 13,
-        lineHeight: 19,
-
-        marginBottom: 8,
+        lineHeight: 20,
     },
 
-    appUpdateNoticeVersion: {
-        color: "#71838c",
+    appUpdateCardVersion: {
+        marginTop: 10,
 
-        fontSize: 11,
-        lineHeight: 17,
+        color: "#60747c",
 
-        marginBottom: 12,
+        fontSize: 12,
+        lineHeight: 18,
     },
 
-    appUpdateNoticeButton: {
+    appUpdateButton: {
         minHeight: 44,
+
+        marginTop: 14,
+        paddingHorizontal: 16,
 
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
+        gap: 8,
 
-        gap: 7,
-
-        paddingHorizontal: 14,
-
-        borderRadius: 11,
+        borderRadius: 10,
 
         backgroundColor: "#0e7185",
     },
 
-    appUpdateNoticeButtonPressed: {
-        opacity: 0.82,
-    },
-
-    appUpdateNoticeButtonText: {
+    appUpdateButtonText: {
         color: "#ffffff",
 
         fontSize: 14,
         fontWeight: "700",
+    },
+
+    appUpdateDismissText: {
+        marginTop: 12,
+
+        textAlign: "center",
+
+        color: "#60747c",
+
+        fontSize: 13,
+        fontWeight: "600",
     },
 });

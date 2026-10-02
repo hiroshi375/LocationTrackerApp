@@ -221,13 +221,11 @@ export function classifyActivitySession(
     );
 
     const secondsAtOrAbove12 = sumDurationAtOrAbove(analysisSegments, 12);
-
     const secondsAtOrAbove15 = sumDurationAtOrAbove(analysisSegments, 15);
-
+    const secondsAtOrAbove16 = sumDurationAtOrAbove(analysisSegments, 16);
+    const secondsAtOrAbove17 = sumDurationAtOrAbove(analysisSegments, 17);
     const secondsAtOrAbove18 = sumDurationAtOrAbove(analysisSegments, 18);
-
     const secondsAtOrAbove25 = sumDurationAtOrAbove(analysisSegments, 25);
-
     const secondsAtOrAbove35 = sumDurationAtOrAbove(analysisSegments, 35);
 
     /*
@@ -252,6 +250,15 @@ export function classifyActivitySession(
     const lowSpeedSeconds = analysisSegments
         .filter((segment) => segment.speedKmh <= 12)
         .reduce((sum, segment) => sum + segment.durationSeconds, 0);
+
+    const veryLowSpeedSeconds = analysisSegments
+        .filter((segment) => segment.speedKmh <= 6)
+        .reduce((sum, segment) => sum + segment.durationSeconds, 0);
+
+    const veryLowSpeedRatio =
+        movingDurationSeconds > 0
+            ? veryLowSpeedSeconds / movingDurationSeconds
+            : 0;
 
     const highSpeedSeconds = analysisSegments
         .filter((segment) => segment.speedKmh >= 22)
@@ -338,24 +345,46 @@ export function classifyActivitySession(
         secondsAtOrAbove15 >= 120 &&
         secondsAtOrAbove18 >= 45;
 
+    /*
+     * 低速・休憩あり街乗り自転車の補助判定。
+     *
+     * 通常のランニングとの誤判定を抑えるため、
+     * 12〜17km/h帯の累積時間と、
+     * 低速時間の割合を組み合わせて判断する。
+     */
+    const hasLowSpeedUrbanCyclingPattern =
+        p90SpeedKmh >= 14.5 &&
+        maxSpeedKmh >= 17.5 &&
+        secondsAtOrAbove12 >= 240 &&
+        secondsAtOrAbove15 >= 60 &&
+        secondsAtOrAbove16 >= 30 &&
+        secondsAtOrAbove17 >= 20 &&
+        veryLowSpeedRatio >= 0.45;
+
     if (
         maxContinuousSecondsAtOrAbove18 >= 60 ||
         p90SpeedKmh >= 20 ||
         averageSpeedKmh >= 14 ||
-        hasUrbanCyclingSpeedPattern
+        hasUrbanCyclingSpeedPattern ||
+        hasLowSpeedUrbanCyclingPattern
     ) {
         return createResult(
             hasClearlyMixedMovement ? "MIXED" : "CYCLING",
             [
-                hasUrbanCyclingSpeedPattern
-                    ? "街乗り自転車相当の速度分布を検出しました。"
-                    : "自転車相当の速度が継続しました。",
+                hasLowSpeedUrbanCyclingPattern
+                    ? "低速・休憩あり街乗り自転車相当の速度分布を検出しました。"
+                    : hasUrbanCyclingSpeedPattern
+                      ? "街乗り自転車相当の速度分布を検出しました。"
+                      : "自転車相当の速度が継続しました。",
                 `平均${averageSpeedKmh.toFixed(1)}km/h`,
                 `90%点${p90SpeedKmh.toFixed(1)}km/h`,
                 `最高${maxSpeedKmh.toFixed(1)}km/h`,
                 `12km/h以上累計${Math.round(secondsAtOrAbove12)}秒`,
                 `15km/h以上累計${Math.round(secondsAtOrAbove15)}秒`,
+                `16km/h以上累計${Math.round(secondsAtOrAbove16)}秒`,
+                `17km/h以上累計${Math.round(secondsAtOrAbove17)}秒`,
                 `18km/h以上累計${Math.round(secondsAtOrAbove18)}秒`,
+                `6km/h以下割合${Math.round(veryLowSpeedRatio * 100)}%`,
                 `18km/h以上連続${Math.round(
                     maxContinuousSecondsAtOrAbove18,
                 )}秒`,

@@ -10,12 +10,17 @@ const DEFAULT_PLAY_STORE_URL =
 const PLAY_STORE_APP_URL =
     "market://details?id=com.hiroshisato.locationtrackerapp";
 
+const DEFAULT_APP_STORE_URL = "https://apps.apple.com/app/idXXXXXXXXXX";
+
+const APP_STORE_APP_URL = "itms-apps://apps.apple.com/app/idXXXXXXXXXX";
+
 export type AppVersionConfig = {
     latestVersion: string;
     latestBuild: number;
     minimumSupportedBuild: number;
     message?: string | null;
     playStoreUrl?: string | null;
+    appStoreUrl?: string | null;
 };
 
 export type AppVersionCheckResult = {
@@ -30,6 +35,7 @@ export type AppVersionCheckResult = {
 
     message: string;
     playStoreUrl: string;
+    appStoreUrl: string;
 };
 
 export async function checkAppVersion(): Promise<AppVersionCheckResult> {
@@ -99,7 +105,32 @@ export async function checkAppVersion(): Promise<AppVersionCheckResult> {
             raw.playStoreUrl.trim().length > 0
                 ? raw.playStoreUrl.trim()
                 : DEFAULT_PLAY_STORE_URL,
+
+        appStoreUrl:
+            typeof raw.appStoreUrl === "string" &&
+            raw.appStoreUrl.trim().length > 0
+                ? raw.appStoreUrl.trim()
+                : DEFAULT_APP_STORE_URL,
     };
+}
+
+export async function openAppStore(
+    webUrl: string = DEFAULT_APP_STORE_URL,
+): Promise<void> {
+    if (Platform.OS === "ios") {
+        try {
+            const supported = await Linking.canOpenURL(APP_STORE_APP_URL);
+
+            if (supported) {
+                await Linking.openURL(APP_STORE_APP_URL);
+                return;
+            }
+        } catch (error) {
+            console.log("[AppVersion] App Store app open skipped:", error);
+        }
+    }
+
+    await Linking.openURL(webUrl);
 }
 
 export async function openGooglePlay(

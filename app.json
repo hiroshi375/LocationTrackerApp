@@ -91,7 +91,15 @@
                 }
             ],
             "expo-asset",
-            "expo-sqlite"
+            "expo-sqlite",
+            [
+                "expo-build-properties",
+                {
+                    "ios": {
+                        "deploymentTarget": "15.1"
+                    }
+                }
+            ]
         ],
         "extra": {
             "eas": {

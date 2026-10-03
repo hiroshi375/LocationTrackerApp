@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import Purchases, {
     LOG_LEVEL,
     PURCHASES_ERROR_CODE,
@@ -15,9 +16,15 @@ const REVENUECAT_TEST_API_KEY =
 const REVENUECAT_ANDROID_API_KEY =
     process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY ?? "";
 
+const REVENUECAT_IOS_API_KEY =
+    process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY ?? "";
+
+const REVENUECAT_PRODUCTION_API_KEY =
+    Platform.OS === "ios" ? REVENUECAT_IOS_API_KEY : REVENUECAT_ANDROID_API_KEY;
+
 const REVENUECAT_API_KEY = __DEV__
     ? REVENUECAT_TEST_API_KEY
-    : REVENUECAT_ANDROID_API_KEY;
+    : REVENUECAT_PRODUCTION_API_KEY;
 
 let revenueCatConfigured = false;
 
@@ -44,7 +51,9 @@ export async function configureRevenueCat(): Promise<void> {
         throw new Error(
             __DEV__
                 ? "EXPO_PUBLIC_REVENUECAT_TEST_API_KEY is not configured."
-                : "EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY is not configured.",
+                : Platform.OS === "ios"
+                  ? "EXPO_PUBLIC_REVENUECAT_IOS_API_KEY is not configured."
+                  : "EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY is not configured.",
         );
     }
 
@@ -58,7 +67,11 @@ export async function configureRevenueCat(): Promise<void> {
 
     console.log("[RevenueCat] configured:", {
         environment: __DEV__ ? "development" : "production",
-        keyType: __DEV__ ? "test" : "android-production",
+        keyType: __DEV__
+            ? "test"
+            : Platform.OS === "ios"
+              ? "ios-production"
+              : "android-production",
     });
 }
 

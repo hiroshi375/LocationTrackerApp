@@ -72,6 +72,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import type { ComponentProps } from "react";
 import {
     checkAppVersion,
+    openAppStore,
     openGooglePlay,
     type AppVersionCheckResult,
 } from "../services/appVersionService";
@@ -287,18 +288,28 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
         void updateAppUsage();
     }, []);
 
-    const handleOpenGooglePlay = useCallback(async (): Promise<void> => {
+    const handleOpenAppStore = useCallback(async (): Promise<void> => {
         try {
+            if (Platform.OS === "ios") {
+                await openAppStore(appVersionCheckResult?.appStoreUrl);
+                return;
+            }
+
             await openGooglePlay(appVersionCheckResult?.playStoreUrl);
         } catch (error) {
-            console.error("[AppVersion] Open Google Play error:", error);
+            console.error("[AppVersion] Open store error:", error);
 
             Alert.alert(
-                "Google Playを開けません",
+                Platform.OS === "ios"
+                    ? "App Storeを開けません"
+                    : "Google Playを開けません",
                 "時間をおいて、もう一度お試しください。",
             );
         }
-    }, [appVersionCheckResult?.playStoreUrl]);
+    }, [
+        appVersionCheckResult?.appStoreUrl,
+        appVersionCheckResult?.playStoreUrl,
+    ]);
 
     useFocusEffect(
         useCallback(() => {
@@ -2534,7 +2545,9 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
 
                             <Text style={styles.appUpdateCardMessage}>
                                 {appVersionCheckResult.message ||
-                                    "AcLog Fitの最新版をGoogle Playからインストールしてください。"}
+                                    (Platform.OS === "ios"
+                                        ? "AcLog Fitの最新版をApp Storeからインストールしてください。"
+                                        : "AcLog Fitの最新版をGoogle Playからインストールしてください。")}
                             </Text>
 
                             <Text style={styles.appUpdateCardVersion}>
@@ -2546,17 +2559,23 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                             <Pressable
                                 style={styles.appUpdateButton}
                                 onPress={() => {
-                                    void handleOpenGooglePlay();
+                                    void handleOpenAppStore();
                                 }}
                             >
                                 <MaterialCommunityIcons
-                                    name="google-play"
+                                    name={
+                                        Platform.OS === "ios"
+                                            ? "apple"
+                                            : "google-play"
+                                    }
                                     size={20}
                                     color="#ffffff"
                                 />
 
                                 <Text style={styles.appUpdateButtonText}>
-                                    Google Playで更新する
+                                    {Platform.OS === "ios"
+                                        ? "App Storeで更新する"
+                                        : "Google Playで更新する"}
                                 </Text>
                             </Pressable>
 

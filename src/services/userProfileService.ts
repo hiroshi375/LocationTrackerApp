@@ -1,4 +1,5 @@
 import { fetchUserAttributes, getCurrentUser } from "aws-amplify/auth";
+import { Platform } from "react-native";
 import * as Application from "expo-application";
 
 import { client } from "../lib/client";
@@ -196,7 +197,6 @@ export async function updateCurrentUserAppUsage(): Promise<void> {
     }
 
     const appVersion = Application.nativeApplicationVersion ?? null;
-
     const nativeBuildVersion = Application.nativeBuildVersion;
 
     const parsedBuildVersion =
@@ -207,6 +207,8 @@ export async function updateCurrentUserAppUsage(): Promise<void> {
     const appBuildVersion = Number.isFinite(parsedBuildVersion)
         ? Math.trunc(parsedBuildVersion)
         : null;
+
+    const lastAppPlatform = Platform.OS === "ios" ? "ios" : "android";
 
     const lastAppOpenedAt = new Date().toISOString();
 
@@ -226,10 +228,13 @@ export async function updateCurrentUserAppUsage(): Promise<void> {
         throw new Error("アプリ利用情報を更新できませんでした。");
     }
 
+    const currentUser = await getCurrentUser();
+
     console.log("[AppUsage] UserProfile updated:", {
-        userId: user.userId,
+        userId: currentUser.userId,
         appVersion,
         appBuildVersion,
+        lastAppPlatform,
         lastAppOpenedAt,
     });
 }

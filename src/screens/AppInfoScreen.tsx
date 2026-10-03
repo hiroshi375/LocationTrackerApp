@@ -21,7 +21,7 @@ import { getBackgroundRecordingStatus } from "../services/backgroundLocationServ
 import * as Application from "expo-application";
 import {
     checkAppVersion,
-    openGooglePlay,
+    openCurrentStore,
     type AppVersionCheckResult,
 } from "../services/appVersionService";
 
@@ -52,39 +52,44 @@ export default function AppInfoScreen({ navigation }: Props) {
     );
     const [versionInfoExpanded, setVersionInfoExpanded] = useState(false);
     const isDevelopmentBuild = __DEV__;
-    const [playStoreVersionInfo, setPlayStoreVersionInfo] =
+    const [storeVersionInfo, setStoreVersionInfo] =
         useState<AppVersionCheckResult | null>(null);
 
-    const [checkingPlayStoreVersion, setCheckingPlayStoreVersion] =
-        useState(false);
+    const [checkingStoreVersion, setCheckingStoreVersion] = useState(false);
 
-    const handleCheckPlayStoreVersion = useCallback(async (): Promise<void> => {
-        if (checkingPlayStoreVersion) {
+    const handleCheckStoreVersion = useCallback(async (): Promise<void> => {
+        if (checkingStoreVersion) {
             return;
         }
 
         try {
-            setCheckingPlayStoreVersion(true);
+            setCheckingStoreVersion(true);
 
             const result = await checkAppVersion();
 
-            setPlayStoreVersionInfo(result);
+            setStoreVersionInfo(result);
 
             if (result.updateAvailable) {
                 Alert.alert(
                     "新しいバージョンがあります",
-                    `現在のビルド：${
-                        result.currentBuild ?? "不明"
-                    }\n最新のビルド：${result.latestBuild}`,
+                    `現在のバージョン：${
+                        result.currentVersion ?? "不明"
+                    }（${result.currentBuild ?? "不明"}）\n` +
+                        `最新版：${
+                            result.latestVersion || "不明"
+                        }（${result.latestBuild}）`,
                     [
                         {
                             text: "閉じる",
                             style: "cancel",
                         },
                         {
-                            text: "Google Playを開く",
+                            text:
+                                Platform.OS === "ios"
+                                    ? "App Storeを開く"
+                                    : "Google Playを開く",
                             onPress: () => {
-                                void openGooglePlay(result.playStoreUrl);
+                                void openCurrentStore(result.storeUrl);
                             },
                         },
                     ],
@@ -95,13 +100,13 @@ export default function AppInfoScreen({ navigation }: Props) {
 
             Alert.alert("最新版です", "現在のAcLog Fitは最新バージョンです。");
         } catch (error) {
-            console.error("Check Play Store version error:", error);
+            console.error("Check store version error:", error);
 
             Alert.alert("確認エラー", "最新版を確認できませんでした。");
         } finally {
-            setCheckingPlayStoreVersion(false);
+            setCheckingStoreVersion(false);
         }
-    }, [checkingPlayStoreVersion]);
+    }, [checkingStoreVersion]);
 
     const handleCheckEasUpdateInfo = useCallback(async (): Promise<void> => {
         if (checkingEasUpdateInfo) {
@@ -328,6 +333,10 @@ export default function AppInfoScreen({ navigation }: Props) {
         return Constants.expoConfig?.android?.package ?? "不明";
     }, []);
 
+    const storeName = Platform.OS === "ios" ? "App Store" : "Google Play";
+
+    const storeIconName = Platform.OS === "ios" ? "apple" : "google-play";
+
     /*
      * 添付アイコンを assets 配下へ保存したうえで、
      * 下の require パスを実際の保存先に合わせてください。
@@ -438,16 +447,16 @@ export default function AppInfoScreen({ navigation }: Props) {
                 <View style={styles.playStoreCard}>
                     <View style={styles.cardHeaderRow}>
                         <MaterialCommunityIcons
-                            name="google-play"
+                            name={storeIconName}
                             size={20}
                             color="#0e9384"
                         />
 
-                        <Text style={styles.cardTitle}>Google Play</Text>
+                        <Text style={styles.cardTitle}>{storeName}</Text>
                     </View>
 
                     <Text style={styles.updateDescription}>
-                        Google Playで公開されている最新版を確認できます。
+                        {storeName}で公開されている最新版を確認できます。
                     </Text>
 
                     <InfoRow
@@ -455,32 +464,30 @@ export default function AppInfoScreen({ navigation }: Props) {
                         value={`${appVersion}（${buildVersion}）`}
                     />
 
-                    {playStoreVersionInfo && (
+                    {storeVersionInfo && (
                         <InfoRow
-                            label="Google Play最新版"
+                            label={`${storeName}最新版`}
                             value={`${
-                                playStoreVersionInfo.latestVersion || "最新版"
-                            }（${playStoreVersionInfo.latestBuild}）`}
+                                storeVersionInfo.latestVersion || "最新版"
+                            }（${storeVersionInfo.latestBuild}）`}
                         />
                     )}
 
                     <Pressable
                         style={({ pressed }) => [
                             styles.primaryButton,
-
                             pressed &&
-                                !checkingPlayStoreVersion &&
+                                !checkingStoreVersion &&
                                 styles.buttonPressed,
-
-                            checkingPlayStoreVersion && styles.disabledButton,
+                            checkingStoreVersion && styles.disabledButton,
                         ]}
                         onPress={() => {
-                            void handleCheckPlayStoreVersion();
+                            void handleCheckStoreVersion();
                         }}
-                        disabled={checkingPlayStoreVersion}
+                        disabled={checkingStoreVersion}
                     >
                         <Text style={styles.primaryButtonText}>
-                            {checkingPlayStoreVersion
+                            {checkingStoreVersion
                                 ? "最新版を確認中..."
                                 : "最新版を確認"}
                         </Text>
@@ -492,20 +499,18 @@ export default function AppInfoScreen({ navigation }: Props) {
                             pressed && styles.buttonPressed,
                         ]}
                         onPress={() => {
-                            void openGooglePlay(
-                                playStoreVersionInfo?.playStoreUrl,
-                            );
+                            void openCurrentStore(storeVersionInfo?.storeUrl);
                         }}
                     >
                         <View style={styles.playStoreButtonContent}>
                             <MaterialCommunityIcons
-                                name="google-play"
+                                name={storeIconName}
                                 size={19}
                                 color="#ffffff"
                             />
 
                             <Text style={styles.secondaryButtonText}>
-                                Google Playを開く
+                                {storeName}を開く
                             </Text>
                         </View>
                     </Pressable>

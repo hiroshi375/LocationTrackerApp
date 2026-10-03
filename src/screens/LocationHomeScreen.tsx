@@ -72,8 +72,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import type { ComponentProps } from "react";
 import {
     checkAppVersion,
-    openAppStore,
-    openGooglePlay,
+    openCurrentStore,
     type AppVersionCheckResult,
 } from "../services/appVersionService";
 
@@ -290,12 +289,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
 
     const handleOpenAppStore = useCallback(async (): Promise<void> => {
         try {
-            if (Platform.OS === "ios") {
-                await openAppStore(appVersionCheckResult?.appStoreUrl);
-                return;
-            }
-
-            await openGooglePlay(appVersionCheckResult?.playStoreUrl);
+            await openCurrentStore(appVersionCheckResult?.storeUrl);
         } catch (error) {
             console.error("[AppVersion] Open store error:", error);
 
@@ -306,10 +300,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                 "時間をおいて、もう一度お試しください。",
             );
         }
-    }, [
-        appVersionCheckResult?.appStoreUrl,
-        appVersionCheckResult?.playStoreUrl,
-    ]);
+    }, [appVersionCheckResult?.storeUrl]);
 
     useFocusEffect(
         useCallback(() => {

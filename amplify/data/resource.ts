@@ -151,6 +151,7 @@ const schema = a
                 currentMonthRecordedActivityCount: a.integer(),
                 appVersion: a.string(),
                 appBuildVersion: a.integer(),
+                lastAppPlatform: a.string(),
                 lastAppOpenedAt: a.datetime(),
             })
             .secondaryIndexes((index) => [

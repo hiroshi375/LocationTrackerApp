@@ -10,33 +10,46 @@ const DEFAULT_PLAY_STORE_URL =
 const PLAY_STORE_APP_URL =
     "market://details?id=com.hiroshisato.locationtrackerapp";
 
-const DEFAULT_APP_STORE_URL = "https://apps.apple.com/app/idXXXXXXXXXX";
+const DEFAULT_APP_STORE_URL = "https://apps.apple.com/app/id6818737493";
 
-const APP_STORE_APP_URL = "itms-apps://apps.apple.com/app/idXXXXXXXXXX";
+const APP_STORE_APP_URL = "itms-apps://apps.apple.com/app/id6818737493";
 
-export type AppVersionConfig = {
+export type AppPlatform = "android" | "ios";
+
+export type PlatformVersionConfig = {
     latestVersion: string;
     latestBuild: number;
     minimumSupportedBuild: number;
+    storeUrl?: string | null;
     message?: string | null;
-    playStoreUrl?: string | null;
-    appStoreUrl?: string | null;
+};
+
+export type AppVersionConfig = {
+    android: PlatformVersionConfig;
+    ios: PlatformVersionConfig;
 };
 
 export type AppVersionCheckResult = {
+    platform: AppPlatform;
+
     currentBuild: number | null;
     currentVersion: string | null;
 
     latestBuild: number;
     latestVersion: string;
 
+    minimumSupportedBuild: number;
+
     updateAvailable: boolean;
     updateRequired: boolean;
 
     message: string;
-    playStoreUrl: string;
-    appStoreUrl: string;
+    storeUrl: string;
 };
+
+function getCurrentPlatform(): AppPlatform {
+    return Platform.OS === "ios" ? "ios" : "android";
+}
 
 export async function checkAppVersion(): Promise<AppVersionCheckResult> {
     const response = await fetch(APP_VERSION_CONFIG_URL, {
@@ -55,11 +68,30 @@ export async function checkAppVersion(): Promise<AppVersionCheckResult> {
 
     const raw = (await response.json()) as Partial<AppVersionConfig>;
 
-    const latestBuild = Number(raw.latestBuild);
-    const minimumSupportedBuild = Number(raw.minimumSupportedBuild ?? 1);
+    const platform = getCurrentPlatform();
+
+    const platformConfig = platform === "ios" ? raw.ios : raw.android;
+
+    if (!platformConfig) {
+        throw new Error(`App version config for ${platform} is missing`);
+    }
+
+    const latestBuild = Number(platformConfig.latestBuild);
+
+    const minimumSupportedBuild = Number(
+        platformConfig.minimumSupportedBuild ?? 1,
+    );
 
     if (!Number.isFinite(latestBuild) || latestBuild <= 0) {
-        throw new Error("Invalid latestBuild in app-version.json");
+        throw new Error(
+            `Invalid latestBuild for ${platform} in app-version.json`,
+        );
+    }
+
+    if (!Number.isFinite(minimumSupportedBuild) || minimumSupportedBuild <= 0) {
+        throw new Error(
+            `Invalid minimumSupportedBuild for ${platform} in app-version.json`,
+        );
     }
 
     const currentBuildValue = Application.nativeBuildVersion;
@@ -75,42 +107,43 @@ export async function checkAppVersion(): Promise<AppVersionCheckResult> {
 
     const currentVersion = Application.nativeApplicationVersion ?? null;
 
-    /*
-     * 開発環境などでbuild番号が取得できない場合は、
-     * 誤って更新案内を出さない。
-     */
     const updateAvailable = currentBuild !== null && currentBuild < latestBuild;
 
     const updateRequired =
         currentBuild !== null && currentBuild < minimumSupportedBuild;
 
+    const defaultStoreUrl =
+        platform === "ios" ? DEFAULT_APP_STORE_URL : DEFAULT_PLAY_STORE_URL;
+
     return {
+        platform,
+
         currentBuild,
         currentVersion,
 
         latestBuild,
+
         latestVersion:
-            typeof raw.latestVersion === "string" ? raw.latestVersion : "",
+            typeof platformConfig.latestVersion === "string"
+                ? platformConfig.latestVersion
+                : "",
+
+        minimumSupportedBuild,
 
         updateAvailable,
         updateRequired,
 
         message:
-            typeof raw.message === "string" && raw.message.trim().length > 0
-                ? raw.message.trim()
+            typeof platformConfig.message === "string" &&
+            platformConfig.message.trim().length > 0
+                ? platformConfig.message.trim()
                 : "AcLog Fitの新しいバージョンをご利用いただけます。",
 
-        playStoreUrl:
-            typeof raw.playStoreUrl === "string" &&
-            raw.playStoreUrl.trim().length > 0
-                ? raw.playStoreUrl.trim()
-                : DEFAULT_PLAY_STORE_URL,
-
-        appStoreUrl:
-            typeof raw.appStoreUrl === "string" &&
-            raw.appStoreUrl.trim().length > 0
-                ? raw.appStoreUrl.trim()
-                : DEFAULT_APP_STORE_URL,
+        storeUrl:
+            typeof platformConfig.storeUrl === "string" &&
+            platformConfig.storeUrl.trim().length > 0
+                ? platformConfig.storeUrl.trim()
+                : defaultStoreUrl,
     };
 }
 
@@ -136,16 +169,12 @@ export async function openAppStore(
 export async function openGooglePlay(
     webUrl: string = DEFAULT_PLAY_STORE_URL,
 ): Promise<void> {
-    /*
-     * Androidでは可能ならGoogle Playアプリを直接開く。
-     */
     if (Platform.OS === "android") {
         try {
             const supported = await Linking.canOpenURL(PLAY_STORE_APP_URL);
 
             if (supported) {
                 await Linking.openURL(PLAY_STORE_APP_URL);
-
                 return;
             }
         } catch (error) {
@@ -153,8 +182,14 @@ export async function openGooglePlay(
         }
     }
 
-    /*
-     * Play Storeアプリを開けない場合はWeb版へ。
-     */
     await Linking.openURL(webUrl);
+}
+
+export async function openCurrentStore(webUrl?: string): Promise<void> {
+    if (Platform.OS === "ios") {
+        await openAppStore(webUrl);
+        return;
+    }
+
+    await openGooglePlay(webUrl);
 }

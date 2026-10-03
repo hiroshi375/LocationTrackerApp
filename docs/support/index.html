@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AcLog Fit サポート</title>
+  <meta name="description" content="AcLog Fit の使い方、よくある質問、位置情報、Premium、アカウント削除、プライバシーに関するサポート情報です。" />
+  <style>
+    :root {
+      --navy: #0b4d72;
+      --teal: #159d8c;
+      --text: #173b4d;
+      --muted: #6f8792;
+      --bg: #f5f8fa;
+      --card: #ffffff;
+      --line: #dbe6eb;
+      --warn-bg: #fff8e8;
+      --warn-border: #f1d38a;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+        "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic",
+        "Meiryo", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.7;
+    }
+
+    header {
+      background: var(--navy);
+      color: #fff;
+      padding: 28px 20px;
+    }
+
+    .header-inner,
+    main,
+    footer .inner {
+      width: min(960px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: clamp(28px, 5vw, 40px);
+      line-height: 1.2;
+    }
+
+    .tagline {
+      margin: 0;
+      opacity: 0.9;
+      font-size: 15px;
+    }
+
+    main {
+      padding: 28px 0 48px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 22px;
+      margin-bottom: 18px;
+      box-shadow: 0 2px 8px rgba(12, 52, 73, 0.04);
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 22px;
+      color: var(--navy);
+    }
+
+    h3 {
+      margin: 18px 0 6px;
+      font-size: 17px;
+    }
+
+    p {
+      margin: 8px 0;
+    }
+
+    ul, ol {
+      padding-left: 1.4em;
+    }
+
+    a {
+      color: var(--navy);
+      font-weight: 600;
+    }
+
+    .links {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      margin-top: 14px;
+    }
+
+    .link-card {
+      display: block;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fbfdfe;
+      text-decoration: none;
+    }
+
+    .link-card:hover {
+      background: #f0f7fa;
+    }
+
+    .notice {
+      background: var(--warn-bg);
+      border: 1px solid var(--warn-border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-top: 14px;
+    }
+
+    .button {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 11px 16px;
+      border-radius: 10px;
+      background: var(--teal);
+      color: #fff;
+      text-decoration: none;
+      font-weight: 700;
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    footer .inner {
+      padding: 22px 0 30px;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    code {
+      background: #eef3f6;
+      border-radius: 6px;
+      padding: 2px 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.95em;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div class="header-inner">
+      <h1>AcLog Fit サポート</h1>
+      <p class="tagline">アクティビティ記録・位置情報・Premium・アカウントに関するサポート情報</p>
+    </div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>AcLog Fit について</h2>
+      <p>
+        AcLog Fit は、ウォーキングやランニングなどのアクティビティを
+        位置情報とともに記録し、移動ルート・距離・時間・消費カロリーなどを
+        振り返るためのアプリです。
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>よくある質問</h2>
+
+      <h3>位置情報が記録されません</h3>
+      <p>
+        端末の位置情報サービスが有効になっていることを確認してください。
+        バックグラウンド記録を利用する場合は、AcLog Fit の位置情報権限を
+        「常に許可」に設定してください。
+      </p>
+      <p class="small">
+        iPhone: 設定 → プライバシーとセキュリティ → 位置情報サービス → AcLog Fit
+      </p>
+
+      <h3>バックグラウンドで記録されません</h3>
+      <p>
+        バックグラウンドでの位置情報利用が許可されているか確認してください。
+        また、端末の省電力設定やOSの動作状況により、位置情報の取得間隔が変化する場合があります。
+      </p>
+
+      <h3>記録されたルートに飛び値があります</h3>
+      <p>
+        GPSは、建物内・地下・高層ビル周辺・トンネルなどで精度が低下する場合があります。
+        そのため、実際の移動経路から外れた位置が記録されることがあります。
+      </p>
+
+      <h3>Premium の購入を復元したいです</h3>
+      <p>
+        アプリの「プロフィール」画面にある「購入を復元」をタップしてください。
+        同じApple IDで購入済みの場合、購入状態の復元を試みます。
+      </p>
+
+      <h3>機種変更後もデータを利用できますか？</h3>
+      <p>
+        同じAcLog Fitアカウントでログインすることで、クラウドに保存されているデータを利用できます。
+        端末内だけに残っている一時データや未送信データは引き継がれない場合があります。
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>お問い合わせ</h2>
+      <p>
+        不具合のご報告・ご要望・ご質問は、GitHub の Issues からお問い合わせください。
+      </p>
+      <p>
+        お問い合わせの際は、可能な範囲で以下を記載してください。
+      </p>
+      <ul>
+        <li>端末名</li>
+        <li>OSバージョン</li>
+        <li>AcLog Fit のバージョン / Build番号</li>
+        <li>発生した事象</li>
+        <li>再現手順</li>
+      </ul>
+      <a class="button"
+         href="https://github.com/hiroshi375/LocationTrackerApp/issues"
+         target="_blank"
+         rel="noopener noreferrer">
+        GitHub Issues を開く
+      </a>
+
+      <div class="notice">
+        <strong>個人情報について</strong><br />
+        お問い合わせ時には、パスワード、認証コード、正確な現在地、
+        その他の機密情報を投稿しないでください。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>プライバシー・アカウント削除</h2>
+
+      <div class="links">
+        <a class="link-card"
+           href="https://hiroshi375.github.io/LocationTrackerApp/privacy/">
+          プライバシーポリシー
+        </a>
+
+        <a class="link-card"
+           href="https://hiroshi375.github.io/LocationTrackerApp/account-deletion/">
+          アカウント・データ削除
+        </a>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>アカウントを削除したい場合</h2>
+      <p>
+        AcLog Fit の「プロフィール」画面からアカウント削除を行うことができます。
+        アカウントを削除すると、位置履歴、アクティビティ履歴、プロフィール、
+        共有情報などの関連データが削除されます。
+      </p>
+      <p>
+        詳細は
+        <a href="https://hiroshi375.github.io/LocationTrackerApp/account-deletion/">
+          アカウント・データ削除ページ
+        </a>
+        をご確認ください。
+      </p>
+    </section>
+  </main>
+
+  <footer>
+    <div class="inner">
+      <div>AcLog Fit Support</div>
+      <div>© 2026 Hiroshi Sato</div>
+    </div>
+  </footer>
+</body>
+</html>

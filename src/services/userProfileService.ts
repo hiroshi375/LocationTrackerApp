@@ -216,6 +216,7 @@ export async function updateCurrentUserAppUsage(): Promise<void> {
         id: existing.id,
         appVersion,
         appBuildVersion,
+        lastAppPlatform,
         lastAppOpenedAt,
     });
 

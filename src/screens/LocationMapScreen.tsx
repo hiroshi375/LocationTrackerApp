@@ -14,6 +14,7 @@ import {
     Animated,
     FlatList,
     Image,
+    Platform,
     Pressable,
     StyleSheet,
     Text,
@@ -2194,7 +2195,9 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             ) : isMapVisible ? (
                 <MapView
                     ref={mapRef}
-                    provider={PROVIDER_GOOGLE}
+                    provider={
+                        Platform.OS === "android" ? PROVIDER_GOOGLE : undefined
+                    }
                     style={styles.map}
                     mapType={selectedMapType}
                     customMapStyle={selectedCustomMapStyle}

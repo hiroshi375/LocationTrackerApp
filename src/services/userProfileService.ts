@@ -172,7 +172,7 @@ export async function updateUserProfileWeightKg(weightKg: number | null) {
  * 現在ログインしているユーザーの
  * アプリVersion / Build / 最終起動日時をUserProfileへ保存する。
  *
- * Google Play経由で実際にどのbuildが利用されているかを
+ * ユーザーが現在利用しているアプリのバージョン・ビルド・OS情報を
  * 管理側で確認するために使用する。
  */
 export async function updateCurrentUserAppUsage(): Promise<void> {

@@ -154,7 +154,7 @@ export default function PrivacyPolicyScreen() {
                     {"\n"}
                     ・RevenueCat：Premiumの購入状態および利用権限の確認
                     {"\n"}
-                    ・Google Play：Premium商品の購入処理
+                    ・Apple App Store / Google Play：Premium商品の購入処理
                     {"\n"}
                     ・Google Maps等：地図表示
                     {"\n\n"}

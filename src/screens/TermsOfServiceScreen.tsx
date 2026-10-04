@@ -234,8 +234,8 @@ export default function TermsOfServiceScreen() {
                     法令上または運用上保持が必要な情報を除き、
                     順次削除されます。
                     {"\n\n"}
-                    Premium購入に関する取引記録については、 Google
-                    Play等のアプリストア側に記録が残る場合があります。
+                    Premium購入に関する取引記録については、
+                    各アプリストア側に記録が残る場合があります。
                 </Section>
 
                 <Section icon="shield-account-outline" title="14. プライバシー">

@@ -3976,25 +3976,32 @@ const styles = StyleSheet.create({
     },
 
     autoRecordStartButton: {
-        width: 148,
-        height: 148,
-        borderRadius: 74,
+        marginTop: 10,
 
-        alignSelf: "center",
+        backgroundColor: "#4b6f8f",
+
+        borderRadius: 10,
+        paddingVertical: 12,
 
         alignItems: "center",
         justifyContent: "center",
 
-        backgroundColor: "#12b8aa",
+        // ボタン下側を少し濃くして立体感を出す
+        borderWidth: 1,
+        borderColor: "#3d5e79",
+        borderBottomWidth: 4,
+        borderBottomColor: "#324f69",
 
-        shadowColor: "#000000",
+        // iOS
+        shadowColor: "#000",
         shadowOffset: {
             width: 0,
-            height: 4,
+            height: 3,
         },
-        shadowOpacity: 0.16,
-        shadowRadius: 7,
+        shadowOpacity: 0.22,
+        shadowRadius: 4,
 
+        // Android
         elevation: 5,
     },
 
@@ -4023,11 +4030,9 @@ const styles = StyleSheet.create({
     autoRecordStopButtonText: {
         marginTop: 0,
         lineHeight: 20,
-        transform: [
-            {
-                translateY: -2,
-            },
-        ],
+        textAlign: "center",
+        textAlignVertical: "center",
+        includeFontPadding: false,
     },
     autoRecordPlayIcon: {
         marginTop: 8,
@@ -4089,7 +4094,8 @@ const styles = StyleSheet.create({
         color: "#666",
     },
     buttonPressed: {
-        opacity: 0.75,
+        opacity: 0.9,
+        transform: [{ translateY: 2 }],
     },
     settingBlock: {
         marginTop: 12,

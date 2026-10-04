@@ -3048,7 +3048,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                                         pressed &&
                                             hasLoadedSavedHomeSettings &&
                                             !startingRecording &&
-                                            styles.buttonPressed,
+                                            styles.autoRecordStartButtonPressed,
                                         (!hasLoadedSavedHomeSettings ||
                                             startingRecording ||
                                             checkingBackgroundLocationPermission ||
@@ -3976,29 +3976,40 @@ const styles = StyleSheet.create({
     },
 
     autoRecordStartButton: {
-        marginTop: 10,
+        width: 148,
+        height: 148,
+        borderRadius: 74,
 
-        width: 160,
-        height: 160,
         alignSelf: "center",
-
-        backgroundColor: "#0e9384",
-        borderRadius: 80,
 
         alignItems: "center",
         justifyContent: "center",
 
-        // iOS
+        backgroundColor: "#12b8aa",
+
         shadowColor: "#000000",
         shadowOffset: {
             width: 0,
-            height: 3,
+            height: 4,
         },
-        shadowOpacity: 0.2,
-        shadowRadius: 4,
+        shadowOpacity: 0.16,
+        shadowRadius: 7,
 
-        // Android
         elevation: 5,
+    },
+
+    autoRecordStartButtonPressed: {
+        transform: [{ translateY: 3 }],
+        opacity: 0.92,
+
+        shadowOffset: {
+            width: 0,
+            height: 1,
+        },
+        shadowOpacity: 0.12,
+        shadowRadius: 3,
+
+        elevation: 2,
     },
 
     autoRecordStopButton: {

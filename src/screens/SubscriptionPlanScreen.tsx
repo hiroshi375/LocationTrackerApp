@@ -1,5 +1,6 @@
 import {
     ActivityIndicator,
+    Platform,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -305,8 +306,9 @@ export default function SubscriptionPlanScreen() {
                         {"\n"}
                         月額・年額の自動更新ではありません。
                         {"\n\n"}
-                        購入価格は、購入時にGoogle Playに表示される
-                        価格をご確認ください。
+                        購入価格は、購入時に
+                        {Platform.OS === "ios" ? "App Store" : "Google Play"}
+                        に表示される価格をご確認ください。
                         {"\n\n"}
                         購入済みの場合は、購入復元機能から
                         Premium利用権限を復元できます。

@@ -3978,27 +3978,23 @@ const styles = StyleSheet.create({
     autoRecordStartButton: {
         marginTop: 10,
 
-        backgroundColor: "#4b6f8f",
+        width: 160,
+        height: 160,
+        alignSelf: "center",
 
-        borderRadius: 10,
-        paddingVertical: 12,
+        backgroundColor: "#0e9384",
+        borderRadius: 80,
 
         alignItems: "center",
         justifyContent: "center",
 
-        // ボタン下側を少し濃くして立体感を出す
-        borderWidth: 1,
-        borderColor: "#3d5e79",
-        borderBottomWidth: 4,
-        borderBottomColor: "#324f69",
-
         // iOS
-        shadowColor: "#000",
+        shadowColor: "#000000",
         shadowOffset: {
             width: 0,
             height: 3,
         },
-        shadowOpacity: 0.22,
+        shadowOpacity: 0.2,
         shadowRadius: 4,
 
         // Android
@@ -4035,7 +4031,7 @@ const styles = StyleSheet.create({
         includeFontPadding: false,
     },
     autoRecordPlayIcon: {
-        marginTop: 8,
+        marginTop: 0,
     },
 
     buttonSpace: {

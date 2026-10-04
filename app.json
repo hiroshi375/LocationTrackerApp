@@ -99,7 +99,10 @@
                         "deploymentTarget": "15.1"
                     }
                 }
-            ]
+            ],
+            "expo-router",
+            "expo-image-picker",
+            "./plugins/withImagePickerCropColors"
         ],
         "extra": {
             "eas": {

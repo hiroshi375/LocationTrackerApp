@@ -49,6 +49,7 @@ import {
 } from "./src/services/singleDeviceSessionService";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SAMPLE_ACTIVITY_SESSION_ID } from "./src/data/sampleActivity";
+import { checkForOtaUpdate } from "./src/services/otaUpdateService";
 
 Amplify.configure(outputs);
 
@@ -623,6 +624,41 @@ function SingleDeviceSessionGuard({ children }: { children: ReactNode }) {
     return <>{children}</>;
 }
 
+function OtaUpdateChecker({ children }: { children: ReactNode }) {
+    const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+
+    useEffect(() => {
+        // アプリ起動時
+        void checkForOtaUpdate();
+
+        const subscription = AppState.addEventListener(
+            "change",
+            (nextState: AppStateStatus) => {
+                const previousState = appStateRef.current;
+
+                appStateRef.current = nextState;
+
+                const wasBackground =
+                    previousState === "background" ||
+                    previousState === "inactive";
+
+                if (!wasBackground || nextState !== "active") {
+                    return;
+                }
+
+                // background → foreground 復帰時
+                void checkForOtaUpdate();
+            },
+        );
+
+        return () => {
+            subscription.remove();
+        };
+    }, []);
+
+    return <>{children}</>;
+}
+
 function AppTourProvider({ children }: { children: ReactNode }) {
     const insets = useSafeAreaInsets();
 
@@ -709,9 +745,11 @@ function AppContent() {
     return (
         <SafeAreaProvider>
             <AppTourProvider>
-                <SingleDeviceSessionGuard>
-                    <RootNavigator />
-                </SingleDeviceSessionGuard>
+                <OtaUpdateChecker>
+                    <SingleDeviceSessionGuard>
+                        <RootNavigator />
+                    </SingleDeviceSessionGuard>
+                </OtaUpdateChecker>
             </AppTourProvider>
         </SafeAreaProvider>
     );

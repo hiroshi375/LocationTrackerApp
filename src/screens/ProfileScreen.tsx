@@ -187,10 +187,24 @@ export default function ProfileScreen({ navigation }: Props) {
             await refreshSubscription();
 
             Alert.alert("購入完了", "Premium機能が利用可能になりました。");
-        } catch (error) {
+        } catch (error: any) {
             console.error("[Profile] Premium purchase error:", error);
 
-            Alert.alert("購入エラー", "Premiumの購入に失敗しました。");
+            const errorCode =
+                error?.code ?? error?.readableErrorCode ?? "unknown";
+
+            const errorMessage =
+                error?.message ?? error?.underlyingErrorMessage ?? "詳細不明";
+
+            Alert.alert(
+                "購入エラー",
+                [
+                    "Premiumの購入に失敗しました。",
+                    "",
+                    `code: ${String(errorCode)}`,
+                    `message: ${String(errorMessage)}`,
+                ].join("\n"),
+            );
         } finally {
             setPurchasingPremium(false);
         }

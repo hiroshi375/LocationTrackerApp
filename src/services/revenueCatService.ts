@@ -7,7 +7,7 @@ import Purchases, {
 } from "react-native-purchases";
 
 export const PREMIUM_ENTITLEMENT_ID = "premium";
-export const PREMIUM_PACKAGE_ID = "lifetime_premium";
+export const PREMIUM_PACKAGE_ID = "$rc_lifetime";
 export const PREMIUM_PRODUCT_ID = "premium_lifetime";
 
 const REVENUECAT_TEST_API_KEY =

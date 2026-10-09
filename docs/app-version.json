@@ -1,14 +1,14 @@
 {
     "android": {
         "latestVersion": "1.0.0",
-        "latestBuild": 19,
+        "latestBuild": 21,
         "minimumSupportedBuild": 19,
         "storeUrl": "https://play.google.com/store/apps/details?id=com.hiroshisato.locationtrackerapp",
         "message": "AcLog Fitの新しいバージョンをご利用いただけます。"
     },
     "ios": {
-        "latestVersion": "1.0.0",
-        "latestBuild": 3,
+        "latestVersion": "1.0.1",
+        "latestBuild": 6,
         "minimumSupportedBuild": 3,
         "storeUrl": "https://apps.apple.com/app/id6818737493",
         "message": "AcLog Fitの新しいバージョンをご利用いただけます。"

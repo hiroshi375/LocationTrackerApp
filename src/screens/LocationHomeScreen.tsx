@@ -1737,6 +1737,15 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                 return;
             }
 
+            /*
+             * セッション自体を保存しないため、
+             * このセッションに紐づく継続確認stateも不要になる。
+             *
+             * LocationLog削除成功後に実行することで、
+             * 削除失敗時にはstateを保持する。
+             */
+            await clearRecordingContinuationState(pendingSessionId);
+
             setSessionNameModalVisible(false);
             setSessionNameInput("");
             setPendingSessionId(null);
@@ -1877,7 +1886,12 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
     }, [handleStopRecording, stoppingRecording]);
 
     useEffect(() => {
-        if (!continuationPrompt?.confirmationRequired) {
+        /*
+         * 記録停止済みの場合は、
+         * staleなcontinuationPromptが残っていても
+         * 継続確認Alertを表示しない。
+         */
+        if (!isRecording || !continuationPrompt?.confirmationRequired) {
             continuationAlertKeyRef.current = null;
             return;
         }
@@ -1933,7 +1947,12 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             ],
             { cancelable: false },
         );
-    }, [continuationPrompt, confirmContinuation, handleStopRecording]);
+    }, [
+        isRecording,
+        continuationPrompt,
+        confirmContinuation,
+        handleStopRecording,
+    ]);
 
     useEffect(() => {
         if (!autoStoppedSessionId) {

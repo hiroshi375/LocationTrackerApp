@@ -1888,6 +1888,17 @@ export function useForegroundLocationRecorder({
             const finishedUserId = recordingUserIdRef.current;
 
             /*
+             * 停止操作に入った時点で、
+             * Foreground側の継続確認UIだけを解除する。
+             *
+             * AsyncStorage上のRecordingContinuationStateは、
+             * 停止後のRecordingSession保存時に
+             * lastConfirmedAt / confirmationCount / autoStoppedAt
+             * を参照するため、ここでは削除しない。
+             */
+            setContinuationPrompt(null);
+
+            /*
              * foregroundの位置監視を先に止める。
              *
              * 既に登録済みのwatcherだけでなく、
@@ -2258,6 +2269,22 @@ export function useForegroundLocationRecorder({
             );
 
             /*
+             * evaluateRecordingContinuation() のawait中に
+             * 手動停止・自動停止・別セッション開始が行われた場合、
+             * 古いセッションの評価結果をUIへ反映しない。
+             *
+             * Backgroundの記録状態には触れず、
+             * Foreground側のstaleな継続確認だけを破棄する。
+             */
+            if (
+                !isRecordingRef.current ||
+                recordingSessionIdRef.current !== recordingSessionId
+            ) {
+                setContinuationPrompt(null);
+                return;
+            }
+
+            /*
              * 期限切れを先に判定する。
              */
             if (evaluation.isDeadlineExpired) {
@@ -2267,6 +2294,18 @@ export function useForegroundLocationRecorder({
                     recordingSessionId,
                     stoppedAt,
                 );
+
+                /*
+                 * mark処理中に手動停止された場合は、
+                 * もう一度stopRecording()しない。
+                 */
+                if (
+                    !isRecordingRef.current ||
+                    recordingSessionIdRef.current !== recordingSessionId
+                ) {
+                    setContinuationPrompt(null);
+                    return;
+                }
 
                 const finishedSessionId = await stopRecording();
 

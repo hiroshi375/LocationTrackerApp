@@ -1,9 +1,10 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { signOut } from "aws-amplify/auth";
+import { signOut, getCurrentUser } from "aws-amplify/auth";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
+    Button,
     Linking,
     Animated,
     AppState,
@@ -75,6 +76,16 @@ import {
     openCurrentStore,
     type AppVersionCheckResult,
 } from "../services/appVersionService";
+import {
+    getBackgroundTaskStageDiagnostic,
+    type BackgroundTaskStageDiagnostic,
+} from "../tasks/backgroundLocationTask";
+import {
+    changeLiveLocationSharing,
+    getLiveLocationSharingState,
+} from "../services/liveLocationMutationService";
+
+import { saveBackgroundShareRevision } from "../services/backgroundLocationService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "LocationHome">;
 
@@ -225,6 +236,9 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
         checkingBackgroundLocationPermission,
         setCheckingBackgroundLocationPermission,
     ] = useState(true);
+
+    const savingLiveShareRef = useRef(false);
+    const [savingLiveShare, setSavingLiveShare] = useState(false);
 
     const startHomeTutorialAfterLayout = useCallback(() => {
         requestAnimationFrame(() => {
@@ -506,7 +520,8 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
 
     const [backgroundHeartbeatStatus, setBackgroundHeartbeatStatus] =
         useState<BackgroundLocationHeartbeatStatus | null>(null);
-
+    const [backgroundStageDiagnostic, setBackgroundStageDiagnostic] =
+        useState<BackgroundTaskStageDiagnostic | null>(null);
     const [backgroundHeartbeatCheckedAt, setBackgroundHeartbeatCheckedAt] =
         useState<number | null>(null);
     const [hasStaleLiveSharingState, setHasStaleLiveSharingState] =
@@ -791,6 +806,103 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             );
         });
     }, [liveShareUsers, liveShareSearchText]);
+
+    const handleSaveLiveShareUsers = async (): Promise<void> => {
+        if (savingLiveShareRef.current) {
+            return;
+        }
+
+        if (recordingControlsLocked) {
+            return;
+        }
+
+        savingLiveShareRef.current = true;
+        setSavingLiveShare(true);
+
+        try {
+            const nextOwners = Array.from(
+                new Set(
+                    draftLiveShareUsers
+                        .map((user) => user.ownerValue)
+                        .filter(
+                            (value): value is string =>
+                                typeof value === "string" && value.length > 0,
+                        ),
+                ),
+            );
+
+            /*
+             * 今回は共有世代の保存処理を実装する段階。
+             * 共有完全停止の操作は既存の専用処理を使用する。
+             */
+            if (nextOwners.length === 0) {
+                Alert.alert(
+                    "現在地共有",
+                    "共有をすべて解除する場合は、共有先の解除操作を使用してください。",
+                );
+                return;
+            }
+
+            // サーバーに確定している状態を取得
+            const currentSharing = await getLiveLocationSharingState();
+
+            const sameOwners =
+                currentSharing.sharedOwners.length === nextOwners.length &&
+                nextOwners.every((owner) =>
+                    currentSharing.sharedOwners.includes(owner),
+                );
+
+            let nextRevision = currentSharing.revision;
+
+            /*
+             * 共有先が変わった場合だけMutation実行。
+             * 同じ共有先で保存した場合はrevisionを増やさない。
+             */
+            if (!currentSharing.enabled || !sameOwners) {
+                nextRevision = await changeLiveLocationSharing(
+                    nextOwners,
+                    currentSharing.revision,
+                );
+            }
+
+            // サーバーで確定した世代をローカルへ保存
+            const backgroundStatus = await getBackgroundRecordingStatus();
+
+            const backgroundUserId = backgroundStatus.state?.userId;
+
+            const currentUser = await getCurrentUser();
+
+            if (backgroundUserId && backgroundUserId !== currentUser.userId) {
+                throw new Error("LIVE_LOCATION_BACKGROUND_USER_MISMATCH");
+            }
+
+            if (backgroundUserId) {
+                await saveBackgroundShareRevision(
+                    currentUser.userId,
+                    nextRevision,
+                    nextOwners,
+                );
+            }
+
+            // Cloud更新とローカル保存後にUIを確定
+            setSelectedLiveShareUsers(draftLiveShareUsers);
+            setLiveShareStatusMessage("");
+            setLiveShareModalVisible(false);
+        } catch (error) {
+            console.error(
+                "[LiveLocation] Save sharing settings failed:",
+                error,
+            );
+
+            Alert.alert(
+                "現在地共有の設定エラー",
+                "共有設定を保存できませんでした。共有状態を確認してから、もう一度お試しください。",
+            );
+        } finally {
+            savingLiveShareRef.current = false;
+            setSavingLiveShare(false);
+        }
+    };
 
     const openLiveShareModal = () => {
         if (recordingControlsLocked) {
@@ -1222,6 +1334,24 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
 
                 setBackgroundHeartbeatStatus(status);
                 setBackgroundHeartbeatCheckedAt(Date.now());
+
+                /*
+                 * 追加：端末内のstage診断を取得
+                 */
+                try {
+                    const diagnostic = await getBackgroundTaskStageDiagnostic();
+
+                    setBackgroundStageDiagnostic(diagnostic);
+
+                    console.log(
+                        "[BG_STAGE_DIAGNOSTIC]",
+                        JSON.stringify(diagnostic),
+                    );
+                } catch (stageError) {
+                    console.error("[BG_STAGE_DIAGNOSTIC_FAILED]", stageError);
+
+                    setBackgroundStageDiagnostic(null);
+                }
             } catch (error) {
                 console.error(
                     "Check background location heartbeat error:",
@@ -1858,6 +1988,30 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             await debugPrintSaveThresholdTimeline(recordingSessionId);
         } catch (error) {
             console.error("SQLite skip reason debug failed:", error);
+        }
+    };
+
+    // SQLite状態管理サービスのテスト（管理者・開発ビルド専用）
+    const handleTestBackgroundRecordingStateStore = async (): Promise<void> => {
+        try {
+            console.log("[RecordingControlTest] Starting tests...");
+
+            const { runBackgroundRecordingStateStoreTests } =
+                await import("../tests/backgroundRecordingStateStore.test");
+
+            await runBackgroundRecordingStateStoreTests();
+
+            Alert.alert(
+                "SQLite状態管理テスト",
+                "すべてのテストが正常に終了しました。",
+            );
+        } catch (error) {
+            console.error("[RecordingControlTest] Failed:", error);
+
+            Alert.alert(
+                "SQLite状態管理テスト失敗",
+                error instanceof Error ? error.message : String(error),
+            );
         }
     };
 
@@ -2986,6 +3140,104 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                                     )}
                                 </View>
                             )}
+
+                            {backgroundStageDiagnostic && (
+                                <View style={styles.backgroundHeartbeatResult}>
+                                    <Text
+                                        style={
+                                            styles.backgroundHeartbeatStatusText
+                                        }
+                                    >
+                                        Background Task ステージ診断
+                                    </Text>
+
+                                    <Text
+                                        style={
+                                            styles.backgroundHeartbeatDetailText
+                                        }
+                                    >
+                                        診断レコード数:{" "}
+                                        {backgroundStageDiagnostic.totalCount}件
+                                    </Text>
+
+                                    <Text
+                                        style={
+                                            styles.backgroundHeartbeatDetailText
+                                        }
+                                    >
+                                        未完了イベント数:{" "}
+                                        {
+                                            backgroundStageDiagnostic.unfinishedCount
+                                        }
+                                        件
+                                    </Text>
+
+                                    {backgroundStageDiagnostic.latest && (
+                                        <>
+                                            <Text
+                                                style={
+                                                    styles.backgroundHeartbeatDetailText
+                                                }
+                                            >
+                                                最新ステージ:{" "}
+                                                {
+                                                    backgroundStageDiagnostic
+                                                        .latest.stage
+                                                }
+                                            </Text>
+
+                                            <Text
+                                                style={
+                                                    styles.backgroundHeartbeatDetailText
+                                                }
+                                            >
+                                                ステージ記録時刻:{" "}
+                                                {new Date(
+                                                    backgroundStageDiagnostic
+                                                        .latest.stageAt,
+                                                ).toLocaleString("ja-JP")}
+                                            </Text>
+                                        </>
+                                    )}
+
+                                    {backgroundStageDiagnostic.unfinished
+                                        .slice(0, 5)
+                                        .map((item) => (
+                                            <View key={item.eventId}>
+                                                <Text
+                                                    style={
+                                                        styles.backgroundHeartbeatDetailText
+                                                    }
+                                                >
+                                                    未完了: {item.stage}
+                                                </Text>
+
+                                                <Text
+                                                    style={
+                                                        styles.backgroundHeartbeatDetailText
+                                                    }
+                                                >
+                                                    開始時刻:{" "}
+                                                    {new Date(
+                                                        item.startedAt,
+                                                    ).toLocaleString("ja-JP")}
+                                                </Text>
+
+                                                <Text
+                                                    style={
+                                                        styles.backgroundHeartbeatDetailText
+                                                    }
+                                                >
+                                                    経過時間:{" "}
+                                                    {Math.floor(
+                                                        item.ageMs / 1000,
+                                                    )}
+                                                    秒
+                                                </Text>
+                                            </View>
+                                        ))}
+                                </View>
+                            )}
                         </View>
                     )}
                     <View
@@ -3256,6 +3508,20 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                             onPress={handleDebugSQLiteSkipReasons}
                             backgroundColor="#27445c"
                         />
+                        {__DEV__ && (
+                            <AppButton
+                                title="SQLite状態管理テスト"
+                                onPress={() => {
+                                    void handleTestBackgroundRecordingStateStore();
+                                }}
+                                disabled={
+                                    isRecording ||
+                                    startingRecording ||
+                                    stoppingRecording
+                                }
+                                backgroundColor="#27445c"
+                            />
+                        )}
                         <AppButton
                             title={
                                 exportingHeadlessDiagnostic
@@ -3530,20 +3796,14 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                                 </Pressable>
 
                                 <Pressable
-                                    style={[
-                                        styles.modalPrimaryButton,
-                                        savingSessionName &&
-                                            styles.appButtonDisabled,
-                                    ]}
-                                    disabled={savingSessionName}
-                                    onPress={() =>
-                                        saveSessionName(sessionNameInput)
-                                    }
+                                    style={styles.modalPrimaryButton}
+                                    disabled={savingLiveShare}
+                                    onPress={() => {
+                                        void handleSaveLiveShareUsers();
+                                    }}
                                 >
                                     <Text style={styles.modalPrimaryButtonText}>
-                                        {savingSessionName
-                                            ? "保存中..."
-                                            : "保存"}
+                                        {savingLiveShare ? "保存中..." : "保存"}
                                     </Text>
                                 </Pressable>
                             </View>

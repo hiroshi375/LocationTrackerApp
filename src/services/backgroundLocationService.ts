@@ -13,6 +13,12 @@ import {
     type BackgroundLocationTaskHeartbeat,
 } from "../tasks/backgroundLocationTask";
 import { saveBackgroundLocationDebugLog } from "./backgroundLocationDebugLogService";
+import {
+    getLiveLocationSharingState,
+    setLiveLocationSharingState,
+    startLiveLocationRecording,
+    stopLiveLocationRecording,
+} from "./liveLocationMutationService";
 
 export const BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED =
     "BACKGROUND_LOCATION_PERMISSION_NOT_GRANTED";
@@ -89,6 +95,7 @@ export type BackgroundRecordingState = {
     recordingExpiresAt?: string | null;
     liveShareOwnerValues?: string[];
     liveLocationId?: string | null;
+    shareRevision?: number;
     liveSharingStartedAt?: number | null;
     lastSavedLocation?: {
         latitude: number;
@@ -153,6 +160,37 @@ const BACKGROUND_LIVE_SHARING_START_GRACE_MS = 30_000;
  * native側は最大5秒間隔で位置を受信する。
  */
 const NATIVE_LOCATION_SAMPLE_INTERVAL_MS = 5_000;
+
+/**
+ * Background Locationのlifecycle操作を直列化する。
+ *
+ * start / stop / sharing切替 / shareRevision保存の
+ * 同時実行によるAsyncStorageとOS Taskの競合を抑止する。
+ *
+ * 同一JavaScriptランタイム内でのみ有効。
+ */
+let backgroundLifecycleQueue: Promise<void> = Promise.resolve();
+
+async function withBackgroundLifecycleLock<T>(
+    operation: string,
+    task: () => Promise<T>,
+): Promise<T> {
+    const previous = backgroundLifecycleQueue;
+
+    let release!: () => void;
+
+    backgroundLifecycleQueue = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+
+    await previous.catch(() => undefined);
+
+    try {
+        return await task();
+    } finally {
+        release();
+    }
+}
 
 function getNativeLocationSampleIntervalMs(intervalMs: number): number {
     if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
@@ -219,6 +257,99 @@ async function readBackgroundRecordingStateSafely(): Promise<BackgroundRecording
         );
         return null;
     }
+}
+
+function sameSharedOwners(a: string[], b: string[]): boolean {
+    const left = [...new Set(a)].sort();
+    const right = [...new Set(b)].sort();
+
+    return (
+        left.length === right.length &&
+        left.every((value, index) => value === right[index])
+    );
+}
+
+/**
+ * Cloudに確定している共有世代を取得する。
+ *
+ * 共有対象が一致しない場合、位置更新用の世代を渡さない。
+ */
+async function resolveShareRevision(
+    sharedOwners: string[],
+): Promise<number | undefined> {
+    if (sharedOwners.length === 0) {
+        return undefined;
+    }
+
+    const sharingState = await getLiveLocationSharingState();
+
+    if (
+        !sharingState.enabled ||
+        !Number.isSafeInteger(sharingState.revision) ||
+        sharingState.revision < 1 ||
+        !sameSharedOwners(sharingState.sharedOwners, sharedOwners)
+    ) {
+        throw new Error("LIVE_LOCATION_SHARING_STATE_MISMATCH");
+    }
+
+    return sharingState.revision;
+}
+
+export async function saveBackgroundShareRevision(
+    userId: string,
+    shareRevision: number,
+    sharedOwners: string[],
+): Promise<void> {
+    return withBackgroundLifecycleLock(
+        "saveBackgroundShareRevision",
+        async () => {
+            await saveBackgroundShareRevisionInternal(
+                userId,
+                shareRevision,
+                sharedOwners,
+            );
+        },
+    );
+}
+
+/**
+ * 共有変更Mutationが成功した後に呼び出す。
+ *
+ * ローカル状態が存在する場合だけ、
+ * shareRevisionと共有先を保存する。
+ */
+async function saveBackgroundShareRevisionInternal(
+    userId: string,
+    shareRevision: number,
+    sharedOwners: string[],
+): Promise<void> {
+    if (!Number.isSafeInteger(shareRevision) || shareRevision < 1) {
+        throw new Error("INVALID_SHARE_REVISION");
+    }
+
+    const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);
+
+    if (!raw) {
+        // BG stateがない場合は、共有開始処理で新規作成する。
+        return;
+    }
+
+    const state = JSON.parse(raw) as BackgroundRecordingState;
+
+    if (state.userId !== userId) {
+        throw new Error("BACKGROUND_SHARE_REVISION_USER_MISMATCH");
+    }
+
+    const nextState: BackgroundRecordingState = {
+        ...state,
+        shareRevision,
+        liveShareOwnerValues: [...sharedOwners],
+    };
+
+    await AsyncStorage.setItem(
+        BACKGROUND_RECORDING_STATE_KEY,
+        JSON.stringify(nextState),
+    );
 }
 
 async function safeHasStartedLocationUpdates(): Promise<boolean> {
@@ -510,7 +641,18 @@ export async function verifyAndRecoverBackgroundLocationRecording(): Promise<Bac
     };
 }
 
-export async function startBackgroundLiveSharing({
+export async function startBackgroundLiveSharing(
+    params: StartBackgroundLiveSharingParams,
+): Promise<void> {
+    return withBackgroundLifecycleLock(
+        "startBackgroundLiveSharing",
+        async () => {
+            await startBackgroundLiveSharingInternal(params);
+        },
+    );
+}
+
+async function startBackgroundLiveSharingInternal({
     userId,
     intervalMs,
     distanceMeters,
@@ -525,6 +667,10 @@ export async function startBackgroundLiveSharing({
         return;
     }
 
+    const shareRevision = await resolveShareRevision(
+        normalizedLiveShareOwnerValues,
+    );
+
     await ensureBackgroundLocationPermission(userId, null);
 
     const previousState = await readBackgroundRecordingStateSafely();
@@ -537,6 +683,7 @@ export async function startBackgroundLiveSharing({
         const nextState: BackgroundRecordingState = {
             ...previousState,
             liveShareOwnerValues: normalizedLiveShareOwnerValues,
+            shareRevision,
             liveLocationId:
                 liveLocationId ?? previousState.liveLocationId ?? null,
         };
@@ -630,6 +777,7 @@ export async function startBackgroundLiveSharing({
         intervalMs,
         distanceMeters,
         liveShareOwnerValues: normalizedLiveShareOwnerValues,
+        shareRevision,
         liveLocationId: liveLocationId ?? previousState?.liveLocationId ?? null,
         liveSharingStartedAt: nextLiveSharingStartedAt,
         lastSavedLocation: null,
@@ -964,7 +1112,72 @@ export async function startBackgroundLiveSharing({
     }
 }
 
-export async function startBackgroundLocationRecording({
+/**
+ * 記録開始失敗時に、以前のBackground Taskを復元する。
+ *
+ * previousStateが記録中なら記録用設定、
+ * 共有専用なら共有用設定を使用する。
+ *
+ * ローカルのlifecycle lock内で呼び出すこと。
+ */
+async function restorePreviousLocationTask(
+    previousState: BackgroundRecordingState | null,
+): Promise<void> {
+    if (!previousState) {
+        return;
+    }
+
+    const shouldRestoreRecording =
+        previousState.isRecording === true &&
+        Boolean(previousState.recordingSessionId);
+
+    const shouldRestoreSharing =
+        !shouldRestoreRecording &&
+        (previousState.liveShareOwnerValues?.length ?? 0) > 0;
+
+    if (!shouldRestoreRecording && !shouldRestoreSharing) {
+        return;
+    }
+
+    const options = createRecordingLocationTaskOptions(
+        previousState.intervalMs,
+        previousState.distanceMeters,
+    );
+
+    await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME, {
+        ...options,
+        foregroundService: {
+            ...options.foregroundService,
+            notificationTitle: shouldRestoreRecording
+                ? "位置情報を記録中"
+                : "現在地を共有中",
+            notificationBody: shouldRestoreRecording
+                ? "自動記録または現在地共有をバックグラウンドで継続しています"
+                : "現在地共有をバックグラウンドで継続しています",
+        },
+    });
+
+    const hasStarted = await Location.hasStartedLocationUpdatesAsync(
+        BACKGROUND_LOCATION_TASK_NAME,
+    );
+
+    if (!hasStarted) {
+        throw new Error("BACKGROUND_PREVIOUS_TASK_RESTORE_FAILED");
+    }
+}
+
+export async function startBackgroundLocationRecording(
+    params: StartBackgroundLocationRecordingParams,
+): Promise<void> {
+    return withBackgroundLifecycleLock(
+        "startBackgroundLocationRecording",
+        async () => {
+            await startBackgroundLocationRecordingInternal(params);
+        },
+    );
+}
+
+async function startBackgroundLocationRecordingInternal({
     userId,
     recordingSessionId,
     startedAt = null,
@@ -977,6 +1190,10 @@ export async function startBackgroundLocationRecording({
 }: StartBackgroundLocationRecordingParams) {
     const normalizedLiveShareOwnerValues = Array.from(
         new Set(liveShareOwnerValues.filter(Boolean)),
+    );
+
+    const shareRevision = await resolveShareRevision(
+        normalizedLiveShareOwnerValues,
     );
 
     await saveBackgroundLocationDebugLog({
@@ -1059,72 +1276,104 @@ export async function startBackgroundLocationRecording({
         eventName: "taskManagerSnapshotBeforeRecordingStart",
     });
 
-    if (hasStartedBeforeRestart) {
-        await saveBackgroundLocationDebugLog({
-            userId,
-            recordingSessionId,
-            eventName: "restartBackgroundLocationUpdatesForRecordingStarted",
-            hasStartedLocationUpdates: true,
-            details: {
-                reason:
-                    previousState?.isRecording === true
-                        ? "refreshExistingRecordingTask"
-                        : "switchFromLiveSharingToRecording",
-            },
-        });
+    try {
+        if (hasStartedBeforeRestart) {
+            await saveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName:
+                    "restartBackgroundLocationUpdatesForRecordingStarted",
+                hasStartedLocationUpdates: true,
+                details: {
+                    reason:
+                        previousState?.isRecording === true
+                            ? "refreshExistingRecordingTask"
+                            : "switchFromLiveSharingToRecording",
+                },
+            });
 
-        try {
-            await Location.stopLocationUpdatesAsync(
-                BACKGROUND_LOCATION_TASK_NAME,
-            );
-        } catch (error) {
-            const message =
-                error instanceof Error ? error.message : String(error);
-
-            const isTaskNotFound =
-                message.includes("TaskNotFoundException") ||
-                message.includes(
-                    "Task 'location-tracker-background-location-task' not found",
+            try {
+                await Location.stopLocationUpdatesAsync(
+                    BACKGROUND_LOCATION_TASK_NAME,
                 );
+            } catch (error) {
+                const message =
+                    error instanceof Error ? error.message : String(error);
 
-            if (!isTaskNotFound) {
-                throw error;
+                const isTaskNotFound =
+                    message.includes("TaskNotFoundException") ||
+                    message.includes(
+                        "Task 'location-tracker-background-location-task' not found",
+                    );
+
+                if (!isTaskNotFound) {
+                    throw error;
+                }
             }
-        }
 
-        const hasStartedAfterStop =
-            await Location.hasStartedLocationUpdatesAsync(
-                BACKGROUND_LOCATION_TASK_NAME,
-            );
-
-        await saveBackgroundLocationDebugLog({
-            userId,
-            recordingSessionId,
-            eventName: "existingLocationUpdatesStoppedBeforeRecordingStart",
-            hasStartedLocationUpdates: hasStartedAfterStop,
-        });
-
-        await saveTaskManagerDiagnosticSnapshot({
-            userId,
-            recordingSessionId,
-            eventName: "taskManagerSnapshotAfterExistingTaskStop",
-        });
-
-        if (hasStartedAfterStop) {
-            const error = new Error(
-                "Background location updates remained started after stop.",
-            );
+            const hasStartedAfterStop =
+                await Location.hasStartedLocationUpdatesAsync(
+                    BACKGROUND_LOCATION_TASK_NAME,
+                );
 
             await saveBackgroundLocationDebugLog({
                 userId,
                 recordingSessionId,
-                eventName: "existingLocationUpdatesStillStartedAfterStop",
-                hasStartedLocationUpdates: true,
-                errorMessage: error.message,
+                eventName: "existingLocationUpdatesStoppedBeforeRecordingStart",
+                hasStartedLocationUpdates: hasStartedAfterStop,
             });
 
-            throw error;
+            await saveTaskManagerDiagnosticSnapshot({
+                userId,
+                recordingSessionId,
+                eventName: "taskManagerSnapshotAfterExistingTaskStop",
+            });
+
+            if (hasStartedAfterStop) {
+                const error = new Error(
+                    "Background location updates remained started after stop.",
+                );
+
+                await saveBackgroundLocationDebugLog({
+                    userId,
+                    recordingSessionId,
+                    eventName: "existingLocationUpdatesStillStartedAfterStop",
+                    hasStartedLocationUpdates: true,
+                    errorMessage: error.message,
+                });
+
+                throw error;
+            }
         }
+    } catch (error) {
+        console.error(
+            "[BackgroundLocation] Stop previous task before start failed:",
+            error,
+        );
+
+        /*
+         * 以前のAsyncStorageはまだ変更していない。
+         * 以前のOS Taskが停止済みであれば復旧する。
+         */
+        if (hasStartedBeforeRestart) {
+            try {
+                const stillStarted =
+                    await Location.hasStartedLocationUpdatesAsync(
+                        BACKGROUND_LOCATION_TASK_NAME,
+                    );
+
+                if (!stillStarted) {
+                    await restorePreviousLocationTask(previousState);
+                }
+            } catch (restoreError) {
+                console.error(
+                    "[BackgroundLocation] Previous task restore failed:",
+                    restoreError,
+                );
+            }
+        }
+
+        throw error;
     }
 
     const nextState: BackgroundRecordingState = {
@@ -1136,19 +1385,10 @@ export async function startBackgroundLocationRecording({
         intervalMs,
         distanceMeters,
         liveShareOwnerValues: normalizedLiveShareOwnerValues,
+        shareRevision,
         liveLocationId,
         lastSavedLocation,
     };
-
-    /*
-     * startLocationUpdatesAsync直後にcallbackが到着しても、
-     * backgroundLocationTaskが新しいRecordingSessionを読めるよう、
-     * task開始前にstateを保存する。
-     */
-    await AsyncStorage.setItem(
-        BACKGROUND_RECORDING_STATE_KEY,
-        JSON.stringify(nextState),
-    );
 
     /*
      * ここは2d0c5cfへ完全には戻さない。
@@ -1164,7 +1404,23 @@ export async function startBackgroundLocationRecording({
         distanceMeters,
     );
 
+    /*
+     * Cloudへの開始要求が送信されたかを保持する。
+     * 通信エラーでもCloud更新が成功している可能性がある。
+     */
+    let cloudRecordingStartAttempted = false;
+
     try {
+        /*
+         * Background Callbackが新しいRecordingSessionを
+         * 読めるよう、OS Task開始前にstateを保存する。
+         *
+         * 保存失敗も同じcatchで復旧対象にする。
+         */
+        await AsyncStorage.setItem(
+            BACKGROUND_RECORDING_STATE_KEY,
+            JSON.stringify(nextState),
+        );
         await saveTaskManagerDiagnosticSnapshot({
             userId,
             recordingSessionId,
@@ -1211,6 +1467,29 @@ export async function startBackgroundLocationRecording({
         }
 
         /*
+         * 現在地共有中に自動記録を開始した場合だけ、
+         * Cloud側の記録状態を開始する。
+         *
+         * 共有していない通常の自動記録には影響させない。
+         */
+        if (normalizedLiveShareOwnerValues.length > 0) {
+            if (
+                typeof shareRevision !== "number" ||
+                !Number.isSafeInteger(shareRevision) ||
+                shareRevision < 1
+            ) {
+                throw new Error("LIVE_LOCATION_START_SHARE_REVISION_MISSING");
+            }
+
+            cloudRecordingStartAttempted = true;
+
+            await startLiveLocationRecording({
+                expectedRevision: shareRevision,
+                recordingSessionId,
+            });
+        }
+
+        /*
          * 重要:
          *
          * heartbeatを使ったstartup recoveryやcold restartは行わない。
@@ -1220,102 +1499,165 @@ export async function startBackgroundLocationRecording({
          *
          */
     } catch (error) {
+        const originalError = error;
+
+        /*
+         * 1. 開始失敗を診断ログへ記録する。
+         */
         await saveTaskManagerDiagnosticSnapshot({
             userId,
             recordingSessionId,
             eventName: "taskManagerSnapshotOnStartFailure",
         });
+
         await saveBackgroundLocationDebugLog({
             userId,
             recordingSessionId,
             eventName: "startLocationUpdatesFailed",
             hasStartedLocationUpdates: await safeHasStartedLocationUpdates(),
             errorMessage:
-                error instanceof Error ? error.message : String(error),
+                originalError instanceof Error
+                    ? originalError.message
+                    : String(originalError),
             details: {
                 restartedExistingTask: hasStartedBeforeRestart,
                 restoringPreviousState: Boolean(previousState),
+                cloudRecordingStartAttempted,
             },
         });
 
         /*
-         * 新しい自動記録stateだけが残ると、
-         * 画面上は記録中なのにtaskが開始できていない状態になる。
+         * 2. Cloud側の開始要求を実行していた場合、
+         * 今回のRecordingSessionだけを停止方向に補償する。
          *
-         * 起動失敗時には以前のstateへ戻す。
+         * 既存セッションの再初期化だった場合は、
+         * 以前から記録中のCloud状態を停止しない。
          */
-        if (previousState) {
-            await AsyncStorage.setItem(
-                BACKGROUND_RECORDING_STATE_KEY,
-                JSON.stringify(previousState),
-            );
-        } else {
-            await AsyncStorage.removeItem(BACKGROUND_RECORDING_STATE_KEY);
+        const previousSessionIsSame =
+            previousState?.isRecording === true &&
+            previousState.userId === userId &&
+            previousState.recordingSessionId === recordingSessionId;
+
+        if (
+            cloudRecordingStartAttempted &&
+            !previousSessionIsSame &&
+            typeof shareRevision === "number" &&
+            Number.isSafeInteger(shareRevision) &&
+            shareRevision >= 1
+        ) {
+            try {
+                await stopLiveLocationRecording({
+                    expectedRevision: shareRevision,
+                    expectedRecordingSessionId: recordingSessionId,
+                });
+            } catch (compensationError) {
+                console.error(
+                    "[BackgroundLocation] Cloud start compensation failed:",
+                    compensationError,
+                );
+
+                await saveBackgroundLocationDebugLog({
+                    userId,
+                    recordingSessionId,
+                    eventName:
+                        "backgroundCloudRecordingStartCompensationFailed",
+                    errorMessage:
+                        compensationError instanceof Error
+                            ? compensationError.message
+                            : String(compensationError),
+                });
+            }
         }
 
         /*
-         * 開始前が現在地共有状態だった場合、
-         * 自動記録開始のために既存taskを停止している可能性がある。
+         * 3. 今回開始したOS Taskを停止する。
+         */
+        let taskCleanupSucceeded = false;
+
+        try {
+            const hasStarted = await Location.hasStartedLocationUpdatesAsync(
+                BACKGROUND_LOCATION_TASK_NAME,
+            );
+
+            if (hasStarted) {
+                await Location.stopLocationUpdatesAsync(
+                    BACKGROUND_LOCATION_TASK_NAME,
+                );
+            }
+
+            const stillStarted = await Location.hasStartedLocationUpdatesAsync(
+                BACKGROUND_LOCATION_TASK_NAME,
+            );
+
+            if (stillStarted) {
+                throw new Error("BACKGROUND_TASK_CLEANUP_NOT_CONFIRMED");
+            }
+
+            taskCleanupSucceeded = true;
+        } catch (cleanupError) {
+            console.error(
+                "[BackgroundLocation] Recording task cleanup failed:",
+                cleanupError,
+            );
+        }
+
+        /*
+         * 4. 開始前のAsyncStorageへ戻す。
+         */
+        let stateRestoreSucceeded = false;
+
+        try {
+            if (previousState) {
+                await AsyncStorage.setItem(
+                    BACKGROUND_RECORDING_STATE_KEY,
+                    JSON.stringify(previousState),
+                );
+            } else {
+                await AsyncStorage.removeItem(BACKGROUND_RECORDING_STATE_KEY);
+            }
+
+            stateRestoreSucceeded = true;
+        } catch (stateError) {
+            console.error(
+                "[BackgroundLocation] Previous recording state restore failed:",
+                stateError,
+            );
+        }
+
+        /*
+         * 5. 以前からOS Taskが起動していた場合だけ復旧する。
          *
-         * その場合だけ共有用background taskを復旧する。
-         *
-         * この復旧に失敗しても、
-         * 元の自動記録開始エラーを優先してthrowする。
+         * 記録中 → 記録用Task
+         * 共有のみ → 共有用Task
          */
         if (
-            previousState &&
-            (previousState.liveShareOwnerValues?.length ?? 0) > 0
+            hasStartedBeforeRestart &&
+            taskCleanupSucceeded &&
+            stateRestoreSucceeded
         ) {
             try {
-                const sharingTaskAlreadyStarted =
-                    await Location.hasStartedLocationUpdatesAsync(
-                        BACKGROUND_LOCATION_TASK_NAME,
-                    );
-
-                if (!sharingTaskAlreadyStarted) {
-                    await Location.startLocationUpdatesAsync(
-                        BACKGROUND_LOCATION_TASK_NAME,
-                        {
-                            accuracy: Location.Accuracy.BestForNavigation,
-                            timeInterval: getNativeLocationSampleIntervalMs(
-                                previousState.intervalMs,
-                            ),
-                            distanceInterval: 0,
-                            deferredUpdatesInterval: 0,
-                            deferredUpdatesDistance: 0,
-                            activityType: Location.ActivityType.Fitness,
-                            pausesUpdatesAutomatically: false,
-                            showsBackgroundLocationIndicator: true,
-                            foregroundService: {
-                                notificationTitle: "現在地を共有中",
-                                notificationBody:
-                                    "現在地共有をバックグラウンドで継続しています",
-                                notificationColor: "#4b6f8f",
-                            },
-                        },
-                    );
-                }
+                await restorePreviousLocationTask(previousState);
 
                 await saveBackgroundLocationDebugLog({
-                    userId: previousState.userId,
+                    userId: previousState?.userId ?? userId,
                     recordingSessionId:
-                        previousState.recordingSessionId ?? null,
+                        previousState?.recordingSessionId ?? null,
                     eventName:
-                        "previousBackgroundLiveSharingRestoredAfterStartFailure",
+                        "previousBackgroundTaskRestoredAfterStartFailure",
                     hasStartedLocationUpdates:
                         await safeHasStartedLocationUpdates(),
                 });
             } catch (restoreError) {
                 console.error(
-                    "Restore previous background live sharing error:",
+                    "[BackgroundLocation] Previous task restore failed:",
                     restoreError,
                 );
 
                 await saveBackgroundLocationDebugLog({
-                    userId: previousState.userId,
+                    userId: previousState?.userId ?? userId,
                     recordingSessionId:
-                        previousState.recordingSessionId ?? null,
-                    eventName: "previousBackgroundLiveSharingRestoreFailed",
+                        previousState?.recordingSessionId ?? null,
+                    eventName: "previousBackgroundTaskRestoreFailed",
                     errorMessage:
                         restoreError instanceof Error
                             ? restoreError.message
@@ -1324,11 +1666,25 @@ export async function startBackgroundLocationRecording({
             }
         }
 
-        throw error;
+        /*
+         * 6. 復旧処理によって元のエラーを隠さない。
+         */
+        throw originalError;
     }
 }
 
 export async function stopBackgroundLocationRecording(
+    options: StopBackgroundLocationRecordingOptions = {},
+): Promise<void> {
+    return withBackgroundLifecycleLock(
+        "stopBackgroundLocationRecording",
+        async () => {
+            await stopBackgroundLocationRecordingInternal(options);
+        },
+    );
+}
+
+async function stopBackgroundLocationRecordingInternal(
     options: StopBackgroundLocationRecordingOptions = {},
 ) {
     const continueLiveSharing = options.continueLiveSharing === true;
@@ -1463,55 +1819,189 @@ export async function stopBackgroundLocationRecording(
             }
         }
 
-        const nextState: BackgroundRecordingState = {
-            ...stateForUpdate,
-            isRecording: false,
-            recordingSessionId: null,
-            startedAt: null,
-            recordingExpiresAt: null,
-            lastSavedLocation: null,
-        };
+        /*
+         * 自動記録だけ停止し、現在地共有を継続する。
+         *
+         * Cloud側の記録停止を確定してから、
+         * ローカルの記録状態を終了状態へ変更する。
+         */
+        const expectedSessionId = stateForUpdate.recordingSessionId ?? null;
 
-        await AsyncStorage.setItem(
-            BACKGROUND_RECORDING_STATE_KEY,
-            JSON.stringify(nextState),
-        );
+        const expectedRevision = stateForUpdate.shareRevision;
 
-        // 以下既存処理
+        if (
+            typeof expectedRevision !== "number" ||
+            !Number.isSafeInteger(expectedRevision) ||
+            expectedRevision < 1
+        ) {
+            throw new Error("LIVE_LOCATION_STOP_SHARE_REVISION_MISSING");
+        }
 
-        if (liveLocationId) {
+        if (!expectedSessionId) {
+            throw new Error("LIVE_LOCATION_STOP_RECORDING_SESSION_MISSING");
+        }
+
+        /*
+         * Cloud側の自動記録停止を確定する。
+         *
+         * 失敗時はAsyncStorageを更新せず、
+         * OS Taskも停止しない。
+         */
+        try {
+            await stopLiveLocationRecording({
+                expectedRevision,
+                expectedRecordingSessionId: expectedSessionId,
+            });
+        } catch (cloudError) {
+            console.error(
+                "[BackgroundLocation] Cloud recording stop failed:",
+                cloudError,
+            );
+
             try {
-                const result = await client.models.LiveLocation.update({
-                    id: liveLocationId,
-                    isActive: true,
-                    isRecording: false,
-                    recordingSessionId: null,
-                    updatedAt: new Date().toISOString(),
-                    sharedOwners: nextState.liveShareOwnerValues ?? [],
+                await saveBackgroundLocationDebugLog({
+                    userId: stateForUpdate.userId,
+                    recordingSessionId: expectedSessionId,
+                    eventName: "backgroundCloudRecordingStopFailed",
+                    hasStartedLocationUpdates:
+                        await safeHasStartedLocationUpdates(),
+                    errorMessage:
+                        cloudError instanceof Error
+                            ? cloudError.message
+                            : String(cloudError),
+                    details: {
+                        expectedRevision,
+                        continueLiveSharing: true,
+                        localStatePreserved: true,
+                    },
                 });
-
-                if (result.errors) {
-                    console.error(
-                        "Background LiveLocation continue sharing update errors:",
-                        result.errors,
-                    );
-                }
-            } catch (error) {
+            } catch (logError) {
                 console.error(
-                    "Background LiveLocation continue sharing update error:",
-                    error,
+                    "[BackgroundLocation] Stop failure diagnostic failed:",
+                    logError,
+                );
+            }
+
+            throw cloudError;
+        }
+
+        /*
+         * Cloud停止成功後、ローカルの記録状態を終了へ変更する。
+         *
+         * AsyncStorage保存失敗時は1回再試行する。
+         *
+         * Cloud側では停止が確定しているため、
+         * 失敗してもCloudの記録状態を元に戻さない。
+         */
+        let localStateSaved = false;
+        let localSaveError: unknown = null;
+
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+            try {
+                /*
+                 * 最新stateが別ユーザー・別セッション・別共有世代に
+                 * 切り替わっていないことを確認する。
+                 */
+                const latestRaw = await AsyncStorage.getItem(
+                    BACKGROUND_RECORDING_STATE_KEY,
                 );
 
-                await saveBackgroundLocationDebugLog({
-                    userId,
-                    recordingSessionId,
-                    eventName:
-                        "backgroundLiveLocationContinueSharingUpdateFailed",
-                    errorMessage:
-                        error instanceof Error ? error.message : String(error),
-                });
+                if (!latestRaw) {
+                    throw new Error(
+                        "BACKGROUND_RECORDING_STATE_MISSING_AFTER_CLOUD_STOP",
+                    );
+                }
+
+                const latestState = JSON.parse(
+                    latestRaw,
+                ) as BackgroundRecordingState;
+
+                if (
+                    latestState.userId !== stateForUpdate.userId ||
+                    (latestState.recordingSessionId ?? null) !==
+                        expectedSessionId ||
+                    latestState.shareRevision !== expectedRevision
+                ) {
+                    throw new Error(
+                        "BACKGROUND_RECORDING_STATE_CHANGED_AFTER_CLOUD_STOP",
+                    );
+                }
+
+                /*
+                 * latestStateから次の状態を生成することで、
+                 * Cloud更新中に保存された他の項目を極力維持する。
+                 */
+                const updatedState: BackgroundRecordingState = {
+                    ...latestState,
+                    isRecording: false,
+                    recordingSessionId: null,
+                    startedAt: null,
+                    recordingExpiresAt: null,
+                    lastSavedLocation: null,
+                };
+
+                await AsyncStorage.setItem(
+                    BACKGROUND_RECORDING_STATE_KEY,
+                    JSON.stringify(updatedState),
+                );
+
+                localStateSaved = true;
+                break;
+            } catch (saveError) {
+                localSaveError = saveError;
+
+                console.error(
+                    `[BackgroundLocation] Local recording stop save failed (${attempt}/2):`,
+                    saveError,
+                );
+
+                /*
+                 * 状態の切り替わりを検出した場合は、
+                 * 古い状態での保存再試行を行わない。
+                 */
+                if (
+                    saveError instanceof Error &&
+                    saveError.message ===
+                        "BACKGROUND_RECORDING_STATE_CHANGED_AFTER_CLOUD_STOP"
+                ) {
+                    break;
+                }
             }
         }
+
+        if (!localStateSaved) {
+            try {
+                await saveBackgroundLocationDebugLog({
+                    userId: stateForUpdate.userId,
+                    recordingSessionId: expectedSessionId,
+                    eventName:
+                        "backgroundLocalRecordingStopSaveFailedAfterCloudSuccess",
+                    hasStartedLocationUpdates:
+                        await safeHasStartedLocationUpdates(),
+                    errorMessage:
+                        localSaveError instanceof Error
+                            ? localSaveError.message
+                            : String(localSaveError),
+                    details: {
+                        expectedRevision,
+                        cloudStopSucceeded: true,
+                        localStateSaved: false,
+                        continueLiveSharing: true,
+                    },
+                });
+            } catch (logError) {
+                console.error(
+                    "[BackgroundLocation] Local stop diagnostic failed:",
+                    logError,
+                );
+            }
+
+            throw new Error(
+                "BACKGROUND_LOCAL_STOP_SAVE_FAILED_AFTER_CLOUD_SUCCESS",
+            );
+        }
+
+        // 以下既存処理
 
         await saveBackgroundLocationDebugLog({
             userId,
@@ -1520,7 +2010,8 @@ export async function stopBackgroundLocationRecording(
             hasStartedLocationUpdates: hasStarted,
             details: {
                 liveLocationId,
-                sharedOwnerCount: nextState.liveShareOwnerValues?.length ?? 0,
+                sharedOwnerCount:
+                    stateForUpdate.liveShareOwnerValues?.length ?? 0,
             },
         });
 
@@ -1528,68 +2019,208 @@ export async function stopBackgroundLocationRecording(
     }
 
     /*
-     * 共有を継続しない場合だけ、
-     * バックグラウンド位置更新を完全停止する。
+     * 共有を継続しない場合の完全停止。
+     *
+     * Cloud共有権限の停止を先に確定してから、
+     * OSのBackground Location Taskを停止する。
+     *
+     * 通常の自動記録のみの場合は、
+     * Cloud共有Mutationを実行しない。
      */
-    if (hasStarted) {
-        await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME);
-    }
 
-    const hasStartedAfterStop = await Location.hasStartedLocationUpdatesAsync(
-        BACKGROUND_LOCATION_TASK_NAME,
-    );
-
-    await saveBackgroundLocationDebugLog({
-        userId,
-        recordingSessionId,
-        eventName: "stopBackgroundLocationRecordingCompleted",
-        hasStartedLocationUpdates: hasStartedAfterStop,
-        details: {
-            hasStartedBeforeStop: hasStarted,
-            continueLiveSharing: false,
-        },
-    });
+    const hasLocalSharingEvidence =
+        (currentState?.liveShareOwnerValues?.length ?? 0) > 0 ||
+        (currentState?.shareRevision ?? 0) > 0 ||
+        Boolean(liveLocationId);
 
     /*
-     * stopLocationUpdatesAsync() 後に、
-     * TaskManager側の登録状態が完全に解除されているか診断する。
+     * 1. Cloud側の共有停止。
+     *
+     * Cloud停止が成功する前にOS Taskを停止しない。
      */
+    if (hasLocalSharingEvidence) {
+        try {
+            if (!userId) {
+                throw new Error("BACKGROUND_SHARING_STOP_USER_ID_MISSING");
+            }
+
+            const sharingState = await getLiveLocationSharingState();
+
+            /*
+             * すでに共有停止済みの場合は
+             * 再度Mutationを実行しない。
+             *
+             * 前回Cloud停止成功後にOS Task停止だけ
+             * 失敗したケースでも、再試行できる。
+             */
+            if (sharingState.enabled) {
+                await setLiveLocationSharingState({
+                    userId,
+                    legacyLiveLocationId: liveLocationId,
+                    continueSharing: false,
+                    sharedOwners: [],
+                    expectedRevision: sharingState.revision,
+                });
+            }
+
+            console.log("[LiveLocation] Cloud sharing stop confirmed", {
+                userId,
+                previousRevision: sharingState.revision,
+                alreadyDisabled: !sharingState.enabled,
+            });
+
+            /*
+             * Cloud共有停止はすでに成功済み。
+             * 診断ログの保存失敗では停止処理を中断しない。
+             */
+            try {
+                await saveBackgroundLocationDebugLog({
+                    userId,
+                    recordingSessionId,
+                    eventName: "backgroundCloudSharingStopConfirmed",
+                    details: {
+                        previousRevision: sharingState.revision,
+                        alreadyDisabled: !sharingState.enabled,
+                        continueLiveSharing: false,
+                    },
+                });
+            } catch (logError) {
+                console.error(
+                    "[BackgroundLocation] Cloud stop success log failed:",
+                    logError,
+                );
+            }
+        } catch (cloudError) {
+            console.error(
+                "[BackgroundLocation] Cloud sharing stop failed:",
+                cloudError,
+            );
+
+            /*
+             * 診断ログ失敗によって元のCloudエラーを
+             * 隠さないようにする。
+             */
+            try {
+                await saveBackgroundLocationDebugLog({
+                    userId,
+                    recordingSessionId,
+                    eventName: "backgroundCloudSharingStopFailed",
+                    errorMessage:
+                        cloudError instanceof Error
+                            ? cloudError.message
+                            : String(cloudError),
+                    details: {
+                        continueLiveSharing: false,
+                        osTaskStopAttempted: false,
+                        localStatePreserved: true,
+                    },
+                });
+            } catch (logError) {
+                console.error(
+                    "[BackgroundLocation] Cloud stop log failed:",
+                    logError,
+                );
+            }
+
+            /*
+             * Cloudの共有停止を確認できていない。
+             * OS TaskとAsyncStorageは変更せず終了する。
+             */
+            throw cloudError;
+        }
+    }
+
+    /*
+     * 2. OS Taskを停止する。
+     *
+     * 共有していた場合はCloud停止確認後、
+     * 通常記録のみの場合は直接ここへ進む。
+     */
+    try {
+        const started = await Location.hasStartedLocationUpdatesAsync(
+            BACKGROUND_LOCATION_TASK_NAME,
+        );
+
+        if (started) {
+            await Location.stopLocationUpdatesAsync(
+                BACKGROUND_LOCATION_TASK_NAME,
+            );
+        }
+
+        const hasStartedAfterStop =
+            await Location.hasStartedLocationUpdatesAsync(
+                BACKGROUND_LOCATION_TASK_NAME,
+            );
+
+        if (hasStartedAfterStop) {
+            throw new Error(
+                "BACKGROUND_LOCATION_TASK_STILL_STARTED_AFTER_STOP",
+            );
+        }
+
+        if (hasStartedAfterStop) {
+            throw new Error(
+                "BACKGROUND_LOCATION_TASK_STILL_STARTED_AFTER_STOP",
+            );
+        }
+    } catch (stopError) {
+        console.error("[BackgroundLocation] OS Task stop failed:", stopError);
+
+        try {
+            await saveBackgroundLocationDebugLog({
+                userId,
+                recordingSessionId,
+                eventName: "backgroundLocationTaskStopFailed",
+                errorMessage:
+                    stopError instanceof Error
+                        ? stopError.message
+                        : String(stopError),
+                details: {
+                    cloudSharingStopChecked: hasLocalSharingEvidence,
+                    localStatePreserved: true,
+                },
+            });
+        } catch (logError) {
+            console.error("[BackgroundLocation] OS stop log failed:", logError);
+        }
+
+        throw stopError;
+    }
+
+    /*
+     * ここに到達した場合、OS Task停止確認は成功している。
+     *
+     * 診断ログの失敗は停止処理の失敗と扱わない。
+     */
+    try {
+        await saveBackgroundLocationDebugLog({
+            userId,
+            recordingSessionId,
+            eventName: "stopBackgroundLocationRecordingCompleted",
+            hasStartedLocationUpdates: false,
+            details: {
+                hasStartedBeforeStop: hasStarted,
+                continueLiveSharing: false,
+                cloudSharingStopChecked: hasLocalSharingEvidence,
+            },
+        });
+    } catch (logError) {
+        console.error(
+            "[BackgroundLocation] Stop success log failed:",
+            logError,
+        );
+    }
+
     await saveTaskManagerDiagnosticSnapshot({
         userId,
         recordingSessionId,
         eventName: "taskManagerSnapshotAfterRecordingStop",
     });
 
-    if (liveLocationId) {
-        try {
-            const result = await client.models.LiveLocation.update({
-                id: liveLocationId,
-                isActive: false,
-                isRecording: false,
-                recordingSessionId: null,
-                sharedOwners: [],
-                updatedAt: new Date().toISOString(),
-            });
-
-            if (result.errors?.length || !result.data) {
-                throw new Error(
-                    `LiveLocation停止更新失敗: ${JSON.stringify(
-                        result.errors ?? ["更新結果なし"],
-                    )}`,
-                );
-            }
-        } catch (error) {
-            console.error("Background LiveLocation stop update error:", error);
-
-            await saveBackgroundLocationDebugLog({
-                userId,
-                recordingSessionId,
-                eventName: "backgroundLiveLocationStopUpdateFailed",
-                errorMessage:
-                    error instanceof Error ? error.message : String(error),
-            });
-        }
-    }
+    /*
+     * この後の既存コードで、
+     * セッション再確認 → AsyncStorage削除を実施する。
+     */
 
     /*
      * stop処理中に新しいRecordingSessionが開始されていないか、

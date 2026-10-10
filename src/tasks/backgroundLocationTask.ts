@@ -528,6 +528,7 @@ type BackgroundRecordingState = {
 
     intervalMs: number;
     distanceMeters: number;
+    shareRevision?: number;
 };
 
 type SavedLocation = {
@@ -1257,6 +1258,20 @@ TaskManager.defineTask(
 
             const state = await getBackgroundRecordingState();
 
+            /*
+             * Callbackが最初に読み取った共有世代を固定する。
+             *
+             * この後、別の処理がAsyncStorageを更新しても、
+             * このCallbackのexpectedRevisionは変更しない。
+             */
+            const callbackShareRevision = state?.shareRevision;
+
+            const callbackSharedOwners = Array.from(
+                new Set((state?.liveShareOwnerValues ?? []).filter(Boolean)),
+            );
+
+            const callbackUserId = state?.userId ?? null;
+
             recordBackgroundTaskStage(stageContext, "STATE_LOAD_END", {
                 hasState: Boolean(state),
                 isRecording: state?.isRecording ?? false,
@@ -1884,6 +1899,11 @@ TaskManager.defineTask(
                             latestLocation,
                             currentState,
                             taskFiredAt,
+                            {
+                                userId: callbackUserId,
+                                revision: callbackShareRevision,
+                                sharedOwners: callbackSharedOwners,
+                            },
                         );
 
                     recordBackgroundTaskStage(
@@ -2473,6 +2493,14 @@ async function getBackgroundRecordingState(): Promise<BackgroundRecordingState |
             : [];
 
         return {
+            /*
+             * Service側が保存した追加項目も維持する。
+             *
+             * shareRevision、recordingExpiresAt、
+             * liveSharingStartedAt等を、
+             * Callback側の再保存で消さないため。
+             */
+            ...parsed,
             userId: parsed.userId,
 
             /*
@@ -2577,6 +2605,7 @@ async function updateBackgroundRecordingStateIfCurrent(
     updater: (
         currentState: BackgroundRecordingState,
     ) => BackgroundRecordingState,
+    expectedShareRevision?: number,
 ): Promise<BackgroundRecordingState | null> {
     const currentState = await getBackgroundRecordingState();
 
@@ -2585,9 +2614,7 @@ async function updateBackgroundRecordingStateIfCurrent(
     }
 
     /*
-     * callback開始後に別ユーザー・別RecordingSessionへ
-     * stateが切り替わっていた場合、
-     * 古いcallbackからstateを書き戻さない。
+     * 1. ユーザー・RecordingSessionの一致確認。
      */
     if (
         currentState.userId !== expectedUserId ||
@@ -2603,7 +2630,49 @@ async function updateBackgroundRecordingStateIfCurrent(
         return null;
     }
 
-    const nextState = updater(currentState);
+    /*
+     * 2. 共有世代が指定されている場合は一致確認。
+     *
+     * LocationLog保存など、共有とは無関係の更新では
+     * expectedShareRevisionを指定しない。
+     */
+    if (
+        expectedShareRevision !== undefined &&
+        currentState.shareRevision !== expectedShareRevision
+    ) {
+        console.warn(
+            "[BackgroundRecordingState] Skip stale share revision update:",
+            {
+                expectedShareRevision,
+                currentShareRevision: currentState.shareRevision ?? null,
+                expectedRecordingSessionId,
+            },
+        );
+
+        return null;
+    }
+
+    /*
+     * 3. 既存の更新処理を実行。
+     */
+    const updatedState = updater(currentState);
+
+    /*
+     * 4. Callbackから共有設定を巻き戻さない。
+     *
+     * isRecordingやlastSavedLocationなど、
+     * 既存の記録処理による変更は維持する。
+     */
+    const nextState: BackgroundRecordingState = {
+        ...updatedState,
+
+        userId: currentState.userId,
+        recordingSessionId: currentState.recordingSessionId,
+
+        liveShareOwnerValues: currentState.liveShareOwnerValues,
+
+        shareRevision: currentState.shareRevision,
+    };
 
     await AsyncStorage.setItem(
         BACKGROUND_RECORDING_STATE_KEY,
@@ -2617,10 +2686,13 @@ async function updateBackgroundLiveLocation(
     location: Location.LocationObject,
     state: BackgroundRecordingState,
     taskFiredAt: string,
+    capturedSharing: {
+        userId: string | null;
+        revision: number | undefined;
+        sharedOwners: string[];
+    },
 ): Promise<UpdateBackgroundLiveLocationResult> {
-    const sharedOwners = Array.from(
-        new Set((state.liveShareOwnerValues ?? []).filter(Boolean)),
-    );
+    const sharedOwners = capturedSharing.sharedOwners;
 
     if (sharedOwners.length === 0) {
         return {
@@ -2648,6 +2720,30 @@ async function updateBackgroundLiveLocation(
         };
     }
 
+    const capturedShareRevision = capturedSharing.revision;
+
+    if (
+        capturedSharing.userId !== state.userId ||
+        typeof capturedShareRevision !== "number" ||
+        !Number.isSafeInteger(capturedShareRevision) ||
+        capturedShareRevision < 1
+    ) {
+        console.warn("[LiveLocation] Background update skipped:", {
+            reason: "INVALID_OR_STALE_SHARE_REVISION",
+            capturedRevision: capturedShareRevision ?? null,
+        });
+
+        return {
+            nextState: state,
+            attempted: false,
+            succeeded: false,
+            operation: "none",
+            timedOut: false,
+            errorMessage: "INVALID_OR_STALE_SHARE_REVISION",
+            liveLocationId: state.liveLocationId ?? null,
+        };
+    }
+
     const isRecording =
         state.isRecording === true && Boolean(state.recordingSessionId);
 
@@ -2668,6 +2764,18 @@ async function updateBackgroundLiveLocation(
     try {
         // Callback開始時の古い共有設定で更新しないよう再確認
         const latestState = await getBackgroundRecordingState();
+
+        /*
+         * Callback開始時のユーザーと、
+         * 現在のBackground状態のユーザーが一致することを確認。
+         */
+        if (
+            !latestState ||
+            latestState.userId !== capturedSharing.userId ||
+            latestState.userId !== state.userId
+        ) {
+            throw new Error("BACKGROUND_LIVE_LOCATION_USER_CHANGED");
+        }
 
         if (
             !latestState ||
@@ -2694,18 +2802,14 @@ async function updateBackgroundLiveLocation(
         const id = await withTimeout(
             upsertLiveLocation({
                 userId: state.userId,
-                recordingSessionId:
-                    latestState.isRecording && latestState.recordingSessionId
-                        ? latestState.recordingSessionId
-                        : null,
-                isRecording:
-                    latestState.isRecording === true &&
-                    Boolean(latestState.recordingSessionId),
                 latitude,
                 longitude,
                 accuracy: location.coords.accuracy ?? null,
                 updatedAt: new Date().toISOString(),
                 sharedOwners: latestSharedOwners,
+
+                // Step 2で追加
+                expectedRevision: capturedShareRevision,
             }),
             LIVE_LOCATION_UPDATE_TIMEOUT_MS,
             "Background LiveLocation.upsert",
@@ -2718,6 +2822,7 @@ async function updateBackgroundLiveLocation(
                 ...currentState,
                 liveLocationId: id,
             }),
+            capturedShareRevision,
         );
 
         return {

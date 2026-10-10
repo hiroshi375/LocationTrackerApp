@@ -1,12 +1,15 @@
 import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
 import { deviceSessionApi } from "../functions/device-session-api/resource";
 import { shareGroupApi } from "../functions/share-group-api/resource";
+import { liveLocationApi } from "../functions/live-location-api/resource";
+
 /*== STEP 1 ===============================================================
 The section below creates a Todo database table with a "content" field. Try
 adding a new "isDone" field as a boolean. The authorization rule below
 specifies that any unauthenticated user can "create", "read", "update",
 and "delete" any "Todo" records.
 =========================================================================*/
+
 const schema = a
     .schema({
         LocationLog: a
@@ -211,33 +214,20 @@ const schema = a
         LiveLocation: a
             .model({
                 userId: a.string().required(),
-
-                /*
-                 * 自動記録していない位置共有ではnullになるため、
-                 * required()を付けない。
-                 */
                 recordingSessionId: a.string(),
-
-                /*
-                 * true:
-                 *   自動記録中。現在地とPolylineを表示する。
-                 *
-                 * false:
-                 *   現在地共有のみ。現在地マーカーだけを表示する。
-                 */
                 isRecording: a.boolean().required(),
-
+                lastStoppedRecordingSessionId: a.string(),
                 latitude: a.float().required(),
                 longitude: a.float().required(),
                 accuracy: a.float(),
-
                 updatedAt: a.datetime().required(),
                 isActive: a.boolean().required(),
-
                 sharedOwners: a.string().array(),
+                shareRevision: a.integer(),
+                shareEnabled: a.boolean(),
             })
             .authorization((allow) => [
-                allow.owner(),
+                allow.owner().to(["read"]),
                 allow.ownersDefinedIn("sharedOwners").to(["read"]),
             ]),
         ShareGroup: a
@@ -514,6 +504,60 @@ const schema = a
                 detailsJson: a.string(),
             })
             .authorization((allow) => [allow.owner()]),
+
+        LiveLocationSharingState: a.customType({
+            revision: a.integer().required(),
+            enabled: a.boolean().required(),
+            sharedOwners: a.string().array().required(),
+        }),
+
+        getLiveLocationSharingState: a
+            .query()
+            .returns(a.ref("LiveLocationSharingState"))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(liveLocationApi)),
+
+        updateLiveLocationCoordinates: a
+            .mutation()
+            .arguments({
+                expectedRevision: a.integer().required(),
+                latitude: a.float().required(),
+                longitude: a.float().required(),
+                accuracy: a.float(),
+            })
+            .returns(a.boolean())
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(liveLocationApi)),
+
+        changeLiveLocationSharing: a
+            .mutation()
+            .arguments({
+                expectedRevision: a.integer().required(),
+                sharedOwners: a.string().array().required(),
+            })
+            .returns(a.integer())
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(liveLocationApi)),
+
+        startLiveLocationRecording: a
+            .mutation()
+            .arguments({
+                expectedRevision: a.integer().required(),
+                recordingSessionId: a.string().required(),
+            })
+            .returns(a.boolean())
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(liveLocationApi)),
+
+        stopLiveLocationRecording: a
+            .mutation()
+            .arguments({
+                expectedRevision: a.integer().required(),
+                expectedRecordingSessionId: a.string().required(),
+            })
+            .returns(a.boolean())
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(liveLocationApi)),
     })
     .authorization((allow) => [
         allow.resource(shareGroupApi),

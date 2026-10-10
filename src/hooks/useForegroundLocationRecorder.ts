@@ -279,12 +279,29 @@ export function useForegroundLocationRecorder({
 
             const latitude = location.coords.latitude;
             const longitude = location.coords.longitude;
+            const accuracy = location.coords.accuracy ?? null;
 
             if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
                 return;
             }
 
             try {
+                // 位置更新の開始時点でローカル共有世代を取得する
+                const backgroundStatus = await getBackgroundRecordingStatus();
+                const capturedShareRevision =
+                    backgroundStatus.state?.shareRevision;
+
+                if (
+                    typeof capturedShareRevision !== "number" ||
+                    !Number.isSafeInteger(capturedShareRevision) ||
+                    capturedShareRevision < 1
+                ) {
+                    console.warn(
+                        "[LiveLocation] Foreground update skipped: shareRevision missing",
+                    );
+                    return;
+                }
+
                 const currentUser = await getCurrentUser();
 
                 const isCurrentlyRecording = isRecordingRef.current;
@@ -295,13 +312,12 @@ export function useForegroundLocationRecorder({
 
                 const id = await upsertLiveLocation({
                     userId: currentUser.userId,
-                    recordingSessionId,
-                    isRecording: isCurrentlyRecording,
                     latitude,
                     longitude,
-                    accuracy: location.coords.accuracy ?? null,
+                    accuracy,
                     updatedAt: new Date().toISOString(),
                     sharedOwners: normalizedLiveShareOwnerValues,
+                    expectedRevision: capturedShareRevision,
                 });
 
                 liveLocationIdRef.current = id;
@@ -1950,34 +1966,6 @@ export function useForegroundLocationRecorder({
                     "Stop background location recording error:",
                     error,
                 );
-            }
-
-            /*
-             * LiveLocationを記録停止状態へ更新する。
-             */
-            if (liveLocationIdRef.current) {
-                try {
-                    const shouldContinueLiveSharing =
-                        normalizedLiveShareOwnerValues.length > 0;
-
-                    const result = await client.models.LiveLocation.update({
-                        id: liveLocationIdRef.current,
-                        isActive: shouldContinueLiveSharing,
-                        isRecording: false,
-                        recordingSessionId: null,
-                        updatedAt: new Date().toISOString(),
-                        sharedOwners: normalizedLiveShareOwnerValues,
-                    });
-
-                    if (result.errors) {
-                        console.error(
-                            "LiveLocation stop update errors:",
-                            result.errors,
-                        );
-                    }
-                } catch (error) {
-                    console.error("LiveLocation stop update error:", error);
-                }
             }
 
             /*

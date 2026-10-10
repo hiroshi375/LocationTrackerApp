@@ -38,6 +38,7 @@ import {
     isLowAccuracyLocation,
     isNearDuplicateLocation,
 } from "../utils/locationDuplicate";
+import { upsertLiveLocation } from "../services/liveLocationMutationService";
 
 export const BACKGROUND_LOCATION_TASK_NAME =
     "location-tracker-background-location-task";
@@ -87,7 +88,7 @@ export const BACKGROUND_LOCATION_TASK_STAGE_PREFIX =
  * React Nativeの__DEV__は、
  * 開発実行時=true、release build=false。
  */
-const ENABLE_BACKGROUND_LOCATION_TASK_STAGE_DIAGNOSTICS = __DEV__;
+const ENABLE_BACKGROUND_LOCATION_TASK_STAGE_DIAGNOSTICS = true;
 
 /**
  * stage診断を有効化した場合でも、
@@ -157,17 +158,22 @@ type BackgroundTaskStageContext = {
     taskStartedAtMs: number;
 };
 
+/*
+ * 同一eventIdのAsyncStorage書き込みを直列化する。
+ *
+ * Background Task本体ではawaitしない。
+ * 診断保存の滞留で位置情報処理を停止させないため。
+ */
+const backgroundStageWriteQueues = new Map<string, Promise<void>>();
+
+let backgroundStageFinishedCounter = 0;
+let backgroundStagePruneRunning = false;
+
 function recordBackgroundTaskStage(
     context: BackgroundTaskStageContext,
     stage: BackgroundLocationTaskStage,
     details?: Record<string, unknown>,
 ): void {
-    /*
-     * Production / Closed Testではstage診断自体を生成・保存しない。
-     *
-     * 過去版ではeventIdごとにAsyncStorageキーが増え続けたため、
-     * 長期間利用時にAsyncStorage DBが肥大化する可能性があった。
-     */
     if (!ENABLE_BACKGROUND_LOCATION_TASK_STAGE_DIAGNOSTICS) {
         return;
     }
@@ -188,42 +194,67 @@ function recordBackgroundTaskStage(
 
     console.log("[BG_TASK_STAGE]", payload);
 
-    /*
-     * stage保存はBackground task本体をブロックしない。
-     *
-     * 同じeventIdでは同じキーへ上書きされる。
-     */
-    void AsyncStorage.setItem(
-        `${BACKGROUND_LOCATION_TASK_STAGE_PREFIX}${context.eventId}`,
-        JSON.stringify(payload),
-    )
-        .then(() => {
-            /*
-             * 1 callbackの最後にだけ古いstage診断を整理する。
-             *
-             * stageごとにgetAllKeys()を実行すると負荷が大きいため、
-             * TASK_FINALLY時だけ実施する。
-             */
-            if (stage === "TASK_FINALLY") {
-                void pruneBackgroundLocationTaskStageDiagnostics().catch(
-                    (pruneError) => {
-                        console.error("[BG_TASK_STAGE_PRUNE_FAILED]", {
-                            runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
-                            eventId: context.eventId,
-                            error: getErrorMessage(pruneError),
-                        });
-                    },
-                );
-            }
+    const key = `${BACKGROUND_LOCATION_TASK_STAGE_PREFIX}${context.eventId}`;
+
+    const previousWrite =
+        backgroundStageWriteQueues.get(context.eventId) ?? Promise.resolve();
+
+    const currentWrite = previousWrite
+        .catch(() => {
+            // 前回の診断失敗で次の記録を止めない
         })
-        .catch((stageLogError) => {
+        .then(async () => {
+            await AsyncStorage.setItem(key, JSON.stringify(payload));
+        })
+        .catch((error) => {
             console.error("[BG_TASK_STAGE_SAVE_FAILED]", {
-                runtimeBootId: BACKGROUND_RUNTIME_BOOT_ID,
                 eventId: context.eventId,
                 stage,
-                error: getErrorMessage(stageLogError),
+                error: getErrorMessage(error),
             });
         });
+
+    backgroundStageWriteQueues.set(context.eventId, currentWrite);
+
+    if (stage === "TASK_FINALLY") {
+        void currentWrite.then(() => {
+            /*
+             * このイベントの最終書き込みが
+             * 完了した場合にだけキューを削除。
+             */
+            if (
+                backgroundStageWriteQueues.get(context.eventId) === currentWrite
+            ) {
+                backgroundStageWriteQueues.delete(context.eventId);
+            }
+
+            backgroundStageFinishedCounter += 1;
+
+            /*
+             * 毎回全キーを走査すると負荷が高いため、
+             * 50イベントごとに整理する。
+             */
+            if (backgroundStageFinishedCounter % 50 === 0) {
+                void runBackgroundStagePruneSafely();
+            }
+        });
+    }
+}
+
+async function runBackgroundStagePruneSafely(): Promise<void> {
+    if (backgroundStagePruneRunning) {
+        return;
+    }
+
+    backgroundStagePruneRunning = true;
+
+    try {
+        await pruneBackgroundLocationTaskStageDiagnostics();
+    } catch (error) {
+        console.error("[BG_TASK_STAGE_PRUNE_FAILED]", getErrorMessage(error));
+    } finally {
+        backgroundStagePruneRunning = false;
+    }
 }
 
 async function pruneBackgroundLocationTaskStageDiagnostics(): Promise<void> {
@@ -286,7 +317,19 @@ async function pruneBackgroundLocationTaskStageDiagnostics(): Promise<void> {
         .slice(0, deleteCount)
         .map((entry) => entry.key);
 
-    await removeAsyncStorageKeysInBatches(keysToDelete);
+    /*
+     * まだ書き込み中のイベントは削除しない。
+     *
+     * 削除対象が後続のcallbackで更新されることによる
+     * 診断データ欠落を防ぐ。
+     */
+    const safeKeysToDelete = keysToDelete.filter((key) => {
+        const eventId = key.slice(BACKGROUND_LOCATION_TASK_STAGE_PREFIX.length);
+
+        return !backgroundStageWriteQueues.has(eventId);
+    });
+
+    await removeAsyncStorageKeysInBatches(safeKeysToDelete);
 
     console.log("[BG_TASK_STAGE_PRUNED]", {
         beforeCount: stageKeys.length,
@@ -294,6 +337,107 @@ async function pruneBackgroundLocationTaskStageDiagnostics(): Promise<void> {
         remainingCount: stageKeys.length - keysToDelete.length,
         maxEntries: BACKGROUND_LOCATION_TASK_STAGE_MAX_ENTRIES,
     });
+}
+
+type BackgroundTaskStageRecord = {
+    eventId: string;
+    runtimeBootId: string;
+    taskName: string | null;
+    taskStartedAtMs: number;
+    stage: string;
+    stageAtMs: number;
+    elapsedMs: number;
+};
+
+export type BackgroundTaskStageDiagnostic = {
+    totalCount: number;
+    unfinishedCount: number;
+    latest: {
+        eventId: string;
+        stage: string;
+        stageAt: string;
+        elapsedMs: number;
+    } | null;
+    unfinished: {
+        eventId: string;
+        stage: string;
+        startedAt: string;
+        lastStageAt: string;
+        elapsedMs: number;
+        ageMs: number;
+    }[];
+};
+
+export async function getBackgroundTaskStageDiagnostic(): Promise<BackgroundTaskStageDiagnostic> {
+    /*
+     * 診断取得時にも整理する。
+     * これにより画面表示時の件数を抑制する。
+     */
+    await runBackgroundStagePruneSafely();
+
+    const allKeys = await AsyncStorage.getAllKeys();
+
+    const stageKeys = allKeys.filter((key) =>
+        key.startsWith(BACKGROUND_LOCATION_TASK_STAGE_PREFIX),
+    );
+
+    const entries = await AsyncStorage.multiGet(stageKeys);
+
+    const records: BackgroundTaskStageRecord[] = [];
+
+    for (const [, raw] of entries) {
+        if (!raw) {
+            continue;
+        }
+
+        try {
+            const parsed = JSON.parse(raw) as BackgroundTaskStageRecord;
+
+            if (
+                typeof parsed.eventId !== "string" ||
+                typeof parsed.stage !== "string" ||
+                !Number.isFinite(parsed.taskStartedAtMs) ||
+                !Number.isFinite(parsed.stageAtMs)
+            ) {
+                continue;
+            }
+
+            records.push(parsed);
+        } catch {
+            // 壊れた診断データはスキップ
+        }
+    }
+
+    records.sort((a, b) => b.stageAtMs - a.stageAtMs);
+
+    const nowMs = Date.now();
+
+    const unfinished = records
+        .filter((record) => record.stage !== "TASK_FINALLY")
+        .map((record) => ({
+            eventId: record.eventId,
+            stage: record.stage,
+            startedAt: new Date(record.taskStartedAtMs).toISOString(),
+            lastStageAt: new Date(record.stageAtMs).toISOString(),
+            elapsedMs: record.stageAtMs - record.taskStartedAtMs,
+            ageMs: Math.max(0, nowMs - record.taskStartedAtMs),
+        }));
+
+    const latest = records[0] ?? null;
+
+    return {
+        totalCount: records.length,
+        unfinishedCount: unfinished.length,
+        latest: latest
+            ? {
+                  eventId: latest.eventId,
+                  stage: latest.stage,
+                  stageAt: new Date(latest.stageAtMs).toISOString(),
+                  elapsedMs: latest.stageAtMs - latest.taskStartedAtMs,
+              }
+            : null,
+        unfinished,
+    };
 }
 
 async function removeAsyncStorageKeysInBatches(keys: string[]): Promise<void> {
@@ -2521,164 +2665,76 @@ async function updateBackgroundLiveLocation(
         sharedOwners,
     };
 
-    const liveLocationModel = client.models.LiveLocation as any;
-
     try {
-        /*
-         * 既存のLiveLocationがある場合は、
-         * 同じレコードを更新する。
-         */
-        if (state.liveLocationId) {
-            const result = (await withTimeout(
-                liveLocationModel.update({
-                    id: state.liveLocationId,
-                    ...payload,
-                }),
-                LIVE_LOCATION_UPDATE_TIMEOUT_MS,
-                "Background LiveLocation.update",
-            )) as LiveLocationMutationResult;
+        // Callback開始時の古い共有設定で更新しないよう再確認
+        const latestState = await getBackgroundRecordingState();
 
-            if (result.errors) {
-                const errorMessage = getErrorMessage(result.errors);
-
-                console.error(
-                    "Background LiveLocation update errors:",
-                    result.errors,
-                );
-
-                await safeSaveBackgroundLocationDebugLog({
-                    userId: state.userId,
-                    recordingSessionId: state.recordingSessionId ?? null,
-                    eventName: "backgroundLiveLocationUpdateFailed",
-                    taskFiredAt,
-                    errorMessage,
-                    details: {
-                        liveLocationId: state.liveLocationId,
-                        latitude,
-                        longitude,
-                        isRecording,
-                        sharedOwnerCount: sharedOwners.length,
-                    },
-                });
-
-                return {
-                    nextState: state,
-                    attempted: true,
-                    succeeded: false,
-                    operation: "update",
-                    timedOut: false,
-                    errorMessage,
-                    liveLocationId: state.liveLocationId,
-                };
-            }
-
-            /*
-             * update失敗時に新規作成すると、
-             * 一時的な通信障害だけで重複レコードが作られるため、
-             * 既存IDがある場合は新規作成しない。
-             */
+        if (
+            !latestState ||
+            latestState.userId !== state.userId ||
+            (latestState.recordingSessionId ?? null) !==
+                (state.recordingSessionId ?? null) ||
+            !Array.isArray(latestState.liveShareOwnerValues) ||
+            latestState.liveShareOwnerValues.length === 0
+        ) {
             return {
-                nextState: state,
-                attempted: true,
-                succeeded: true,
-                operation: "update",
+                nextState: latestState ?? state,
+                attempted: false,
+                succeeded: false,
+                operation: "none",
                 timedOut: false,
-                liveLocationId: state.liveLocationId,
+                liveLocationId: state.liveLocationId ?? null,
             };
         }
 
-        /*
-         * LiveLocation IDがまだない場合だけ新規作成する。
-         */
-        const result = (await withTimeout(
-            liveLocationModel.create(payload),
-            LIVE_LOCATION_UPDATE_TIMEOUT_MS,
-            "Background LiveLocation.create",
-        )) as LiveLocationMutationResult;
+        const latestSharedOwners = Array.from(
+            new Set(latestState.liveShareOwnerValues.filter(Boolean)),
+        );
 
-        if (result.errors) {
-            const errorMessage = getErrorMessage(result.errors);
-
-            console.error(
-                "Background LiveLocation create errors:",
-                result.errors,
-            );
-
-            await safeSaveBackgroundLocationDebugLog({
+        const id = await withTimeout(
+            upsertLiveLocation({
                 userId: state.userId,
-                recordingSessionId: state.recordingSessionId ?? null,
-                eventName: "backgroundLiveLocationCreateFailed",
-                taskFiredAt,
-                errorMessage,
-                details: {
-                    latitude,
-                    longitude,
-                    isRecording,
-                    sharedOwnerCount: sharedOwners.length,
-                },
-            });
-
-            return {
-                nextState: state,
-                attempted: true,
-                succeeded: false,
-                operation: "create",
-                timedOut: false,
-                errorMessage,
-                liveLocationId: null,
-            };
-        }
-
-        const createdLiveLocationId = result.data?.id ?? null;
-
-        if (!createdLiveLocationId) {
-            const errorMessage = "LiveLocation.create completed without an id.";
-
-            return {
-                nextState: state,
-                attempted: true,
-                succeeded: false,
-                operation: "create",
-                timedOut: false,
-                errorMessage,
-                liveLocationId: null,
-            };
-        }
+                recordingSessionId:
+                    latestState.isRecording && latestState.recordingSessionId
+                        ? latestState.recordingSessionId
+                        : null,
+                isRecording:
+                    latestState.isRecording === true &&
+                    Boolean(latestState.recordingSessionId),
+                latitude,
+                longitude,
+                accuracy: location.coords.accuracy ?? null,
+                updatedAt: new Date().toISOString(),
+                sharedOwners: latestSharedOwners,
+            }),
+            LIVE_LOCATION_UPDATE_TIMEOUT_MS,
+            "Background LiveLocation.upsert",
+        );
 
         const updatedState = await updateBackgroundRecordingStateIfCurrent(
             state.userId,
             state.recordingSessionId ?? null,
             (currentState) => ({
                 ...currentState,
-                liveLocationId: createdLiveLocationId,
+                liveLocationId: id,
             }),
         );
 
-        /*
-         * callback開始後に別sessionへ切り替わっていた場合は、
-         * 古いstateを返して後続処理へ伝播させない。
-         */
-        const nextState = updatedState ?? state;
-
         return {
-            nextState,
+            nextState: updatedState ?? latestState,
             attempted: true,
             succeeded: true,
-            operation: "create",
+            operation: "update",
             timedOut: false,
-            liveLocationId: createdLiveLocationId,
+            liveLocationId: id,
         };
     } catch (error) {
         const errorMessage = getErrorMessage(error);
-
         const timedOut = isOperationTimeoutError(error);
 
-        const operation: "create" | "update" = state.liveLocationId
-            ? "update"
-            : "create";
+        console.error("Background LiveLocation upsert error:", error);
 
-        console.error("Background LiveLocation mutation error:", error);
-
+        // 既存のBackground Task診断に影響させない
         await safeSaveBackgroundLocationDebugLog({
             userId: state.userId,
             recordingSessionId: state.recordingSessionId ?? null,
@@ -2688,33 +2744,11 @@ async function updateBackgroundLiveLocation(
             taskFiredAt,
             errorMessage,
             details: {
-                liveLocationId: state.liveLocationId ?? null,
                 latitude,
                 longitude,
                 isRecording,
                 sharedOwnerCount: sharedOwners.length,
-
-                timeoutMs: timedOut ? error.timeoutMs : null,
-                operationName: timedOut ? error.operationName : null,
-
-                // PC非接続でも確認できるtimer診断情報
-                runtimeBootId: timedOut ? error.runtimeBootId : null,
-                scheduledAtMs: timedOut ? error.scheduledAtMs : null,
-                scheduledAt: timedOut
-                    ? new Date(error.scheduledAtMs).toISOString()
-                    : null,
-                expectedFireAtMs: timedOut ? error.expectedFireAtMs : null,
-                expectedFireAt: timedOut
-                    ? new Date(error.expectedFireAtMs).toISOString()
-                    : null,
-                actuallyFiredAtMs: timedOut ? error.actuallyFiredAtMs : null,
-                actuallyFiredAt: timedOut
-                    ? new Date(error.actuallyFiredAtMs).toISOString()
-                    : null,
-                timerDriftMs: timedOut ? error.timerDriftMs : null,
-                actualElapsedMs: timedOut
-                    ? error.actuallyFiredAtMs - error.scheduledAtMs
-                    : null,
+                timedOut,
             },
         });
 
@@ -2722,7 +2756,7 @@ async function updateBackgroundLiveLocation(
             nextState: state,
             attempted: true,
             succeeded: false,
-            operation,
+            operation: "update",
             timedOut,
             errorMessage,
             liveLocationId: state.liveLocationId ?? null,

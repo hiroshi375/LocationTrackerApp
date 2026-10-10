@@ -1562,13 +1562,22 @@ export async function stopBackgroundLocationRecording(
 
     if (liveLocationId) {
         try {
-            await client.models.LiveLocation.update({
+            const result = await client.models.LiveLocation.update({
                 id: liveLocationId,
                 isActive: false,
                 isRecording: false,
                 recordingSessionId: null,
+                sharedOwners: [],
                 updatedAt: new Date().toISOString(),
             });
+
+            if (result.errors?.length || !result.data) {
+                throw new Error(
+                    `LiveLocation停止更新失敗: ${JSON.stringify(
+                        result.errors ?? ["更新結果なし"],
+                    )}`,
+                );
+            }
         } catch (error) {
             console.error("Background LiveLocation stop update error:", error);
 

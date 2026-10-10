@@ -50,6 +50,7 @@ import {
     type RecordingPlanLimitReason,
 } from "../services/recordingPlanLimitService";
 import { saveBackgroundLocationDebugLog } from "../services/backgroundLocationDebugLogService";
+import { upsertLiveLocation } from "../services/liveLocationMutationService";
 
 type SavedLocation = {
     latitude: number;
@@ -276,12 +277,6 @@ export function useForegroundLocationRecorder({
                 return;
             }
 
-            const isCurrentlyRecording = isRecordingRef.current;
-
-            const recordingSessionId = isCurrentlyRecording
-                ? recordingSessionIdRef.current
-                : null;
-
             const latitude = location.coords.latitude;
             const longitude = location.coords.longitude;
 
@@ -290,56 +285,36 @@ export function useForegroundLocationRecorder({
             }
 
             try {
-                const liveLocationModel = client.models.LiveLocation as any;
-
                 const currentUser = await getCurrentUser();
-                const updatedAt = new Date().toISOString();
 
-                const payload = {
+                const isCurrentlyRecording = isRecordingRef.current;
+
+                const recordingSessionId = isCurrentlyRecording
+                    ? recordingSessionIdRef.current
+                    : null;
+
+                const id = await upsertLiveLocation({
                     userId: currentUser.userId,
                     recordingSessionId,
-                    isActive: true,
                     isRecording: isCurrentlyRecording,
                     latitude,
                     longitude,
                     accuracy: location.coords.accuracy ?? null,
-                    updatedAt,
+                    updatedAt: new Date().toISOString(),
                     sharedOwners: normalizedLiveShareOwnerValues,
-                };
+                });
 
-                if (liveLocationIdRef.current) {
-                    const result = (await liveLocationModel.update({
-                        id: liveLocationIdRef.current,
-                        ...payload,
-                    })) as LiveLocationMutationResult;
-
-                    if (result.errors) {
-                        console.error(
-                            "LiveLocation update errors:",
-                            result.errors,
-                        );
-                    }
-
-                    return;
-                }
-
-                const result = (await liveLocationModel.create(
-                    payload,
-                )) as LiveLocationMutationResult;
-
-                if (result.errors) {
-                    console.error("LiveLocation create errors:", result.errors);
-                    return;
-                }
-
-                liveLocationIdRef.current = result.data?.id ?? null;
+                liveLocationIdRef.current = id;
 
                 await updateBackgroundRecordingLiveLocationId(
-                    liveLocationIdRef.current,
+                    id,
                     recordingSessionId,
                 );
             } catch (error) {
-                console.error("LiveLocation update error:", error);
+                console.error(
+                    "[LiveLocation] Foreground update failed:",
+                    error,
+                );
             }
         },
         [normalizedLiveShareOwnerValues],

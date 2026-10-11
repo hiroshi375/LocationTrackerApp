@@ -4,7 +4,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import { Alert, Linking, Platform } from "react-native";
-import { client } from "../lib/client";
 
 import {
     BACKGROUND_LOCATION_TASK_HEARTBEAT_KEY,

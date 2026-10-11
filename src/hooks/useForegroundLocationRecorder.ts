@@ -78,13 +78,6 @@ export type RecordingPlanLimitAutoStop = {
     reason: RecordingPlanLimitAutoStopReason;
 };
 
-type LiveLocationMutationResult = {
-    data?: {
-        id?: string | null;
-    } | null;
-    errors?: unknown;
-};
-
 const FOREGROUND_LOCATION_SAMPLE_INTERVAL_MS = 5_000;
 
 function getForegroundLocationSampleIntervalMs(intervalMs: number): number {

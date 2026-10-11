@@ -933,13 +933,6 @@ type LocationLogCreateInput = {
     locationUniqueKey: string;
 };
 
-type LiveLocationMutationResult = {
-    data?: {
-        id?: string | null;
-    } | null;
-    errors?: unknown;
-};
-
 type LocationLogCreateWithAuthRetryResult = {
     result: any;
     authRefreshAttempted: boolean;
@@ -2746,20 +2739,6 @@ async function updateBackgroundLiveLocation(
 
     const isRecording =
         state.isRecording === true && Boolean(state.recordingSessionId);
-
-    const payload = {
-        userId: state.userId,
-        recordingSessionId: isRecording
-            ? (state.recordingSessionId ?? null)
-            : null,
-        isActive: true,
-        isRecording,
-        latitude,
-        longitude,
-        accuracy: location.coords.accuracy ?? null,
-        updatedAt: new Date().toISOString(),
-        sharedOwners,
-    };
 
     try {
         // Callback開始時の古い共有設定で更新しないよう再確認

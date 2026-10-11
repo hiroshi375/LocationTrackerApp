@@ -5,6 +5,7 @@
  * Tests use a dedicated test database, NOT location-tracker.db.
  */
 import * as SQLite from "expo-sqlite";
+import { createRecordingControlTransitions } from "../services/recordingControlTransitions";
 import {
     createRecordingControlStateTestStore,
     type RecordingControlState,
@@ -254,6 +255,105 @@ export async function runBackgroundRecordingStateStoreTests(): Promise<TestResul
             "retry did not observe completed migration",
         );
         assert((await s.readRecordingControlState())?.version === 1, "migration inserted twice");
+    });
+
+    // The transition suite uses isolated DBs with explicit migration status.
+    async function transitionTest(name: string, operation: (
+        stateStore: ReturnType<typeof createRecordingControlStateTestStore>,
+        api: ReturnType<typeof createRecordingControlTransitions>
+    ) => Promise<void>) {
+        const nameDb = `background-control-test-${Date.now()}-${Math.random().toString(36).slice(2, 9)}.db`;
+        const stateStore = createRecordingControlStateTestStore(nameDb);
+        const api = createRecordingControlTransitions(stateStore);
+        try {
+            await test(name, () => operation(stateStore, api));
+        } finally {
+            await stateStore.close();
+            await SQLite.deleteDatabaseAsync(nameDb);
+        }
+    }
+
+    const startArgs = {
+        userId: "test-user", recordingSessionId: "session-new",
+        startedAt: "2026-10-11T00:00:00.000Z", intervalMs: 30000,
+        distanceMeters: 50, shareRevision: 6, liveShareOwnerValues: ["owner-B"],
+    };
+
+    await transitionTest("transition: refuses before migration", async (s, api) => {
+        assert(await s.initializeRecordingControlStateIfAbsent(makeState()), "seed failed");
+        let rejected = false;
+        try { await api.stopRecordingControlSession({
+            userId: "test-user", recordingSessionId: "test-session-A", expectedShareRevision: 5,
+        }); } catch (e) {
+            rejected = e instanceof Error && e.message === "RECORDING_CONTROL_NOT_MIGRATED";
+        }
+        assert(rejected, "unmigrated store accepted");
+    });
+
+    await transitionTest("transition: start from stopped state", async (s, api) => {
+        assert((await s.migrateLegacyStateIfNeeded(makeState({
+            isRecording:false, recordingSessionId:null, liveShareOwnerValues:[], shareRevision:5,
+        }))) === "migrated", "migration failed");
+        const result = await api.startRecordingControlSession(startArgs);
+        assert(result.status === "updated", "start rejected");
+        const now = await s.readRecordingControlState();
+        assert(now?.state.recordingSessionId === "session-new", "session not started");
+        assert(now.state.shareRevision === 6, "revision wrong");
+    });
+
+    await transitionTest("transition: stop preserves sharing", async (s, api) => {
+        await s.migrateLegacyStateIfNeeded(makeState());
+        const r = await api.stopRecordingControlSession({
+            userId:"test-user", recordingSessionId:"test-session-A", expectedShareRevision:5,
+        });
+        assert(r.status === "updated", "stop rejected");
+        const now = await s.readRecordingControlState();
+        assert(now?.state.isRecording === false, "recording still active");
+        assert(now.state.liveShareOwnerValues?.[0] === "owner-A", "sharing lost");
+        assert(now.state.recordingSessionId == null, "session remains");
+    });
+
+    await transitionTest("transition: continue sharing requires recipients", async (s, api) => {
+        await s.migrateLegacyStateIfNeeded(makeState({liveShareOwnerValues:[]}));
+        const result = await api.continueRecordingControlSharing({
+            userId:"test-user", recordingSessionId:"test-session-A", expectedShareRevision:5,
+        });
+        assert(result.status === "stale", "empty recipient continuation allowed");
+    });
+
+    await transitionTest("transition: stop all leaves tombstone and rejects old callback", async (s, api) => {
+        await s.migrateLegacyStateIfNeeded(makeState());
+        const r = await api.stopRecordingControlCompletely({
+            userId:"test-user", expectedShareRevision:5, confirmedShareRevision:6,
+        });
+        assert(r.status === "updated", "stop all rejected");
+        const now = await s.readRecordingControlState();
+        assert(now?.state.isRecording === false, "recording active");
+        assert(now.state.liveShareOwnerValues?.length === 0, "sharing active");
+        assert(now.state.shareRevision === 6, "revision lost");
+        const old = await api.stopRecordingControlSession({
+            userId:"test-user",recordingSessionId:"test-session-A",expectedShareRevision:5,
+        });
+        assert(old.status === "stale", "old callback accepted");
+    });
+
+    await transitionTest("transition: wrong session and revision refused", async (s, api) => {
+        await s.migrateLegacyStateIfNeeded(makeState());
+        const oldSession = await api.stopRecordingControlSession({
+            userId:"test-user",recordingSessionId:"old-session",expectedShareRevision:5,
+        });
+        const oldRevision = await api.stopRecordingControlSession({
+            userId:"test-user",recordingSessionId:"test-session-A",expectedShareRevision:4,
+        });
+        assert(oldSession.status === "stale" && oldRevision.status === "stale", "stale stop accepted");
+    });
+
+    await transitionTest("transition: repeat stop is not a restart", async (s, api) => {
+        await s.migrateLegacyStateIfNeeded(makeState());
+        const args = {userId:"test-user", expectedShareRevision:5, confirmedShareRevision:6};
+        assert((await api.stopRecordingControlCompletely(args)).status === "updated", "first stop failed");
+        assert((await api.stopRecordingControlCompletely(args)).status === "stale", "repeat stop should be stale");
+        assert((await s.readRecordingControlState())?.state.shareRevision === 6, "revision rolled back");
     });
 
     const failed = results.filter((result) => !result.passed);

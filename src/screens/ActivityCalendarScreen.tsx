@@ -1,7 +1,7 @@
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { getCurrentUser } from "aws-amplify/auth";
-import { useCallback, useLayoutEffect, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import {
     Alert,
     Pressable,
@@ -51,16 +51,33 @@ export default function ActivityCalendarScreen({ navigation }: Props) {
     >({});
 
     const [loading, setLoading] = useState(false);
-
+    /*
+     * カレンダーの取得リクエストを識別する。
+     * 古い取得結果が後から返っても画面に反映しない。
+     */
+    const calendarLoadRequestIdRef = useRef(0);
     const [selectedDay, setSelectedDay] = useState<ActivityCalendarDay | null>(
         null,
     );
 
     const loadActivityCalendar = useCallback(async () => {
+        const requestId = ++calendarLoadRequestIdRef.current;
+
         try {
             setLoading(true);
 
+            /*
+             * 前回表示したユーザーの履歴を残さない。
+             * 選択済みの日付情報も破棄する。
+             */
+            setActivityDays({});
+            setSelectedDay(null);
+
             const currentUser = await getCurrentUser();
+
+            if (requestId !== calendarLoadRequestIdRef.current) {
+                return;
+            }
 
             const recordingSessionModel = client.models.RecordingSession as any;
 
@@ -110,6 +127,21 @@ export default function ActivityCalendarScreen({ navigation }: Props) {
 
             const monthSessions: ActivityCalendarSession[] = allSessions
                 .filter((item) => {
+                    /*
+                     * 自分のRecordingSessionだけを表示する。
+                     */
+                    if (item?.userId !== currentUser.userId) {
+                        console.warn(
+                            "[ActivityCalendar] Unexpected session owner:",
+                            {
+                                expectedUserId: currentUser.userId,
+                                actualUserId: item?.userId ?? null,
+                            },
+                        );
+
+                        return false;
+                    }
+
                     if (
                         !item?.id ||
                         !item?.recordingSessionId ||
@@ -182,8 +214,25 @@ export default function ActivityCalendarScreen({ navigation }: Props) {
                 );
             });
 
+            /*
+             * 取得開始後にユーザーが切り替わっていた場合、
+             * 以前のユーザーのデータを反映しない。
+             */
+            const latestUser = await getCurrentUser();
+
+            if (
+                requestId !== calendarLoadRequestIdRef.current ||
+                latestUser.userId !== currentUser.userId
+            ) {
+                return;
+            }
+
             setActivityDays(nextActivityDays);
         } catch (error) {
+            if (requestId !== calendarLoadRequestIdRef.current) {
+                return;
+            }
+
             console.error("Load activity calendar error:", error);
 
             Alert.alert(
@@ -191,13 +240,19 @@ export default function ActivityCalendarScreen({ navigation }: Props) {
                 "アクティビティカレンダーの読み込みに失敗しました。",
             );
         } finally {
-            setLoading(false);
+            if (requestId === calendarLoadRequestIdRef.current) {
+                setLoading(false);
+            }
         }
     }, [displayedMonth]);
 
     useFocusEffect(
         useCallback(() => {
             void loadActivityCalendar();
+
+            return () => {
+                calendarLoadRequestIdRef.current += 1;
+            };
         }, [loadActivityCalendar]),
     );
 

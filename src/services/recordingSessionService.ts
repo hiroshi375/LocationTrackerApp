@@ -192,6 +192,16 @@ export async function recalculateCurrentMonthRecordedActivityUsage(
     return count;
 }
 
+/** 非同期処理中の認証切替を検知し、他ユーザーの更新を防ぐ。 */
+async function assertCurrentRecordingOwner(expectedUserId: string): Promise<void> {
+    const currentUser = await getCurrentUser();
+    if (currentUser.userId !== expectedUserId) {
+        throw new Error(
+            "[RecordingSecurity] 認証ユーザーが処理開始時から変更されました。更新を中止します。",
+        );
+    }
+}
+
 export async function upsertRecordingSessionSummary(
     recordingSessionId: string,
     recordingSessionName: string | null,
@@ -200,7 +210,23 @@ export async function upsertRecordingSessionSummary(
     recordingDistanceMeters?: number | null,
     options?: RecordingSessionSummaryOptions,
 ) {
-    const logs = await listLocationLogsBySessionId(recordingSessionId);
+    const currentUser = await getCurrentUser();
+
+    const fetchedLogs = await listLocationLogsBySessionId(recordingSessionId);
+
+    const logs = fetchedLogs.filter((log) => log.userId === currentUser.userId);
+
+    if (logs.length !== fetchedLogs.length) {
+        console.warn(
+            "[RecordingSessionSummary] Excluded logs owned by another user:",
+            {
+                recordingSessionId,
+                currentUserId: currentUser.userId,
+                excludedCount: fetchedLogs.length - logs.length,
+            },
+        );
+    }
+
     const routeLogs = normalizeRouteLogs(logs);
 
     console.log("[RecordingSessionSummary] LocationLog counts:", {
@@ -219,7 +245,6 @@ export async function upsertRecordingSessionSummary(
         return;
     }
 
-    const currentUser = await getCurrentUser();
     const firstLog = routeLogs[0];
     const lastLog = routeLogs[routeLogs.length - 1];
     const distanceMeters = calculateRouteDistanceMeters(routeLogs);
@@ -381,6 +406,9 @@ export async function upsertRecordingSessionSummary(
         errors?: unknown;
     };
 
+    // 取得・分類中の認証ユーザー切替を検知する。
+    await assertCurrentRecordingOwner(currentUser.userId);
+
     if (existing?.id) {
         saveResult = await model.update({
             id: existing.id,
@@ -431,6 +459,10 @@ export async function upsertRecordingSessionSummary(
     );
 
     for (const duplicateSession of duplicateSessions) {
+        if (duplicateSession.userId !== currentUser.userId) {
+            throw new Error("[RecordingSecurity] 他ユーザーのRecordingSession削除を拒否しました。");
+        }
+        await assertCurrentRecordingOwner(currentUser.userId);
         const deleteResult = await model.delete({
             id: duplicateSession.id,
         });
@@ -448,6 +480,7 @@ export async function upsertRecordingSessionSummary(
         logs,
         activityType,
         isAggregationTarget,
+        currentUser.userId,
     );
 
     /*
@@ -573,6 +606,8 @@ export async function updateRecordingSessionActivityType(
 
     const isAggregationTarget = isAggregationTargetActivityType(activityType);
 
+    await assertCurrentRecordingOwner(currentUser.userId);
+
     const updateResult = await model.update({
         id: session.id,
         activityType,
@@ -599,10 +634,19 @@ export async function updateRecordingSessionActivityType(
         normalizedRecordingSessionId,
     );
 
+    // 共有によって参照できる他ユーザーのLocationLogは更新しない。
+    const ownedLogs = logs.filter((log) => log.userId === currentUser.userId);
+    if (ownedLogs.length !== logs.length) {
+        console.warn("[RecordingSecurity] Excluded non-owned logs from manual classification", {
+            excludedCount: logs.length - ownedLogs.length,
+        });
+    }
+
     await updateLocationLogClassification(
-        logs,
+        ownedLogs,
         activityType,
         isAggregationTarget,
+        currentUser.userId,
     );
 
     await recalculateUserActivityAggregates(currentUser.userId);
@@ -1238,10 +1282,17 @@ async function updateLocationLogClassification(
     logs: SessionLogItem[],
     activityType: ActivityType,
     isAggregationTarget: boolean,
+    expectedUserId: string,
 ): Promise<void> {
+    if (logs.some((log) => log.userId !== expectedUserId)) {
+        throw new Error("[RecordingSecurity] 他ユーザーのLocationLog更新を拒否しました。");
+    }
+
     const model = client.models.LocationLog as any;
 
     for (let index = 0; index < logs.length; index += 25) {
+        // 各バッチの直前にも認証状態を確認する。
+        await assertCurrentRecordingOwner(expectedUserId);
         const batch = logs.slice(index, index + 25);
         const results = await Promise.all(
             batch.map((log) =>

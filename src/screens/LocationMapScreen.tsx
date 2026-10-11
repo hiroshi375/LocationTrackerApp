@@ -41,6 +41,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "LocationMap">;
 
 type LocationLogItem = {
     id: string;
+    userId?: string;
     latitude: number;
     longitude: number;
     accuracy?: number | null;
@@ -225,6 +226,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     const activityMapRouteTourRef = useTourTarget("activity-map-route");
     const activityMapLogListTourRef = useTourTarget("activity-map-log-list");
     const mapRef = useRef<MapView | null>(null);
+    const logsRequestGenerationRef = useRef(0);
     const hasFittedInitialRouteRef = useRef(false);
     const [logs, setLogs] = useState<LocationLogItem[]>([]);
     const [recordingSessionSummary, setRecordingSessionSummary] =
@@ -519,6 +521,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
 
     const loadLogs = useCallback(
         async (showLoading: boolean = true) => {
+            const generation = ++logsRequestGenerationRef.current;
             try {
                 if (showLoading) {
                     setLoading(true);
@@ -544,6 +547,9 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                     setLogs([]);
                     return;
                 }
+
+                const currentUser = await getCurrentUser();
+                if (generation !== logsRequestGenerationRef.current) return;
 
                 const allData: any[] = [];
                 let nextToken: string | null = null;
@@ -634,7 +640,30 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                     } while (nextToken);
                 }
 
-                const items = normalizeLocationLogs(allData);
+                const latestUser = await getCurrentUser();
+                if (
+                    generation !== logsRequestGenerationRef.current ||
+                    latestUser.userId !== currentUser.userId
+                )
+                    return;
+
+                const filteredData = allData.filter((item) => {
+                    if (
+                        activeSessionId &&
+                        item?.recordingSessionId !== activeSessionId
+                    ) {
+                        return false;
+                    }
+                    if (isSharedLiveLocationMap) {
+                        return item?.userId === sharedLiveUserId;
+                    }
+                    if (isSharedActivityHistory) {
+                        // 共有履歴はAppSyncの共有認可に従う（本人の記録とは扱わない）。
+                        return true;
+                    }
+                    return item?.userId === currentUser.userId;
+                });
+                const items = normalizeLocationLogs(filteredData);
 
                 setLogs(items);
 
@@ -646,17 +675,18 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             } catch (error) {
                 console.error("Map loadLogs error:", error);
             } finally {
-                if (showLoading) {
-                    setLoading(false);
+                if (generation === logsRequestGenerationRef.current) {
+                    if (showLoading) setLoading(false);
+                    setHasLoaded(true);
                 }
-
-                setHasLoaded(true);
             }
         },
         [
             activeSessionId,
             isSampleActivity,
             isSharedLiveLocationMap,
+            isSharedActivityHistory,
+            sharedLiveUserId,
             shouldShowSharedRoute,
         ],
     );
@@ -701,9 +731,21 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                     return;
                 }
 
+                const currentUser = await getCurrentUser();
                 const items = result.data ?? [];
-
-                const item = items[0];
+                const item = items.find(
+                    (candidate: any) =>
+                        candidate?.recordingSessionId === recordingSessionId &&
+                        (isSharedLiveLocationMap
+                            ? candidate.userId === sharedLiveUserId
+                            : isSharedActivityHistory
+                              ? candidate.userId === currentUser.userId ||
+                                (Array.isArray(candidate.sharedOwners) &&
+                                    candidate.sharedOwners.includes(
+                                        currentUser.userId,
+                                    ))
+                              : candidate.userId === currentUser.userId),
+                );
 
                 if (!item) {
                     setRecordingSessionSummary(null);
@@ -727,7 +769,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                 console.error("RecordingSession summary load error:", error);
             }
         },
-        [],
+        [isSharedLiveLocationMap, sharedLiveUserId, isSharedActivityHistory],
     );
 
     const handleSelectLocationLog = useCallback((log: LocationLogItem) => {
@@ -749,12 +791,47 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             if (isSampleActivity) {
                 return;
             }
-            if (!activeSessionId) {
+            if (
+                !activeSessionId ||
+                isSharedLiveLocationMap ||
+                isSharedActivityHistory
+            ) {
+                Alert.alert(
+                    "削除できません",
+                    "共有された位置記録は削除できません。",
+                );
                 return;
             }
 
             try {
                 setDeletingLogId(log.id);
+                const currentUser = await getCurrentUser();
+                // 画面表示を信用せず、削除対象をサーバーから再取得して照合する。
+                const target = (await (client.models.LocationLog as any).get({
+                    id: log.id,
+                })) as {
+                    data?: {
+                        id: string;
+                        userId?: string | null;
+                        recordingSessionId?: string | null;
+                    } | null;
+                    errors?: readonly unknown[];
+                };
+                if (
+                    target.errors?.length ||
+                    !target.data ||
+                    target.data.userId !== currentUser.userId ||
+                    target.data.recordingSessionId !== activeSessionId
+                ) {
+                    throw new Error(
+                        "[RecordingSecurity] LocationLog delete owner mismatch",
+                    );
+                }
+                if ((await getCurrentUser()).userId !== currentUser.userId) {
+                    throw new Error(
+                        "[RecordingSecurity] Signed-in user changed before delete",
+                    );
+                }
 
                 const deleteResult = await client.models.LocationLog.delete({
                     id: log.id,
@@ -815,6 +892,8 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         [
             activeSessionId,
             isSampleActivity,
+            isSharedLiveLocationMap,
+            isSharedActivityHistory,
             loadLogs,
             loadRecordingSessionSummary,
             recordingSessionSummary,
@@ -1576,16 +1655,15 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             void loadLogs(true);
             void loadCurrentUserProfileIcon();
 
-            if (!isLiveRecordingMap) {
-                return;
-            }
-
-            const timerId = setInterval(() => {
-                void loadLogs(false);
-            }, 5000);
+            const timerId = isLiveRecordingMap
+                ? setInterval(() => {
+                      void loadLogs(false);
+                  }, 5000)
+                : null;
 
             return () => {
-                clearInterval(timerId);
+                logsRequestGenerationRef.current += 1;
+                if (timerId) clearInterval(timerId);
             };
         }, [loadLogs, loadCurrentUserProfileIcon, isLiveRecordingMap]),
     );
@@ -3783,6 +3861,7 @@ function normalizeLocationLogs(data: any[]): LocationLogItem[] {
     return (data ?? [])
         .map((item) => ({
             id: item.id,
+            userId: item.userId ?? "",
             latitude: Number(item.latitude),
             longitude: Number(item.longitude),
             accuracy: item.accuracy,

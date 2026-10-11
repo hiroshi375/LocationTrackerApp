@@ -81,6 +81,39 @@ export default function ActivityCalendarScreen({ navigation }: Props) {
 
             const recordingSessionModel = client.models.RecordingSession as any;
 
+            // 診断コード
+            if (__DEV__) {
+                const USER_A_ID = "3704aac8-90e1-70e4-bc50-6acd159a5049";
+
+                const USER_X_ID = "d7449a18-c071-705b-eb23-e48c0363e3f6";
+
+                console.log("[AuthTest] Current user:", currentUser.userId);
+
+                if (currentUser.userId === USER_X_ID) {
+                    try {
+                        const result =
+                            await recordingSessionModel.listRecordingSessionsByUserAndEndedAt(
+                                {
+                                    userId: USER_A_ID,
+                                    sortDirection: "DESC",
+                                    limit: 10,
+                                },
+                            );
+
+                        console.log("[AuthTest] User A sessions:", {
+                            count: result.data?.length ?? 0,
+                            owners: (result.data ?? []).map(
+                                (item: any) => item.userId,
+                            ),
+                            errors: result.errors ?? null,
+                        });
+                    } catch (error) {
+                        console.error("[AuthTest] Query failed:", error);
+                    }
+                }
+            }
+            // 診断コード
+
             const allSessions: any[] = [];
             let nextToken: string | null = null;
 

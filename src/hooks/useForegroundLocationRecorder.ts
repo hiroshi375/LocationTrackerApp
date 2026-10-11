@@ -502,6 +502,20 @@ export function useForegroundLocationRecorder({
 
                 const currentUser = await getCurrentUser();
 
+                // 記録開始時（または復元時）の所有者以外では保存しない。
+                // セッションが非同期処理中に切り替わった場合も破棄する。
+                if (
+                    !recordingUserIdRef.current ||
+                    recordingUserIdRef.current !== currentUser.userId ||
+                    recordingSessionIdRef.current !== recordingSessionId ||
+                    !isRecordingRef.current
+                ) {
+                    console.error(
+                        "[RecordingSecurity] Skip LocationLog save: recording owner or session mismatch",
+                    );
+                    return;
+                }
+
                 const batterySnapshot = await getBatterySnapshot();
 
                 const sharedOwners =
@@ -1027,6 +1041,17 @@ export function useForegroundLocationRecorder({
             }
 
             if (!state?.recordingSessionId || !state.userId) {
+                return;
+            }
+
+            // ローカルに保存された記録状態は認証情報とは独立して残るため、
+            // 復元前に必ず現在のCognitoユーザーとの一致を確認する。
+            const currentUser = await getCurrentUser();
+            if (state.userId !== currentUser.userId) {
+                console.error(
+                    "[RecordingSecurity] Skip restore: recording owner differs from signed-in user",
+                );
+                // 別ユーザーの記録データ／状態を勝手に消さない。
                 return;
             }
 

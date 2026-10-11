@@ -365,25 +365,8 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                     setRecordDistanceMeters(DEFAULT_RECORD_DISTANCE_METERS);
                 }
 
-                if (Array.isArray(savedSettings.selectedLiveShareUsers)) {
-                    const savedUsers =
-                        savedSettings.selectedLiveShareUsers.filter(
-                            (user): user is UserProfileItem =>
-                                typeof user?.id === "string" &&
-                                typeof user?.userId === "string" &&
-                                typeof user?.ownerValue === "string" &&
-                                user.ownerValue.length > 0,
-                        );
-
-                    /*
-                     * ここでは一旦ローカル保存値を復元する。
-                     *
-                     * 画面Focus時のloadLiveShareUsers()で
-                     * 現在のグループメンバーと照合し、
-                     * 有効な共有先だけに絞り込む。
-                     */
-                    setSelectedLiveShareUsers(savedUsers);
-                }
+                // 共有先はCloud側が正本。AsyncStorageの旧選択値は復元しない。
+                // 過去の選択値だけで位置共有が開始されることを防ぐ。
             } catch (error) {
                 console.error("Load saved home settings error:", error);
             } finally {
@@ -405,17 +388,6 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                     version: LOCATION_HOME_SETTINGS_VERSION,
                     recordIntervalMs,
                     recordDistanceMeters,
-                    selectedLiveShareUsers: selectedLiveShareUsers.map(
-                        (user) => ({
-                            id: user.id,
-                            userId: user.userId,
-                            email: user.email ?? null,
-                            displayName: user.displayName ?? null,
-                            ownerValue: user.ownerValue ?? null,
-                            searchText: user.searchText ?? null,
-                            iconImagePath: user.iconImagePath ?? null,
-                        }),
-                    ),
                 };
 
                 await AsyncStorage.setItem(
@@ -428,12 +400,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
         };
 
         void saveHomeSettings();
-    }, [
-        hasLoadedSavedHomeSettings,
-        recordIntervalMs,
-        recordDistanceMeters,
-        selectedLiveShareUsers,
-    ]);
+    }, [hasLoadedSavedHomeSettings, recordIntervalMs, recordDistanceMeters]);
 
     const liveShareOwnerValues = useMemo(() => {
         return selectedLiveShareUsers
@@ -741,37 +708,32 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
 
             setLiveShareUsers(users);
 
-            /*
-             * 以前選択していた共有先が
-             * 現在も同じグループに所属している場合だけ残す。
-             *
-             * グループを抜けたユーザーなどは自動的に除外する。
-             */
-            setSelectedLiveShareUsers((currentSelectedUsers) => {
-                const candidateMap = new Map(
-                    users.map((user) => [user.userId, user]),
+            // Cloudで確定した共有先だけを有効な選択として反映する。
+            // グループ候補との照合はuserIdではなくownerValueで行う。
+            const sharingState = await getLiveLocationSharingState();
+            const cloudOwners =
+                sharingState.enabled && sharingState.revision >= 1
+                    ? new Set(sharingState.sharedOwners)
+                    : new Set<string>();
+            const verifiedUsers = users.filter(
+                (user) => !!user.ownerValue && cloudOwners.has(user.ownerValue),
+            );
+
+            if (cloudOwners.size !== verifiedUsers.length) {
+                console.warn(
+                    "[LiveLocation] Cloud share owners not in candidates",
+                    {
+                        cloudOwnerCount: cloudOwners.size,
+                        matchedCount: verifiedUsers.length,
+                    },
                 );
+            }
 
-                return currentSelectedUsers
-                    .map((selectedUser) =>
-                        candidateMap.get(selectedUser.userId),
-                    )
-                    .filter(
-                        (user): user is UserProfileItem => user !== undefined,
-                    );
-            });
-
-            setDraftLiveShareUsers((currentDraftUsers) => {
-                const candidateMap = new Map(
-                    users.map((user) => [user.userId, user]),
-                );
-
-                return currentDraftUsers
-                    .map((draftUser) => candidateMap.get(draftUser.userId))
-                    .filter(
-                        (user): user is UserProfileItem => user !== undefined,
-                    );
-            });
+            // 保存処理と並走した古い取得結果でUIを上書きしない。
+            if (!savingLiveShareRef.current) {
+                setSelectedLiveShareUsers(verifiedUsers);
+                setDraftLiveShareUsers(verifiedUsers);
+            }
         } catch (error) {
             console.error("Load live share users error:", error);
 
@@ -863,6 +825,11 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                     currentSharing.revision,
                 );
             }
+
+            console.log("[LiveLocation] Cloud sharing saved:", {
+                nextRevision,
+                ownerCount: nextOwners.length,
+            });
 
             // サーバーで確定した世代をローカルへ保存
             const backgroundStatus = await getBackgroundRecordingStatus();
@@ -1334,6 +1301,38 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                 setBackgroundHeartbeatStatus(status);
                 setBackgroundHeartbeatCheckedAt(Date.now());
 
+                try {
+                    const backgroundStatus =
+                        await getBackgroundRecordingStatus();
+                    const cloudState = await getLiveLocationSharingState();
+
+                    const backgroundRevision =
+                        backgroundStatus.state?.shareRevision ?? null;
+
+                    const backgroundOwnerCount =
+                        backgroundStatus.state?.liveShareOwnerValues?.length ??
+                        0;
+
+                    console.log("[LiveLocation] Revision diagnostic:", {
+                        backgroundRevision,
+                        backgroundOwnerCount,
+                        cloudRevision: cloudState.revision,
+                        cloudEnabled: cloudState.enabled,
+                        cloudOwnerCount: cloudState.sharedOwners.length,
+
+                        revisionMatches:
+                            backgroundRevision === cloudState.revision,
+
+                        ownerCountMatches:
+                            backgroundOwnerCount ===
+                            cloudState.sharedOwners.length,
+                    });
+                } catch (error) {
+                    console.error(
+                        "[LiveLocation] Revision diagnostic failed:",
+                        error,
+                    );
+                }
                 /*
                  * 追加：端末内のstage診断を取得
                  */
@@ -1745,34 +1744,81 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
         try {
             setSavingSessionName(true);
 
+            // 保存対象のセッションIDと認証ユーザーを確定する。
+            const targetSessionId = pendingSessionId;
+            const currentUser = await getCurrentUser();
+            const expectedUserId = currentUser.userId;
+
             const sessionLogs =
-                await listLocationLogsBySessionId(pendingSessionId);
+                await listLocationLogsBySessionId(targetSessionId);
+
+            // 現在のユーザーに属するLocationLogだけを更新対象とする。
+            const ownedLogs = sessionLogs.filter(
+                (log) =>
+                    log.userId === expectedUserId &&
+                    log.recordingSessionId === targetSessionId,
+            );
+
+            const excludedCount = sessionLogs.length - ownedLogs.length;
+
+            if (excludedCount > 0) {
+                console.warn(
+                    "[RecordingSecurity] Excluded non-owned LocationLogs from name update:",
+                    {
+                        excludedCount,
+                    },
+                );
+            }
+
+            // 対象が0件なら処理を中止する。
+            // 他人のセッションを誤って集計・保存しないため。
+            if (ownedLogs.length === 0) {
+                throw new Error(
+                    "[RecordingSecurity] 保存対象のLocationLogがありません。",
+                );
+            }
 
             const locationLogModel = client.models.LocationLog as any;
 
-            const updateResults = await Promise.all(
-                sessionLogs.map((log) =>
-                    locationLogModel.update({
-                        id: log.id,
-                        recordingSessionName: sessionName,
-                    }),
-                ),
-            );
+            // 大量の同時更新を避け、25件単位で処理する。
+            for (let index = 0; index < ownedLogs.length; index += 25) {
+                // 更新直前に認証ユーザーが変わっていないか確認する。
+                const userBeforeUpdate = await getCurrentUser();
 
-            const hasErrors = updateResults.some((updateResult) => {
-                return updateResult.errors;
-            });
+                if (userBeforeUpdate.userId !== expectedUserId) {
+                    throw new Error(
+                        "[RecordingSecurity] 認証ユーザーが変更されたため保存を中止しました。",
+                    );
+                }
 
-            if (hasErrors) {
-                console.error(
-                    "LocationLog session name update errors:",
-                    updateResults,
+                const batch = ownedLogs.slice(index, index + 25);
+
+                const updateResults = await Promise.all(
+                    batch.map((log) =>
+                        locationLogModel.update({
+                            id: log.id,
+                            recordingSessionName: sessionName,
+                        }),
+                    ),
                 );
-                Alert.alert(
-                    "保存エラー",
-                    "アクティビティ名を保存できませんでした。",
+
+                if (updateResults.some((result) => result.errors)) {
+                    console.error(
+                        "[RecordingSecurity] LocationLog name update failed:",
+                        updateResults,
+                    );
+
+                    throw new Error("アクティビティ名の更新に失敗しました。");
+                }
+            }
+
+            // RecordingSessionの保存前にも認証ユーザーを確認する。
+            const userBeforeSummary = await getCurrentUser();
+
+            if (userBeforeSummary.userId !== expectedUserId) {
+                throw new Error(
+                    "[RecordingSecurity] 認証ユーザーが変更されたため集計を中止しました。",
                 );
-                return;
             }
 
             const continuationState = await getRecordingContinuationState();
@@ -1834,46 +1880,126 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             return;
         }
 
+        // 削除操作開始時のセッションIDを固定する。
+        const targetSessionId = pendingSessionId;
+
         try {
             setSavingSessionName(true);
 
+            // 現在のCognitoユーザーを取得する。
+            const currentUser = await getCurrentUser();
+            const expectedUserId = currentUser.userId;
+
             const sessionLogs =
-                await listLocationLogsBySessionId(pendingSessionId);
+                await listLocationLogsBySessionId(targetSessionId);
 
-            const locationLogModel = client.models.LocationLog as any;
-
-            const deleteResults = await Promise.all(
-                sessionLogs.map((log) =>
-                    locationLogModel.delete({
-                        id: log.id,
-                    }),
-                ),
+            /*
+             * 削除対象を厳格に検証する。
+             *
+             * 他ユーザーのログや別セッションのログが
+             * 1件でも含まれる場合、削除処理全体を中止する。
+             */
+            const invalidLogs = sessionLogs.filter(
+                (log) =>
+                    log.userId !== expectedUserId ||
+                    log.recordingSessionId !== targetSessionId ||
+                    !log.id,
             );
 
-            const hasErrors = deleteResults.some((deleteResult) => {
-                return deleteResult.errors;
-            });
-
-            if (hasErrors) {
+            if (invalidLogs.length > 0) {
                 console.error(
-                    "LocationLog session delete errors:",
-                    deleteResults,
+                    "[RecordingSecurity] Discard blocked: owner or session mismatch",
+                    {
+                        targetSessionId,
+                        invalidCount: invalidLogs.length,
+                    },
                 );
-                Alert.alert(
-                    "削除エラー",
-                    "位置情報ログを削除できませんでした。",
+
+                throw new Error(
+                    "[RecordingSecurity] 削除対象に所有者またはセッションIDが一致しない記録があります。",
                 );
-                return;
             }
 
             /*
-             * セッション自体を保存しないため、
-             * このセッションに紐づく継続確認stateも不要になる。
-             *
-             * LocationLog削除成功後に実行することで、
-             * 削除失敗時にはstateを保持する。
+             * 対象ログが存在しない場合は、
+             * 未保存状態を勝手に解除しない。
              */
-            await clearRecordingContinuationState(pendingSessionId);
+            if (sessionLogs.length === 0) {
+                throw new Error(
+                    "[RecordingSecurity] 削除対象のLocationLogがありません。",
+                );
+            }
+
+            const locationLogModel = client.models.LocationLog as any;
+
+            /*
+             * 一度に大量の削除を実行せず、
+             * 25件単位で処理する。
+             */
+            for (let index = 0; index < sessionLogs.length; index += 25) {
+                const batch = sessionLogs.slice(index, index + 25);
+
+                // 各バッチの削除前に認証状態を再確認する。
+                const userBeforeDelete = await getCurrentUser();
+
+                if (userBeforeDelete.userId !== expectedUserId) {
+                    throw new Error(
+                        "[RecordingSecurity] 認証ユーザーが変更されたため削除を中止しました。",
+                    );
+                }
+
+                /*
+                 * 削除直前にサーバー上の所有者を再検証する。
+                 * 取得できないレコードも安全のため削除しない。
+                 */
+                for (const log of batch) {
+                    const getResult = await locationLogModel.get({
+                        id: log.id,
+                    });
+
+                    if (
+                        getResult.errors?.length ||
+                        !getResult.data ||
+                        getResult.data.userId !== expectedUserId ||
+                        getResult.data.recordingSessionId !== targetSessionId
+                    ) {
+                        throw new Error(
+                            "[RecordingSecurity] 削除直前のLocationLog所有者確認に失敗しました。",
+                        );
+                    }
+                }
+
+                const deleteResults = await Promise.all(
+                    batch.map((log) =>
+                        locationLogModel.delete({
+                            id: log.id,
+                        }),
+                    ),
+                );
+
+                if (deleteResults.some((result) => result.errors)) {
+                    console.error(
+                        "[RecordingSecurity] LocationLog delete errors:",
+                        deleteResults,
+                    );
+
+                    throw new Error("位置情報ログの削除に失敗しました。");
+                }
+            }
+
+            /*
+             * すべてのLocationLog削除が成功した場合だけ、
+             * セッション継続確認stateを解除する。
+             */
+            const userBeforeCleanup = await getCurrentUser();
+
+            if (userBeforeCleanup.userId !== expectedUserId) {
+                throw new Error(
+                    "[RecordingSecurity] 認証ユーザーが変更されたため後処理を中止しました。",
+                );
+            }
+
+            await clearRecordingContinuationState(targetSessionId);
 
             setSessionNameModalVisible(false);
             setSessionNameInput("");
@@ -1881,9 +2007,20 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             setPendingSessionShareOwnerValues([]);
             setPendingRecordingIntervalMs(null);
             setPendingRecordingDistanceMeters(null);
+
+            console.log(
+                "[RecordingSecurity] Recording session discarded successfully:",
+                {
+                    deletedCount: sessionLogs.length,
+                },
+            );
         } catch (error) {
             console.error("Discard session error:", error);
-            Alert.alert("削除エラー", "位置情報ログの削除に失敗しました。");
+
+            Alert.alert(
+                "削除エラー",
+                "アクティビティの削除に失敗しました。\n記録の所有者または通信状態を確認してください。",
+            );
         } finally {
             setSavingSessionName(false);
         }
@@ -3795,14 +3932,20 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                                 </Pressable>
 
                                 <Pressable
-                                    style={styles.modalPrimaryButton}
-                                    disabled={savingLiveShare}
+                                    style={[
+                                        styles.modalPrimaryButton,
+                                        savingSessionName &&
+                                            styles.appButtonDisabled,
+                                    ]}
+                                    disabled={savingSessionName}
                                     onPress={() => {
-                                        void handleSaveLiveShareUsers();
+                                        void saveSessionName(sessionNameInput);
                                     }}
                                 >
                                     <Text style={styles.modalPrimaryButtonText}>
-                                        {savingLiveShare ? "保存中..." : "保存"}
+                                        {savingSessionName
+                                            ? "保存中..."
+                                            : "保存"}
                                     </Text>
                                 </Pressable>
                             </View>
@@ -3960,17 +4103,20 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                                 </Pressable>
 
                                 <Pressable
-                                    style={styles.modalPrimaryButton}
+                                    style={[
+                                        styles.modalPrimaryButton,
+                                        savingLiveShare &&
+                                            styles.appButtonDisabled,
+                                    ]}
+                                    disabled={
+                                        savingLiveShare || loadingLiveShareUsers
+                                    }
                                     onPress={() => {
-                                        setSelectedLiveShareUsers(
-                                            draftLiveShareUsers,
-                                        );
-                                        setLiveShareStatusMessage("");
-                                        setLiveShareModalVisible(false);
+                                        void handleSaveLiveShareUsers();
                                     }}
                                 >
                                     <Text style={styles.modalPrimaryButtonText}>
-                                        保存
+                                        {savingLiveShare ? "保存中..." : "保存"}
                                     </Text>
                                 </Pressable>
                             </View>

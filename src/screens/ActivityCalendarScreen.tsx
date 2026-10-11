@@ -81,7 +81,7 @@ export default function ActivityCalendarScreen({ navigation }: Props) {
 
             const recordingSessionModel = client.models.RecordingSession as any;
 
-            // 診断コード
+            /* // 診断コード
             if (__DEV__) {
                 const USER_A_ID = "3704aac8-90e1-70e4-bc50-6acd159a5049";
 
@@ -112,7 +112,7 @@ export default function ActivityCalendarScreen({ navigation }: Props) {
                     }
                 }
             }
-            // 診断コード
+            // 診断コード */
 
             const allSessions: any[] = [];
             let nextToken: string | null = null;

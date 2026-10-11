@@ -282,12 +282,26 @@ async function resolveShareRevision(
 
     const sharingState = await getLiveLocationSharingState();
 
-    if (
-        !sharingState.enabled ||
+    const invalidEnabled = !sharingState.enabled;
+    const invalidRevision =
         !Number.isSafeInteger(sharingState.revision) ||
-        sharingState.revision < 1 ||
-        !sameSharedOwners(sharingState.sharedOwners, sharedOwners)
-    ) {
+        sharingState.revision < 1;
+    const invalidOwners = !sameSharedOwners(
+        sharingState.sharedOwners,
+        sharedOwners,
+    );
+
+    if (invalidEnabled || invalidRevision || invalidOwners) {
+        console.error("[LiveLocation] Sharing state mismatch:", {
+            cloudEnabled: sharingState.enabled,
+            cloudRevision: sharingState.revision,
+            cloudOwnerCount: sharingState.sharedOwners.length,
+            requestedOwnerCount: sharedOwners.length,
+            invalidEnabled,
+            invalidRevision,
+            invalidOwners,
+        });
+
         throw new Error("LIVE_LOCATION_SHARING_STATE_MISMATCH");
     }
 

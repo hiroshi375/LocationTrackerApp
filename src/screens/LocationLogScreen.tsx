@@ -269,6 +269,42 @@ export default function LocationLogScreen({ navigation, route }: Props) {
      */
     const shouldScrollToReturnAnchorRef = useRef(false);
 
+    /*
+     * アクティビティ履歴を取得した認証ユーザーを保持する。
+     *
+     * ログインユーザーが変わった場合、
+     * 前のユーザーの履歴を引き継がないために使用する。
+     */
+    const historyOwnerUserIdRef = useRef<string | null>(null);
+
+    /*
+     * 履歴取得処理の世代番号。
+     *
+     * 古いリクエストが後から完了した場合、
+     * 最新の取得結果を上書きしないようにする。
+     */
+    const historyLoadRequestIdRef = useRef(0);
+
+    /*
+     * 認証ユーザー切り替え時に、以前の履歴を破棄する。
+     */
+    const clearHistoryForUserChange = useCallback(() => {
+        historyLoadRequestIdRef.current += 1;
+
+        setRecordingSessions([]);
+        setSharedRecordingSessions([]);
+
+        setRecordingSessionNextToken(null);
+        setRecordingSessionTotalCount(null);
+        setSharedRecordingSessionTotalCount(0);
+
+        setRecordingSessionBeforeEndAt(null);
+        setExpandedSessionIds(new Set());
+
+        returnAnchorSessionRef.current = null;
+        shouldScrollToReturnAnchorRef.current = false;
+    }, []);
+
     const loadRecordingSessions = useCallback(
         async ({
             reset,
@@ -281,6 +317,8 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             beforeEndAt?: string | null;
             prependSession?: RecordingSessionDisplayItem | null;
         }) => {
+            let requestId = ++historyLoadRequestIdRef.current;
+
             try {
                 if (reset) {
                     setLoading(true);
@@ -290,6 +328,32 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                 }
 
                 const currentUser = await getCurrentUser();
+
+                if (requestId !== historyLoadRequestIdRef.current) {
+                    return;
+                }
+
+                /*
+                 * 前回履歴を取得したユーザーと現在のユーザーが
+                 * 異なる場合は、古い履歴をすべて破棄する。
+                 */
+                if (
+                    historyOwnerUserIdRef.current !== null &&
+                    historyOwnerUserIdRef.current !== currentUser.userId
+                ) {
+                    clearHistoryForUserChange();
+                }
+
+                /*
+                 * 現在のユーザーを履歴の所有者として記録する。
+                 */
+                historyOwnerUserIdRef.current = currentUser.userId;
+
+                /*
+                 * ユーザー切り替え時に世代番号が更新されるため、
+                 * このリクエストの有効な世代を取得する。
+                 */
+                requestId = historyLoadRequestIdRef.current;
 
                 const recordingSessionModel = client.models
                     .RecordingSession as any;
@@ -466,6 +530,7 @@ export default function LocationLogScreen({ navigation, route }: Props) {
 
                 const nextItems = loadedItems.filter(
                     (item) =>
+                        item.userId === currentUser.userId &&
                         Boolean(item.recordingSessionId) &&
                         Boolean(item.startAt) &&
                         Boolean(item.endAt),
@@ -506,23 +571,47 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                     );
                 }
 
+                /*
+                 * データ取得中にログインユーザーが変わっていないか、
+                 * 結果を画面へ反映する直前に再確認する。
+                 */
+                const latestUser = await getCurrentUser();
+
+                if (
+                    latestUser.userId !== currentUser.userId ||
+                    requestId !== historyLoadRequestIdRef.current
+                ) {
+                    return;
+                }
+
                 setRecordingSessions((currentItems) => {
+                    if (
+                        requestId !== historyLoadRequestIdRef.current ||
+                        historyOwnerUserIdRef.current !== currentUser.userId
+                    ) {
+                        return currentItems;
+                    }
+
+                    /*
+                     * 現在の認証ユーザーの履歴だけを保持する。
+                     */
+                    const safeNextItems = nextItems.filter(
+                        (item) => item.userId === currentUser.userId,
+                    );
+
                     if (reset) {
-                        /*
-                         * 地図から戻った場合は、
-                         * 最新ポイント数へ更新した参照sessionを先頭に置く。
-                         */
-                        if (refreshedPrependSession) {
+                        if (
+                            refreshedPrependSession &&
+                            refreshedPrependSession.userId ===
+                                currentUser.userId
+                        ) {
                             return [
                                 refreshedPrependSession,
-                                ...nextItems,
+                                ...safeNextItems,
                             ].slice(0, SESSION_PAGE_SIZE);
                         }
 
-                        /*
-                         * 通常表示では最新15件。
-                         */
-                        return nextItems;
+                        return safeNextItems;
                     }
 
                     const itemMap = new Map<
@@ -530,18 +619,22 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                         RecordingSessionDisplayItem
                     >();
 
-                    currentItems.forEach((item) => {
-                        itemMap.set(item.id, item);
-                    });
+                    currentItems
+                        .filter((item) => item.userId === currentUser.userId)
+                        .forEach((item) => {
+                            itemMap.set(item.id, item);
+                        });
 
-                    nextItems.forEach((item) => {
+                    safeNextItems.forEach((item) => {
                         itemMap.set(item.id, item);
                     });
 
                     return Array.from(itemMap.values());
                 });
 
-                setRecordingSessionNextToken(result.nextToken ?? null);
+                if (requestId === historyLoadRequestIdRef.current) {
+                    setRecordingSessionNextToken(result.nextToken ?? null);
+                }
             } catch (error) {
                 console.error("RecordingSession index query error:", error);
 
@@ -550,11 +643,13 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                     "アクティビティ履歴の取得に失敗しました。",
                 );
             } finally {
-                setLoading(false);
-                setLoadingMore(false);
+                if (requestId === historyLoadRequestIdRef.current) {
+                    setLoading(false);
+                    setLoadingMore(false);
+                }
             }
         },
-        [],
+        [clearHistoryForUserChange],
     );
 
     const loadSharedRecordingSessions = useCallback(async () => {
@@ -934,7 +1029,13 @@ export default function LocationLogScreen({ navigation, route }: Props) {
     const filteredItems = useMemo(() => {
         const sourceItems =
             historyViewMode === "mine"
-                ? [SAMPLE_ACTIVITY_DISPLAY_ITEM, ...recordingSessions]
+                ? [
+                      SAMPLE_ACTIVITY_DISPLAY_ITEM,
+                      ...recordingSessions.filter(
+                          (item) =>
+                              item.userId === historyOwnerUserIdRef.current,
+                      ),
+                  ]
                 : sharedRecordingSessions;
 
         const keyword = searchText.trim().toLowerCase();

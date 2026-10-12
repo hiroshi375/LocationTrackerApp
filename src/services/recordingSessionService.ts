@@ -193,7 +193,9 @@ export async function recalculateCurrentMonthRecordedActivityUsage(
 }
 
 /** 非同期処理中の認証切替を検知し、他ユーザーの更新を防ぐ。 */
-async function assertCurrentRecordingOwner(expectedUserId: string): Promise<void> {
+async function assertCurrentRecordingOwner(
+    expectedUserId: string,
+): Promise<void> {
     const currentUser = await getCurrentUser();
     if (currentUser.userId !== expectedUserId) {
         throw new Error(
@@ -210,6 +212,8 @@ export async function upsertRecordingSessionSummary(
     recordingDistanceMeters?: number | null,
     options?: RecordingSessionSummaryOptions,
 ) {
+    // 互換性維持のため引数は残すが、集計処理から共有権限は変更しない。
+    void shareOwnerValues;
     const currentUser = await getCurrentUser();
 
     const fetchedLogs = await listLocationLogsBySessionId(recordingSessionId);
@@ -261,15 +265,6 @@ export async function upsertRecordingSessionSummary(
                 new Date(a.recordedAt).getTime() -
                 new Date(b.recordedAt).getTime(),
         );
-
-    const sharedOwnersFromLogs = routeLogs.flatMap((log) =>
-        Array.isArray(log.sharedOwners)
-            ? log.sharedOwners.filter(
-                  (owner): owner is string =>
-                      typeof owner === "string" && owner.length > 0,
-              )
-            : [],
-    );
 
     const summaryName =
         recordingSessionName ??
@@ -327,20 +322,6 @@ export async function upsertRecordingSessionSummary(
         ) ??
         existingSessions[0] ??
         null;
-    const existingSharedOwners = Array.isArray(existing?.sharedOwners)
-        ? existing.sharedOwners.filter(
-              (owner: unknown): owner is string =>
-                  typeof owner === "string" && owner.length > 0,
-          )
-        : [];
-
-    const sharedOwners = Array.from(
-        new Set([
-            ...existingSharedOwners,
-            ...sharedOwnersFromLogs,
-            ...shareOwnerValues.filter(Boolean),
-        ]),
-    );
 
     const useManualClassification = existing?.classificationSource === "MANUAL";
     const activityType = useManualClassification
@@ -361,7 +342,6 @@ export async function upsertRecordingSessionSummary(
         startBatteryLevel: batteryLogs[0]?.batteryLevel ?? null,
         endBatteryLevel:
             batteryLogs[batteryLogs.length - 1]?.batteryLevel ?? null,
-        sharedOwners,
         recordingIntervalMs:
             typeof recordingIntervalMs === "number"
                 ? recordingIntervalMs
@@ -460,7 +440,9 @@ export async function upsertRecordingSessionSummary(
 
     for (const duplicateSession of duplicateSessions) {
         if (duplicateSession.userId !== currentUser.userId) {
-            throw new Error("[RecordingSecurity] 他ユーザーのRecordingSession削除を拒否しました。");
+            throw new Error(
+                "[RecordingSecurity] 他ユーザーのRecordingSession削除を拒否しました。",
+            );
         }
         await assertCurrentRecordingOwner(currentUser.userId);
         const deleteResult = await model.delete({
@@ -637,9 +619,12 @@ export async function updateRecordingSessionActivityType(
     // 共有によって参照できる他ユーザーのLocationLogは更新しない。
     const ownedLogs = logs.filter((log) => log.userId === currentUser.userId);
     if (ownedLogs.length !== logs.length) {
-        console.warn("[RecordingSecurity] Excluded non-owned logs from manual classification", {
-            excludedCount: logs.length - ownedLogs.length,
-        });
+        console.warn(
+            "[RecordingSecurity] Excluded non-owned logs from manual classification",
+            {
+                excludedCount: logs.length - ownedLogs.length,
+            },
+        );
     }
 
     await updateLocationLogClassification(
@@ -1285,7 +1270,9 @@ async function updateLocationLogClassification(
     expectedUserId: string,
 ): Promise<void> {
     if (logs.some((log) => log.userId !== expectedUserId)) {
-        throw new Error("[RecordingSecurity] 他ユーザーのLocationLog更新を拒否しました。");
+        throw new Error(
+            "[RecordingSecurity] 他ユーザーのLocationLog更新を拒否しました。",
+        );
     }
 
     const model = client.models.LocationLog as any;
@@ -1453,7 +1440,6 @@ export async function backfillRecordingSessionsFromLocationLogs(
         string,
         {
             recordingSessionName: string | null;
-            sharedOwners: string[];
         }
     >();
 
@@ -1482,18 +1468,6 @@ export async function backfillRecordingSessionsFromLocationLogs(
                 current?.recordingSessionName ??
                 log.recordingSessionName ??
                 null,
-
-            sharedOwners: Array.from(
-                new Set([
-                    ...(current?.sharedOwners ?? []),
-                    ...(Array.isArray(log.sharedOwners)
-                        ? log.sharedOwners.filter(
-                              (owner: unknown): owner is string =>
-                                  typeof owner === "string" && owner.length > 0,
-                          )
-                        : []),
-                ]),
-            ),
         });
     }
 
@@ -1530,7 +1504,7 @@ export async function backfillRecordingSessionsFromLocationLogs(
             await upsertRecordingSessionSummary(
                 recordingSessionId,
                 info.recordingSessionName,
-                info.sharedOwners,
+                [], // Backfillでは共有権限を復元・変更しない
                 undefined,
                 undefined,
                 {

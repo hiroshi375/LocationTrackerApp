@@ -22,7 +22,17 @@ const schema = a
                 memo: a.string(),
                 recordingSessionId: a.string(),
                 recordingSessionName: a.string(),
-                sharedOwners: a.string().array(),
+                sharedOwners: a
+                    .string()
+                    .array()
+                    .authorization((allow) => [
+                        // 記録所有者は作成時の指定と読み取りが可能
+                        // ただしクライアントからの更新は許可しない
+                        allow.owner().to(["create", "read"]),
+
+                        // 既存の共有相手からの読み取りを維持
+                        allow.ownersDefinedIn("sharedOwners").to(["read"]),
+                    ]),
 
                 batteryLevel: a.float(),
                 batteryState: a.string(),
@@ -66,7 +76,17 @@ const schema = a
                 startBatteryLevel: a.float(),
                 endBatteryLevel: a.float(),
 
-                sharedOwners: a.string().array(),
+                sharedOwners: a
+                    .string()
+                    .array()
+                    .authorization((allow) => [
+                        // 記録所有者は作成時の指定と読み取りが可能
+                        // ただしクライアントからの更新は許可しない
+                        allow.owner().to(["create", "read"]),
+
+                        // 既存の共有相手からの読み取りを維持
+                        allow.ownersDefinedIn("sharedOwners").to(["read"]),
+                    ]),
                 recordingIntervalMs: a.integer(),
                 recordingDistanceMeters: a.float(),
 
@@ -355,6 +375,47 @@ const schema = a
                  */
                 allow.ownerDefinedIn("userId").to(["read"]),
             ]),
+
+        HistoricalShareGrant: a
+            .model({
+                // 一意キー：セッション主キー + グループ + 共有先ユーザー
+                grantId: a.string().required(),
+
+                // RecordingSessionのDynamoDB主キー
+                recordingSessionRecordId: a.id().required(),
+
+                // Cognito sub
+                ownerUserId: a.string().required(),
+
+                // 共有元グループ
+                groupId: a.id().required(),
+
+                // 共有先のCognito sub
+                recipientUserId: a.string().required(),
+
+                // AppSync sharedOwnersに設定する識別子
+                recipientOwnerValue: a.string().required(),
+
+                // true=有効、false=失効
+                isActive: a.boolean().required(),
+
+                grantedAt: a.datetime().required(),
+                revokedAt: a.datetime(),
+            })
+            .identifier(["grantId"])
+            .secondaryIndexes((index) => [
+                index("recordingSessionRecordId").queryField(
+                    "listHistoricalGrantsBySession",
+                ),
+
+                index("groupId").queryField("listHistoricalGrantsByGroup"),
+            ])
+            .authorization((allow) => [
+                // 所有者による参照のみ許可。
+                // クライアントからの作成・変更・削除は禁止。
+                allow.ownerDefinedIn("ownerUserId").to(["read"]),
+            ]),
+
         ShareGroupActionResult: a.customType({
             success: a.boolean().required(),
             message: a.string().required(),
@@ -428,6 +489,29 @@ const schema = a
                 groupId: a.id().required(),
             })
             .returns(a.ref("ShareGroupActionResult"))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(shareGroupApi)),
+
+        shareHistoricalRecordingSession: a
+            .mutation()
+            .arguments({
+                recordingSessionId: a.string().required(),
+                groupId: a.id().required(),
+                recipientUserIds: a.string().array().required(),
+            })
+            .returns(a.boolean())
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(shareGroupApi)),
+
+        setHistoricalShareGrant: a
+            .mutation()
+            .arguments({
+                recordingSessionId: a.string().required(),
+                groupId: a.id().required(),
+                recipientUserId: a.string().required(),
+                enabled: a.boolean().required(),
+            })
+            .returns(a.boolean())
             .authorization((allow) => [allow.authenticated()])
             .handler(a.handler.function(shareGroupApi)),
 
@@ -558,6 +642,29 @@ const schema = a
             .returns(a.boolean())
             .authorization((allow) => [allow.authenticated()])
             .handler(a.handler.function(liveLocationApi)),
+
+        diagnoseHistoricalShareMigrationAdmin: a
+            .query()
+            .arguments({
+                ownerUserId: a.string().required(),
+                recordingSessionId: a.string().required(),
+            })
+            .returns(a.json())
+            .authorization((allow) => [allow.group("Admins")])
+            .handler(a.handler.function(shareGroupApi)),
+        /**
+         * ⑥-F-4：旧共有移行の障害・復旧判断用診断。
+         * 管理者専用、読み取り専用。
+         */
+        diagnoseHistoricalShareRecoveryAdmin: a
+            .query()
+            .arguments({
+                ownerUserId: a.string().required(),
+                recordingSessionId: a.string().required(),
+            })
+            .returns(a.json())
+            .authorization((allow) => [allow.group("Admins")])
+            .handler(a.handler.function(shareGroupApi)),
     })
     .authorization((allow) => [
         allow.resource(shareGroupApi),

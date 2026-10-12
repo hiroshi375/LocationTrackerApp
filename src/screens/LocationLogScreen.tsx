@@ -1615,28 +1615,22 @@ export default function LocationLogScreen({ navigation, route }: Props) {
     }, []);
 
     const shareSessionWithSelectedUsers = async () => {
-        if (!sharingSession) {
+        if (!sharingSession || sharing) {
             return;
         }
 
-        /*
-         * 現在取得済みの同一グループ共有候補だけを有効とする。
-         * selectedShareUsersに古い状態などが残っていても
-         * 別グループへ共有しないための防御。
-         */
-        const validShareUserIds = new Set(
-            shareUsers.map((user) => user.userId),
+        // 共有候補として取得済みのユーザーに限定
+        const validUserIds = new Set(shareUsers.map((user) => user.userId));
+
+        const selectedUsers = Array.from(
+            new Map(
+                selectedShareUsers
+                    .filter((user) => validUserIds.has(user.userId))
+                    .map((user) => [user.userId, user]),
+            ).values(),
         );
 
-        const selectedOwnerValues = selectedShareUsers
-            .filter((user) => validShareUserIds.has(user.userId))
-            .map((user) => user.ownerValue)
-            .filter(
-                (ownerValue): ownerValue is string =>
-                    typeof ownerValue === "string" && ownerValue.length > 0,
-            );
-
-        if (selectedOwnerValues.length === 0) {
+        if (selectedUsers.length === 0) {
             Alert.alert(
                 "共有先未選択",
                 "共有するユーザーを1人以上選択してください。",
@@ -1644,96 +1638,206 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             return;
         }
 
+        setSharing(true);
+
+        let completedCount = 0;
+
         try {
-            setSharing(true);
+            /*
+             * 1. 所属する共有グループの情報を取得
+             *
+             * listMyShareGroups はバックエンドで
+             * 自分の所属グループとメンバーを返す。
+             */
+            type ShareGroupForHistory = {
+                groupId: string;
+                name: string;
+                members: {
+                    userId: string;
+                }[];
+            };
 
-            const sessionLogs = await listLocationLogsBySessionId(
-                sharingSession.recordingSessionId,
-            );
+            const groupsResult = await (
+                client.queries.listMyShareGroups as unknown as (
+                    args: Record<string, never>,
+                ) => Promise<{
+                    data: ShareGroupForHistory[] | null;
+                    errors?: readonly unknown[];
+                }>
+            )({});
 
-            const updateResults = await Promise.all(
-                sessionLogs.map((log: LocationLogItem) => {
-                    const currentSharedOwners = log.sharedOwners ?? [];
-
-                    const nextSharedOwners = Array.from(
-                        new Set([
-                            ...currentSharedOwners,
-                            ...selectedOwnerValues,
-                        ]),
-                    );
-
-                    return client.models.LocationLog.update({
-                        id: log.id,
-                        sharedOwners: nextSharedOwners,
-                    });
-                }),
-            );
-
-            const hasErrors = updateResults.some((result) => result.errors);
-
-            if (hasErrors) {
-                console.error("Share session errors:", updateResults);
-
-                Alert.alert("共有エラー", "位置情報の共有に失敗しました。");
-
-                return;
+            if (groupsResult.errors?.length || !groupsResult.data) {
+                throw new Error("共有グループの情報を取得できませんでした。");
             }
 
-            const recordingSessionModel = client.models.RecordingSession as any;
+            const groups = groupsResult.data;
 
-            const currentSessionSharedOwners =
-                sharingSession.sharedOwners ?? [];
+            /*
+             * 2. 共有相手とgroupIdの対応を確定
+             *
+             * 複数グループに所属するユーザーについては、
+             * 推測でgroupIdを決定しない。
+             */
+            const targets: {
+                groupId: string;
+                recipientUserId: string;
+            }[] = [];
 
-            const nextSessionSharedOwners = Array.from(
-                new Set([
-                    ...currentSessionSharedOwners,
-                    ...selectedOwnerValues,
-                ]),
-            );
+            for (const user of selectedUsers) {
+                const matchingGroups = groups.filter((group) =>
+                    group.members.some(
+                        (member) => member.userId === user.userId,
+                    ),
+                );
 
-            const recordingSessionUpdateResult =
-                await recordingSessionModel.update({
-                    id: sharingSession.id,
-                    sharedOwners: nextSessionSharedOwners,
+                if (matchingGroups.length === 0) {
+                    throw new Error(
+                        `${user.displayName ?? user.userId}さんの共有グループを特定できません。`,
+                    );
+                }
+
+                if (matchingGroups.length > 1) {
+                    throw new Error(
+                        `${user.displayName ?? user.userId}さんは複数の共有グループに所属しています。共有グループの選択が必要です。`,
+                    );
+                }
+
+                targets.push({
+                    groupId: matchingGroups[0].groupId,
+                    recipientUserId: user.userId,
+                });
+            }
+
+            /*
+             * 3. 共有相手ごとにGrantを登録
+             *
+             * 同一セッションの操作ロックが競合するため
+             * Promise.allは使用しない。
+             */
+            for (const target of targets) {
+                const result = await (
+                    client.mutations
+                        .setHistoricalShareGrant as unknown as (args: {
+                        recordingSessionId: string;
+                        groupId: string;
+                        recipientUserId: string;
+                        enabled: boolean;
+                    }) => Promise<{
+                        data: boolean | null;
+                        errors?: readonly unknown[];
+                    }>
+                )({
+                    recordingSessionId: sharingSession.recordingSessionId,
+                    groupId: target.groupId,
+                    recipientUserId: target.recipientUserId,
+                    enabled: true,
                 });
 
-            if (recordingSessionUpdateResult.errors) {
-                console.error(
-                    "RecordingSession share update errors:",
-                    recordingSessionUpdateResult.errors,
-                );
+                if (result.errors?.length || result.data !== true) {
+                    console.error(
+                        "[LocationLogScreen] Grant registration failed:",
+                        {
+                            recordingSessionId:
+                                sharingSession.recordingSessionId,
+                            groupId: target.groupId,
+                            recipientUserId: target.recipientUserId,
+                            errors: result.errors ?? [],
+                        },
+                    );
 
-                Alert.alert(
-                    "共有エラー",
-                    "アクティビティ情報の共有に失敗しました。",
-                );
+                    throw new Error("共有権限の登録に失敗しました。");
+                }
 
-                return;
+                completedCount++;
             }
 
-            setRecordingSessions((currentSessions) =>
-                currentSessions.map((session) => {
-                    if (session.id !== sharingSession.id) {
-                        return session;
-                    }
+            /*
+             * 4. バックエンドのRecordingSessionを再取得
+             *
+             * Grantに基づいて共有先が再計算されるため、
+             * 古い共有先と選択値を単純結合しない。
+             */
+            try {
+                const refreshed = await (
+                    client.models.RecordingSession.get as unknown as (args: {
+                        id: string;
+                    }) => Promise<{
+                        data: {
+                            id: string;
+                            sharedOwners?: (string | null)[] | null;
+                        } | null;
+                        errors?: readonly unknown[];
+                    }>
+                )({
+                    id: sharingSession.id,
+                });
 
-                    return {
-                        ...session,
-                        sharedOwners: nextSessionSharedOwners,
-                    };
-                }),
-            );
+                if (refreshed.errors?.length || !refreshed.data) {
+                    console.warn(
+                        "[LocationLogScreen] RecordingSession refresh failed:",
+                        refreshed.errors,
+                    );
+                } else {
+                    const updated = refreshed.data;
+
+                    // nullableな共有先を除外してstring[]に変換
+                    const nextSharedOwners: string[] = (
+                        updated.sharedOwners ?? []
+                    ).filter(
+                        (value): value is string => typeof value === "string",
+                    );
+
+                    setRecordingSessions((currentSessions) =>
+                        currentSessions.map((session) => {
+                            if (session.id !== sharingSession.id) {
+                                return session;
+                            }
+
+                            return {
+                                ...session,
+                                sharedOwners: nextSharedOwners,
+                            };
+                        }),
+                    );
+                }
+            } catch (refreshError) {
+                console.warn(
+                    "[LocationLogScreen] RecordingSession refresh exception:",
+                    refreshError,
+                );
+            }
+
+            /*
+             * 5. 共有Modalを閉じる
+             *
+             * closeShareModal()はsharing=trueの間は
+             * returnするため、ここで直接状態を初期化する。
+             */
+            setShareModalVisible(false);
+            setSharingSession(null);
+            setShareSearchText("");
+            setShareUsers([]);
+            setSelectedShareUsers([]);
+            setShareUserIconUrls({});
 
             Alert.alert(
                 "共有完了",
-                `${selectedOwnerValues.length}人のユーザーに共有しました。`,
+                `${completedCount}人のユーザーに共有しました。`,
             );
-
-            closeShareModal();
         } catch (error) {
-            console.error("Share session error:", error);
+            console.error("[LocationLogScreen] Share grant error:", error);
 
-            Alert.alert("共有エラー", "位置情報の共有に失敗しました。");
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : "共有権限の登録に失敗しました。";
+
+            Alert.alert(
+                "共有処理を確認してください",
+                completedCount > 0
+                    ? `${completedCount}人への共有登録は成功しました。\n\n${message}\n\n残りの共有状態を確認してください。`
+                    : `${message}\n\n登録結果が不明な場合は、再操作する前に共有状態を確認してください。`,
+            );
         } finally {
             setSharing(false);
         }

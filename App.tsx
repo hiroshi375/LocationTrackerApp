@@ -4,7 +4,7 @@ import { cleanupLegacyBackgroundTaskStageDiagnosticsOnce } from "./src/tasks/bac
 import { Authenticator } from "@aws-amplify/ui-react-native";
 import { Amplify } from "aws-amplify";
 import { Hub, I18n } from "aws-amplify/utils";
-import { getCurrentUser, signOut } from "aws-amplify/auth";
+import { getCurrentUser, signOut, fetchAuthSession } from "aws-amplify/auth";
 import { StatusBar } from "expo-status-bar";
 import {
     ActivityIndicator,
@@ -50,6 +50,9 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SAMPLE_ACTIVITY_SESSION_ID } from "./src/data/sampleActivity";
 import { checkForOtaUpdate } from "./src/services/otaUpdateService";
+import { generateClient } from "aws-amplify/data";
+import type { Schema } from "./amplify/data/resource";
+import HistoricalShareRecoveryTest from "./src/debug/HistoricalShareRecoveryTest";
 
 Amplify.configure(outputs);
 
@@ -606,6 +609,57 @@ function SingleDeviceSessionGuard({ children }: { children: ReactNode }) {
         return unsubscribe;
     }, []);
 
+    useEffect(() => {
+        const runMigrationDiagnosis = async () => {
+            try {
+                const session = await fetchAuthSession();
+
+                const groups =
+                    session.tokens?.idToken?.payload["cognito:groups"];
+
+                /* if (!Array.isArray(groups) || !groups.includes("Admins")) {
+                    console.log(
+                        "[MigrationDiagnosis] Admins所属なし。診断を実行しません。",
+                    );
+                    return;
+                } */
+
+                const dataClient = generateClient<Schema>();
+
+                console.log("[MigrationDiagnosis] 診断開始");
+
+                const result =
+                    await dataClient.queries.diagnoseHistoricalShareMigrationAdmin(
+                        {
+                            ownerUserId: "3704aac8-90e1-70e4-bc50-6acd159a5049",
+                            recordingSessionId:
+                                "session-1789508764591-byar86l3",
+                        },
+                        {
+                            authMode: "userPool",
+                        },
+                    );
+
+                if (result.errors?.length) {
+                    console.error(
+                        "[MigrationDiagnosis] errors:",
+                        JSON.stringify(result.errors, null, 2),
+                    );
+                    return;
+                }
+
+                console.log(
+                    "[MigrationDiagnosis] result:",
+                    JSON.stringify(result.data, null, 2),
+                );
+            } catch (error) {
+                console.error("[MigrationDiagnosis] exception:", error);
+            }
+        };
+
+        void runMigrationDiagnosis();
+    }, []);
+
     if (checking) {
         return (
             <View
@@ -767,7 +821,10 @@ export default function App() {
                 />
 
                 <Authenticator>
-                    <AppContent />
+                    <>
+                        <AppContent />
+                        {__DEV__ && <HistoricalShareRecoveryTest />}
+                    </>
                 </Authenticator>
             </Authenticator.Provider>
         </StartupCleanupGate>

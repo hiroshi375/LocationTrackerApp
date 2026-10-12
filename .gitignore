@@ -46,6 +46,7 @@ app-example
 .amplify
 #amplify_outputs*
 amplifyconfiguration*
+.auth-test-output/
 
 # env
 .env

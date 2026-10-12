@@ -52,7 +52,6 @@ import { SAMPLE_ACTIVITY_SESSION_ID } from "./src/data/sampleActivity";
 import { checkForOtaUpdate } from "./src/services/otaUpdateService";
 import { generateClient } from "aws-amplify/data";
 import type { Schema } from "./amplify/data/resource";
-import HistoricalShareRecoveryTest from "./src/debug/HistoricalShareRecoveryTest";
 
 Amplify.configure(outputs);
 
@@ -821,10 +820,7 @@ export default function App() {
                 />
 
                 <Authenticator>
-                    <>
-                        <AppContent />
-                        {__DEV__ && <HistoricalShareRecoveryTest />}
-                    </>
+                    <AppContent />
                 </Authenticator>
             </Authenticator.Provider>
         </StartupCleanupGate>

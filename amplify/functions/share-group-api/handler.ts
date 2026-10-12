@@ -1335,6 +1335,9 @@ export const handler = async (event: any) => {
         case "listMyShareCandidates":
             return await listMyShareCandidates(event);
 
+        case "listHistoricalShareRecipients":
+            return await listHistoricalShareRecipients(event);
+
         case "listMyShareGroups":
             return await listMyShareGroups(event);
 
@@ -1987,6 +1990,85 @@ async function loadHistoricalGrantsBySession(
     } while (nextToken);
 
     return allGrants;
+}
+
+/**
+ * Phase ⑦-1
+ * 指定RecordingSessionの履歴共有Grant一覧を返す。
+ *
+ * セキュリティ:
+ * - Cognito認証必須
+ * - RecordingSessionの所有者本人だけ取得可能
+ * - Grantの所有者・セッション整合性を検証
+ *
+ * 読み取り専用:
+ * - Grantは変更しない
+ * - Operationは変更しない
+ * - sharedOwnersは変更しない
+ */
+async function listHistoricalShareRecipients(
+    event: Parameters<
+        Schema["listHistoricalShareRecipients"]["functionHandler"]
+    >[0],
+): Promise<
+    {
+        grantId: string;
+        groupId: string;
+        recipientUserId: string;
+        isActive: boolean;
+        grantedAt: string;
+        revokedAt: string | null;
+    }[]
+> {
+    const { userId } = getCaller(event);
+
+    const recordingSessionId = event.arguments.recordingSessionId?.trim();
+
+    if (!recordingSessionId) {
+        throw new Error("recordingSessionIdが指定されていません。");
+    }
+
+    // 呼び出し元が所有するセッションだけを取得
+    const session = await getOwnedRecordingSession(userId, recordingSessionId);
+
+    // Grantの正本を取得
+    // この関数内でも所有者・セッションの整合性を検証
+    const grants = await loadHistoricalGrantsBySession(session.id, userId);
+
+    const recipients = grants
+        .map((grant) => ({
+            grantId: grant.grantId,
+            groupId: grant.groupId,
+            recipientUserId: grant.recipientUserId,
+            isActive: grant.isActive,
+            grantedAt: grant.grantedAt,
+            revokedAt: grant.revokedAt ?? null,
+        }))
+        .sort((a, b) => {
+            // 有効な共有先を先頭にする
+            if (a.isActive !== b.isActive) {
+                return a.isActive ? -1 : 1;
+            }
+
+            // 同じ状態なら登録日時の新しい順
+            const dateDiff = Date.parse(b.grantedAt) - Date.parse(a.grantedAt);
+
+            if (dateDiff !== 0) {
+                return dateDiff;
+            }
+
+            // 同日時でも表示順を安定させる
+            return a.grantId.localeCompare(b.grantId);
+        });
+
+    console.info("[HistoricalSharing] Recipients loaded", {
+        ownerUserId: userId,
+        recordingSessionId,
+        recipientCount: recipients.length,
+        activeCount: recipients.filter((item) => item.isActive).length,
+    });
+
+    return recipients;
 }
 
 type HistoricalLocationLog = Schema["LocationLog"]["type"];

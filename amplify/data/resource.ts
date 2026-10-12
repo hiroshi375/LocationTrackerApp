@@ -433,6 +433,18 @@ const schema = a
             isActive: a.boolean().required(),
             message: a.string().required(),
         }),
+        /**
+         * Phase ⑦-1
+         * 履歴共有先一覧の1件分。
+         */
+        HistoricalShareRecipient: a.customType({
+            grantId: a.string().required(),
+            groupId: a.id().required(),
+            recipientUserId: a.string().required(),
+            isActive: a.boolean().required(),
+            grantedAt: a.datetime().required(),
+            revokedAt: a.datetime(),
+        }),
         ShareCandidate: a.customType({
             userId: a.string().required(),
             ownerValue: a.string().required(),
@@ -512,6 +524,24 @@ const schema = a
                 enabled: a.boolean().required(),
             })
             .returns(a.boolean())
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(shareGroupApi)),
+
+        /**
+         * Phase ⑦-1
+         * 指定セッションの共有Grant一覧を取得する。
+         *
+         * Cognito認証必須。
+         * Lambda内で所有者本人であることを検証する。
+         *
+         * GrantやsharedOwnersは変更しない。
+         */
+        listHistoricalShareRecipients: a
+            .query()
+            .arguments({
+                recordingSessionId: a.string().required(),
+            })
+            .returns(a.ref("HistoricalShareRecipient").array().required())
             .authorization((allow) => [allow.authenticated()])
             .handler(a.handler.function(shareGroupApi)),
 

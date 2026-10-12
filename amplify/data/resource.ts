@@ -230,6 +230,26 @@ const schema = a
                 allow.owner().to(["read"]),
                 allow.ownersDefinedIn("sharedOwners").to(["read"]),
             ]),
+        LocationLogAuthTest: a
+            .model({
+                userId: a.string().required(),
+                recordingSessionId: a.string().required(),
+                latitude: a.float(),
+                longitude: a.float(),
+                testPointCount: a.integer(),
+
+                sharedOwners: a
+                    .string()
+                    .array()
+                    .authorization((allow) => [
+                        allow.owner().to(["read"]),
+                        allow.ownersDefinedIn("sharedOwners").to(["read"]),
+                    ]),
+            })
+            .authorization((allow) => [
+                allow.owner(),
+                allow.ownersDefinedIn("sharedOwners").to(["read"]),
+            ]),
         ShareGroup: a
             .model({
                 /*

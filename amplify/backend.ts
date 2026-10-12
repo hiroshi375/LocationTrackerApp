@@ -4,12 +4,15 @@ import { auth } from "./auth/resource";
 import { data } from "./data/resource";
 import { storage } from "./storage/resource";
 import { liveLocationApi } from "./functions/live-location-api/resource";
+import { locationLogAuthTest } from "./functions/location-log-auth-test/resource";
 
 const backend = defineBackend({
     auth,
     data,
     storage,
     liveLocationApi,
+    // auth、data、その他の既存設定は維持
+    locationLogAuthTest,
 });
 
 // DynamoDBテーブルを取得
@@ -44,4 +47,18 @@ liveLocationLambda.addEnvironment(
 liveLocationLambda.addEnvironment(
     "SHARE_GROUP_TABLE_NAME",
     shareGroupTable.tableName,
+);
+
+// 検証用テーブル
+const authTestTable = backend.data.resources.tables["LocationLogAuthTest"];
+// Lambdaに検証用テーブルの書き込み権限を付与
+authTestTable.grantWriteData(backend.locationLogAuthTest.resources.lambda);
+
+// Lambdaの環境変数にテーブル名を設定
+const authTestLambdaCfn =
+    backend.locationLogAuthTest.resources.cfnResources.cfnFunction;
+
+authTestLambdaCfn.addPropertyOverride(
+    "Environment.Variables.AUTH_TEST_TABLE_NAME",
+    authTestTable.tableName,
 );

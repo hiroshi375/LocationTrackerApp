@@ -240,7 +240,11 @@ export default function LocationLogScreen({ navigation, route }: Props) {
     // Phase ⑦-2：共有候補取得エラー
     const [shareCandidatesError, setShareCandidatesError] = useState(false); // ★追加
     const [sharing, setSharing] = useState(false);
+    // Phase ⑦-3：共有解除中のユーザー
+    const [revokingUserId, setRevokingUserId] = useState<string | null>(null);
 
+    // 共有登録・解除の同時操作を禁止
+    const shareOperationBusy = sharing || revokingUserId !== null;
     // Phase ⑦-2：履歴共有先の管理
     const [historicalRecipients, setHistoricalRecipients] = useState<
         HistoricalShareRecipientItem[]
@@ -1516,14 +1520,25 @@ export default function LocationLogScreen({ navigation, route }: Props) {
     };
 
     /**
-     * Phase ⑦-2
-     * 共有先一覧の取得。
+     * Phase ⑦-2 / ⑦-3
+     * 履歴共有先を取得する。
      *
-     * Grantを正本として参照する。
-     * 取得失敗時は共有操作を禁止する。
+     * 成功時：取得したGrant一覧を返す
+     * 失敗時：nullを返す
+     * 古いリクエスト：nullを返す
+     *
+     * 失敗を空配列として扱わないことが重要。
      */
     const loadHistoricalRecipients = useCallback(
-        async (recordingSessionId: string, requestId: number) => {
+        async (
+            recordingSessionId: string,
+            requestId: number,
+        ): Promise<HistoricalShareRecipientItem[] | null> => {
+            // 古いリクエストは開始しない
+            if (requestId !== shareModalRequestIdRef.current) {
+                return null;
+            }
+
             setLoadingHistoricalRecipients(true);
             setHistoricalRecipientsError(false);
             setHistoricalRecipients([]);
@@ -1538,33 +1553,38 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                     recordingSessionId,
                 });
 
+                // モーダルを開き直した場合は破棄
                 if (requestId !== shareModalRequestIdRef.current) {
-                    return;
+                    return null;
                 }
 
                 if (result.errors?.length || !Array.isArray(result.data)) {
                     throw new Error("共有先一覧の取得に失敗しました。");
                 }
 
-                const recipients: HistoricalShareRecipientItem[] =
-                    result.data.filter(
-                        (item): item is HistoricalShareRecipientItem =>
-                            item !== null &&
-                            typeof item.grantId === "string" &&
-                            typeof item.groupId === "string" &&
-                            typeof item.recipientUserId === "string" &&
-                            typeof item.isActive === "boolean" &&
-                            typeof item.grantedAt === "string",
-                    );
+                const recipients = result.data.filter(
+                    (item): item is HistoricalShareRecipientItem =>
+                        item !== null &&
+                        typeof item.grantId === "string" &&
+                        typeof item.groupId === "string" &&
+                        typeof item.recipientUserId === "string" &&
+                        typeof item.isActive === "boolean" &&
+                        typeof item.grantedAt === "string",
+                );
 
-                // 不完全な応答を「共有先なし」と扱わない
                 if (recipients.length !== result.data.length) {
                     throw new Error(
                         "共有先一覧に不正なデータが含まれています。",
                     );
                 }
 
+                // 最新のリクエストであることを再確認
+                if (requestId !== shareModalRequestIdRef.current) {
+                    return null;
+                }
+
                 setHistoricalRecipients(recipients);
+                setHistoricalRecipientsError(false);
 
                 const activeUserIds = new Set(
                     recipients
@@ -1580,15 +1600,16 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                     "[LocationLogScreen] Historical recipients loaded:",
                     {
                         grantCount: recipients.length,
-                        activeGrantCount: recipients.filter(
-                            (item) => item.isActive,
-                        ).length,
                         activeUserCount: activeUserIds.size,
                     },
                 );
+
+                // ★今回の重要な追加
+                // React Stateの更新を待たず、取得結果を返す
+                return recipients;
             } catch (error) {
                 if (requestId !== shareModalRequestIdRef.current) {
-                    return;
+                    return null;
                 }
 
                 console.error(
@@ -1599,6 +1620,9 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                 setHistoricalRecipients([]);
                 setHistoricalRecipientsError(true);
                 setSelectedShareUsers([]);
+
+                // ★エラーを「共有先0件」と誤判定させない
+                return null;
             } finally {
                 if (requestId === shareModalRequestIdRef.current) {
                     setLoadingHistoricalRecipients(false);
@@ -1631,8 +1655,203 @@ export default function LocationLogScreen({ navigation, route }: Props) {
         void loadShareUsers(requestId);
     };
 
+    /**
+     * Phase ⑦-3
+     * 共有解除の成功判定を厳密化する。
+     *
+     * 成功条件：
+     * 1. 全解除API成功
+     * 2. Grant再取得成功
+     * 3. 対象ユーザーの有効Grantが0件
+     */
+    const revokeHistoricalShareForUser = async (recipientUserId: string) => {
+        if (
+            !sharingSession ||
+            shareOperationBusy ||
+            loadingHistoricalRecipients ||
+            historicalRecipientsError ||
+            shareSearching ||
+            shareCandidatesError
+        ) {
+            return;
+        }
+
+        const recordingSessionId = sharingSession.recordingSessionId;
+
+        const targetGrants = activeHistoricalRecipients.filter(
+            (grant) => grant.recipientUserId === recipientUserId,
+        );
+
+        if (targetGrants.length === 0) {
+            Alert.alert(
+                "共有解除",
+                "対象ユーザーの有効な共有権限が見つかりません。",
+            );
+            return;
+        }
+
+        setRevokingUserId(recipientUserId);
+
+        let completedCount = 0;
+        let mutationError: unknown = null;
+
+        try {
+            // 同一セッションの操作ロックを考慮し逐次実行
+            for (const grant of targetGrants) {
+                const result = await (
+                    client.mutations
+                        .setHistoricalShareGrant as unknown as (args: {
+                        recordingSessionId: string;
+                        groupId: string;
+                        recipientUserId: string;
+                        enabled: boolean;
+                    }) => Promise<{
+                        data: boolean | null;
+                        errors?: readonly unknown[];
+                    }>
+                )({
+                    recordingSessionId,
+                    groupId: grant.groupId,
+                    recipientUserId,
+                    enabled: false,
+                });
+
+                if (result.errors?.length || result.data !== true) {
+                    throw new Error("共有解除APIが失敗しました。");
+                }
+
+                completedCount += 1;
+            }
+        } catch (error) {
+            mutationError = error;
+
+            console.error("[LocationLogScreen] Revoke mutation failed:", {
+                recordingSessionId,
+                recipientUserId,
+                completedCount,
+                totalCount: targetGrants.length,
+                error,
+            });
+        }
+
+        // 解除APIの成功・失敗にかかわらず
+        // サーバーの最新状態を取得する
+        const requestId = ++shareModalRequestIdRef.current;
+
+        setSelectedShareUsers([]);
+
+        let refreshedRecipients: HistoricalShareRecipientItem[] | null = null;
+
+        try {
+            // Grantを正本として再取得する
+            refreshedRecipients = await loadHistoricalRecipients(
+                recordingSessionId,
+                requestId,
+            );
+
+            // 候補一覧も更新する。
+            // 失敗した場合は既存のfail closed処理に任せる。
+            await loadShareUsers(requestId);
+        } catch (error) {
+            console.error("[LocationLogScreen] Revoke refresh failed:", error);
+
+            refreshedRecipients = null;
+            setHistoricalRecipientsError(true);
+            setHistoricalRecipients([]);
+        } finally {
+            setRevokingUserId(null);
+        }
+
+        // 古いリクエストを成功判定に使用しない
+        if (requestId !== shareModalRequestIdRef.current) {
+            return;
+        }
+
+        // ★判定①：解除APIの一部でも失敗
+        if (mutationError !== null) {
+            Alert.alert(
+                "共有解除を確認してください",
+                `${targetGrants.length}件中${completedCount}件の` +
+                    "解除APIが成功しました。\n\n" +
+                    "解除が一部だけ反映されている可能性があります。" +
+                    "現在の共有先一覧を確認してください。",
+            );
+            return;
+        }
+
+        // ★判定②：再取得失敗
+        if (refreshedRecipients === null) {
+            Alert.alert(
+                "解除状態を確認できません",
+                "共有解除APIは成功しましたが、" +
+                    "最新の共有状態を取得できませんでした。\n\n" +
+                    "「再取得する」から共有状態を確認してください。",
+            );
+            return;
+        }
+
+        // ★判定③：対象ユーザーの有効Grant残存を確認
+        const remainingActiveGrants = refreshedRecipients.filter(
+            (grant) =>
+                grant.recipientUserId === recipientUserId && grant.isActive,
+        );
+
+        if (remainingActiveGrants.length > 0) {
+            Alert.alert(
+                "共有解除が完了していません",
+                "解除対象ユーザーの共有権限が" +
+                    `${remainingActiveGrants.length}件残っています。\n\n` +
+                    "最新の共有状態を確認してください。",
+            );
+            return;
+        }
+
+        // ★すべての条件を満たす場合のみ成功
+        Alert.alert(
+            "共有解除完了",
+            "対象ユーザーの共有権限を解除し、" +
+                "有効な共有Grantが0件になったことを確認しました。",
+        );
+    };
+
+    /**
+     * 解除前のユーザー確認
+     */
+    const confirmRevokeHistoricalShare = (recipientUserId: string) => {
+        if (shareOperationBusy) {
+            return;
+        }
+
+        const user = shareUsers.find(
+            (candidate) => candidate.userId === recipientUserId,
+        );
+
+        const displayName =
+            user?.displayName?.trim() || user?.email?.trim() || "このユーザー";
+
+        Alert.alert(
+            "履歴共有を解除",
+            `${displayName}への共有を解除しますか？\n\n` +
+                "解除すると、対象ユーザーはこのアクティビティ履歴と" +
+                "その位置情報を新たに取得できなくなります。",
+            [
+                {
+                    text: "キャンセル",
+                    style: "cancel",
+                },
+                {
+                    text: "共有解除",
+                    style: "destructive",
+                    onPress: () => {
+                        void revokeHistoricalShareForUser(recipientUserId);
+                    },
+                },
+            ],
+        );
+    };
+
     const closeShareModal = () => {
-        if (sharing) {
+        if (shareOperationBusy) {
             return;
         }
 
@@ -1837,7 +2056,7 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             return;
         }
 
-        if (!sharingSession || sharing) {
+        if (!sharingSession || shareOperationBusy) {
             return;
         }
 
@@ -3223,11 +3442,73 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                                     </Text>
                                                 </View>
 
-                                                <Text
-                                                    style={{ color: "#16824A" }}
+                                                <View
+                                                    style={{
+                                                        alignItems: "flex-end",
+                                                        justifyContent:
+                                                            "center",
+                                                        gap: 6,
+                                                    }}
                                                 >
-                                                    共有中
-                                                </Text>
+                                                    <Text
+                                                        style={{
+                                                            color: "#16824A",
+                                                            fontSize: 12,
+                                                        }}
+                                                    >
+                                                        共有中
+                                                    </Text>
+
+                                                    <Pressable
+                                                        disabled={
+                                                            shareOperationBusy ||
+                                                            loadingHistoricalRecipients ||
+                                                            historicalRecipientsError ||
+                                                            shareSearching ||
+                                                            shareCandidatesError
+                                                        }
+                                                        onPress={() => {
+                                                            confirmRevokeHistoricalShare(
+                                                                userId,
+                                                            );
+                                                        }}
+                                                        style={{
+                                                            borderWidth: 1,
+                                                            borderColor:
+                                                                "#DC2626",
+                                                            borderRadius: 6,
+                                                            paddingHorizontal: 12,
+                                                            paddingVertical: 7,
+                                                            opacity:
+                                                                shareOperationBusy ||
+                                                                loadingHistoricalRecipients ||
+                                                                historicalRecipientsError ||
+                                                                shareSearching ||
+                                                                shareCandidatesError
+                                                                    ? 0.4
+                                                                    : 1,
+                                                        }}
+                                                    >
+                                                        {revokingUserId ===
+                                                        userId ? (
+                                                            <ActivityIndicator
+                                                                size="small"
+                                                                color="#DC2626"
+                                                            />
+                                                        ) : (
+                                                            <Text
+                                                                style={{
+                                                                    color: "#DC2626",
+                                                                    fontWeight:
+                                                                        "600",
+                                                                    fontSize: 12,
+                                                                }}
+                                                            >
+                                                                解除
+                                                            </Text>
+                                                        )}
+                                                    </Pressable>
+                                                </View>
                                             </View>
                                         </View>
                                     );

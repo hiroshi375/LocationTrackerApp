@@ -251,7 +251,6 @@ export default function LocationLogScreen({ navigation, route }: Props) {
         useState(false);
     // モーダルを開き直した際に、古い取得結果を反映しない
     const shareModalRequestIdRef = useRef(0);
-
     const [editNameModalVisible, setEditNameModalVisible] = useState(false);
     const [editingSession, setEditingSession] =
         useState<RecordingSessionDisplayItem | null>(null);
@@ -3159,22 +3158,40 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                             <View style={styles.shareUserRow}>
                                                 {iconUrl ? (
                                                     <Image
-                                                        source={{ uri: iconUrl }}
-                                                        style={styles.shareUserIcon}
+                                                        source={{
+                                                            uri: iconUrl,
+                                                        }}
+                                                        style={
+                                                            styles.shareUserIcon
+                                                        }
                                                         onError={(event) => {
                                                             console.error(
                                                                 "[ProfileIcon] Shared recipient image failed:",
                                                                 {
                                                                     userId,
-                                                                    error: event.nativeEvent.error,
+                                                                    error: event
+                                                                        .nativeEvent
+                                                                        .error,
                                                                 },
                                                             );
                                                         }}
                                                     />
                                                 ) : (
-                                                    <View style={styles.shareUserIconPlaceholder}>
-                                                        <Text style={styles.shareUserIconPlaceholderText}>
-                                                            {(user?.displayName ?? user?.email ?? "?")
+                                                    <View
+                                                        style={
+                                                            styles.shareUserIconPlaceholder
+                                                        }
+                                                    >
+                                                        <Text
+                                                            style={
+                                                                styles.shareUserIconPlaceholderText
+                                                            }
+                                                        >
+                                                            {(
+                                                                user?.displayName ??
+                                                                user?.email ??
+                                                                "?"
+                                                            )
                                                                 .trim()
                                                                 .slice(0, 1)
                                                                 .toUpperCase()}
@@ -3358,9 +3375,21 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                                             }}
                                                         />
                                                     ) : (
-                                                        <View style={styles.shareUserIconPlaceholder}>
-                                                            <Text style={styles.shareUserIconPlaceholderText}>
-                                                                {(user.displayName ?? user.email ?? "?")
+                                                        <View
+                                                            style={
+                                                                styles.shareUserIconPlaceholder
+                                                            }
+                                                        >
+                                                            <Text
+                                                                style={
+                                                                    styles.shareUserIconPlaceholderText
+                                                                }
+                                                            >
+                                                                {(
+                                                                    user.displayName ??
+                                                                    user.email ??
+                                                                    "?"
+                                                                )
                                                                     .trim()
                                                                     .slice(0, 1)
                                                                     .toUpperCase()}

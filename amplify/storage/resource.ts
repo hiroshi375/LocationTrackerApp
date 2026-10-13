@@ -6,6 +6,8 @@ export const storage = defineStorage({
         "profile-icons/{entity_id}/*": [
             allow.entity("identity").to(["read", "write", "delete"]),
             allow.authenticated.to(["read"]),
+            // Adminsグループ所属ユーザーにも読み取りを許可
+            allow.groups(["Admins"]).to(["read"]),
         ],
     }),
 });

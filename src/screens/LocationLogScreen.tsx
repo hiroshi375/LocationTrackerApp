@@ -128,6 +128,20 @@ type ShareCandidateQueryResult = {
     errors?: readonly unknown[];
 };
 
+type HistoricalShareRecipientItem = {
+    grantId: string;
+    groupId: string;
+    recipientUserId: string;
+    isActive: boolean;
+    grantedAt: string;
+    revokedAt?: string | null;
+};
+
+type HistoricalShareRecipientQueryResult = {
+    data?: (HistoricalShareRecipientItem | null)[] | null;
+    errors?: readonly unknown[];
+};
+
 type LocationLogListResult = {
     data?: any[] | null;
     errors?: unknown;
@@ -223,7 +237,20 @@ export default function LocationLogScreen({ navigation, route }: Props) {
     const [sharingSession, setSharingSession] =
         useState<RecordingSessionDisplayItem | null>(null);
     const [shareSearching, setShareSearching] = useState(false);
+    // Phase ⑦-2：共有候補取得エラー
+    const [shareCandidatesError, setShareCandidatesError] = useState(false); // ★追加
     const [sharing, setSharing] = useState(false);
+
+    // Phase ⑦-2：履歴共有先の管理
+    const [historicalRecipients, setHistoricalRecipients] = useState<
+        HistoricalShareRecipientItem[]
+    >([]);
+    const [loadingHistoricalRecipients, setLoadingHistoricalRecipients] =
+        useState(false);
+    const [historicalRecipientsError, setHistoricalRecipientsError] =
+        useState(false);
+    // モーダルを開き直した際に、古い取得結果を反映しない
+    const shareModalRequestIdRef = useRef(0);
 
     const [editNameModalVisible, setEditNameModalVisible] = useState(false);
     const [editingSession, setEditingSession] =
@@ -1150,36 +1177,78 @@ export default function LocationLogScreen({ navigation, route }: Props) {
         [historyViewMode, loadSharedRecordingSessions],
     );
 
-    const toggleShareUser = useCallback((user: UserProfileItem) => {
-        setSelectedShareUsers((currentUsers) => {
-            const alreadySelected = currentUsers.some(
-                (selectedUser) => selectedUser.id === user.id,
-            );
+    const activeHistoricalRecipients = useMemo(
+        () => historicalRecipients.filter((recipient) => recipient.isActive),
+        [historicalRecipients],
+    );
 
-            if (alreadySelected) {
-                return currentUsers.filter(
-                    (selectedUser) => selectedUser.id !== user.id,
-                );
+    // 有効Grantを持つユーザーID
+    const activeSharedUserIds = useMemo(
+        () =>
+            new Set(
+                activeHistoricalRecipients.map(
+                    (recipient) => recipient.recipientUserId,
+                ),
+            ),
+        [activeHistoricalRecipients],
+    );
+
+    // 共有可能なユーザーのうち、まだ共有していない人
+    const availableShareUsers = useMemo(
+        () =>
+            shareUsers.filter((user) => !activeSharedUserIds.has(user.userId)),
+        [shareUsers, activeSharedUserIds],
+    );
+
+    const toggleShareUser = useCallback(
+        (user: UserProfileItem) => {
+            if (
+                loadingHistoricalRecipients ||
+                historicalRecipientsError ||
+                shareSearching ||
+                shareCandidatesError ||
+                activeSharedUserIds.has(user.userId)
+            ) {
+                return;
             }
 
-            return [...currentUsers, user];
-        });
-    }, []);
+            setSelectedShareUsers((currentUsers) => {
+                const alreadySelected = currentUsers.some(
+                    (selectedUser) => selectedUser.id === user.id,
+                );
+
+                if (alreadySelected) {
+                    return currentUsers.filter(
+                        (selectedUser) => selectedUser.id !== user.id,
+                    );
+                }
+
+                return [...currentUsers, user];
+            });
+        },
+        [
+            activeSharedUserIds,
+            loadingHistoricalRecipients,
+            historicalRecipientsError,
+            shareSearching,
+            shareCandidatesError,
+        ],
+    );
 
     const filteredShareUsers = useMemo(() => {
         const keyword = shareSearchText.trim().toLowerCase();
 
         if (!keyword) {
-            return shareUsers;
+            return availableShareUsers;
         }
 
-        return shareUsers.filter((user) => {
+        return availableShareUsers.filter((user) => {
             return (
                 (user.displayName ?? "").toLowerCase().includes(keyword) ||
                 (user.email ?? "").toLowerCase().includes(keyword)
             );
         });
-    }, [shareUsers, shareSearchText]);
+    }, [availableShareUsers, shareSearchText]);
 
     const handleOpenSessionMap = (item: RecordingSessionDisplayItem) => {
         if (historyViewMode === "mine") {
@@ -1447,15 +1516,120 @@ export default function LocationLogScreen({ navigation, route }: Props) {
         }
     };
 
+    /**
+     * Phase ⑦-2
+     * 共有先一覧の取得。
+     *
+     * Grantを正本として参照する。
+     * 取得失敗時は共有操作を禁止する。
+     */
+    const loadHistoricalRecipients = useCallback(
+        async (recordingSessionId: string, requestId: number) => {
+            setLoadingHistoricalRecipients(true);
+            setHistoricalRecipientsError(false);
+            setHistoricalRecipients([]);
+
+            try {
+                const result = await (
+                    client.queries
+                        .listHistoricalShareRecipients as unknown as (args: {
+                        recordingSessionId: string;
+                    }) => Promise<HistoricalShareRecipientQueryResult>
+                )({
+                    recordingSessionId,
+                });
+
+                if (requestId !== shareModalRequestIdRef.current) {
+                    return;
+                }
+
+                if (result.errors?.length || !Array.isArray(result.data)) {
+                    throw new Error("共有先一覧の取得に失敗しました。");
+                }
+
+                const recipients: HistoricalShareRecipientItem[] =
+                    result.data.filter(
+                        (item): item is HistoricalShareRecipientItem =>
+                            item !== null &&
+                            typeof item.grantId === "string" &&
+                            typeof item.groupId === "string" &&
+                            typeof item.recipientUserId === "string" &&
+                            typeof item.isActive === "boolean" &&
+                            typeof item.grantedAt === "string",
+                    );
+
+                // 不完全な応答を「共有先なし」と扱わない
+                if (recipients.length !== result.data.length) {
+                    throw new Error(
+                        "共有先一覧に不正なデータが含まれています。",
+                    );
+                }
+
+                setHistoricalRecipients(recipients);
+
+                const activeUserIds = new Set(
+                    recipients
+                        .filter((item) => item.isActive)
+                        .map((item) => item.recipientUserId),
+                );
+
+                setSelectedShareUsers((current) =>
+                    current.filter((user) => !activeUserIds.has(user.userId)),
+                );
+
+                console.log(
+                    "[LocationLogScreen] Historical recipients loaded:",
+                    {
+                        grantCount: recipients.length,
+                        activeGrantCount: recipients.filter(
+                            (item) => item.isActive,
+                        ).length,
+                        activeUserCount: activeUserIds.size,
+                    },
+                );
+            } catch (error) {
+                if (requestId !== shareModalRequestIdRef.current) {
+                    return;
+                }
+
+                console.error(
+                    "[LocationLogScreen] Load recipients error:",
+                    error,
+                );
+
+                setHistoricalRecipients([]);
+                setHistoricalRecipientsError(true);
+                setSelectedShareUsers([]);
+            } finally {
+                if (requestId === shareModalRequestIdRef.current) {
+                    setLoadingHistoricalRecipients(false);
+                }
+            }
+        },
+        [],
+    );
+
     const openShareModal = (item: RecordingSessionDisplayItem) => {
+        const requestId = ++shareModalRequestIdRef.current;
+
         setSharingSession(item);
         setShareSearchText("");
         setShareUsers([]);
         setSelectedShareUsers([]);
         setShareUserIconUrls({});
+
+        setShareCandidatesError(false); // ★追加
+        setShareSearching(true); // ★追加
+
+        setHistoricalRecipients([]);
+        setHistoricalRecipientsError(false);
+        setLoadingHistoricalRecipients(true);
+
         setShareModalVisible(true);
 
-        void loadShareUsers();
+        void loadHistoricalRecipients(item.recordingSessionId, requestId);
+
+        void loadShareUsers(requestId);
     };
 
     const closeShareModal = () => {
@@ -1463,12 +1637,21 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             return;
         }
 
+        // 進行中のGrant取得を無効化
+        shareModalRequestIdRef.current += 1;
+
         setShareModalVisible(false);
         setSharingSession(null);
         setShareSearchText("");
         setShareUsers([]);
         setSelectedShareUsers([]);
         setShareUserIconUrls({});
+        // Phase ⑦-2：共有候補の取得状態を初期化
+        setShareSearching(false); // ★追加
+        setShareCandidatesError(false); // ★追加
+        setHistoricalRecipients([]);
+        setHistoricalRecipientsError(false);
+        setLoadingHistoricalRecipients(false);
     };
 
     const openEditNameModal = (item: RecordingSessionDisplayItem) => {
@@ -1487,9 +1670,10 @@ export default function LocationLogScreen({ navigation, route }: Props) {
         setEditSessionNameInput("");
     };
 
-    const loadShareUsers = useCallback(async () => {
+    const loadShareUsers = useCallback(async (requestId: number) => {
         try {
             setShareSearching(true);
+            setShareCandidatesError(false); // ★追加
 
             const currentUser = await getCurrentUser();
 
@@ -1503,13 +1687,19 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                 {},
             )) as ShareCandidateQueryResult;
 
-            if (result.errors?.length) {
+            if (result.errors?.length || !Array.isArray(result.data)) {
+                // 古いモーダルの取得結果は反映しない
+                if (requestId !== shareModalRequestIdRef.current) {
+                    return;
+                }
+
                 console.error("listMyShareCandidates errors:", result.errors);
 
                 /*
                  * 取得失敗時に古い候補を残さない。
                  * 別グループへの誤共有を防ぐためfail closedとする。
                  */
+                setShareCandidatesError(true); // ★追加
                 setShareUsers([]);
                 setSelectedShareUsers([]);
                 setShareUserIconUrls({});
@@ -1561,11 +1751,22 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                     }
 
                     try {
+                        console.log("[ProfileIcon] Storage request:", {
+                            hasPath: Boolean(user.iconImagePath),
+                            userId: user.userId,
+                        });
+
                         const result = await getUrl({
                             path: user.iconImagePath,
                             options: {
                                 expiresIn: 3600,
+                                validateObjectExistence: true,
                             },
+                        });
+
+                        console.log("[ProfileIcon] Storage success:", {
+                            userId: user.userId,
+                            expiresAt: result.expiresAt.toISOString(),
                         });
 
                         return [user.id, result.url.toString()] as const;
@@ -1581,8 +1782,11 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                 }),
             );
 
+            if (requestId !== shareModalRequestIdRef.current) {
+                return;
+            }
+            setShareCandidatesError(false); // ★追加
             setShareUserIconUrls(Object.fromEntries(iconEntries));
-
             setShareUsers(users);
 
             /*
@@ -1596,11 +1800,15 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                 candidateUserIds: users.map((user) => user.userId),
             });
         } catch (error) {
+            if (requestId !== shareModalRequestIdRef.current) {
+                return;
+            }
             console.error("Load share candidates error:", error);
 
             /*
              * エラー時は候補を空にする。
              */
+            setShareCandidatesError(true); // ★追加
             setShareUsers([]);
             setSelectedShareUsers([]);
             setShareUserIconUrls({});
@@ -1610,17 +1818,34 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                 "共有可能なグループメンバーの取得に失敗しました。",
             );
         } finally {
-            setShareSearching(false);
+            if (requestId === shareModalRequestIdRef.current) {
+                setShareSearching(false);
+            }
         }
     }, []);
 
     const shareSessionWithSelectedUsers = async () => {
+        if (
+            loadingHistoricalRecipients ||
+            historicalRecipientsError ||
+            shareSearching ||
+            shareCandidatesError
+        ) {
+            Alert.alert(
+                "共有状態を確認できません",
+                "共有先一覧を取得してから再度お試しください。",
+            );
+            return;
+        }
+
         if (!sharingSession || sharing) {
             return;
         }
 
         // 共有候補として取得済みのユーザーに限定
-        const validUserIds = new Set(shareUsers.map((user) => user.userId));
+        const validUserIds = new Set(
+            availableShareUsers.map((user) => user.userId),
+        );
 
         const selectedUsers = Array.from(
             new Map(
@@ -1819,7 +2044,14 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             setShareUsers([]);
             setSelectedShareUsers([]);
             setShareUserIconUrls({});
-
+            // Phase ⑦-2：共有候補の取得状態を初期化
+            setShareSearching(false); // ★追加
+            setShareCandidatesError(false); // ★追加
+            // Phase ⑦-2：共有先一覧の取得状態を破棄
+            shareModalRequestIdRef.current += 1;
+            setHistoricalRecipients([]);
+            setHistoricalRecipientsError(false);
+            setLoadingHistoricalRecipients(false);
             Alert.alert(
                 "共有完了",
                 `${completedCount}人のユーザーに共有しました。`,
@@ -2849,11 +3081,145 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                     <View style={styles.modalOverlay}>
                         <View style={styles.modalContent}>
                             <Text style={styles.modalTitle}>
-                                共有先ユーザーを選択
+                                履歴の共有管理
+                            </Text>
+
+                            <Text style={styles.modalDescription}>
+                                {sharingSession?.recordingSessionName ?? ""}
                             </Text>
 
                             <Text style={styles.shareSelectionText}>
-                                選択中: {selectedShareUsers.length}人
+                                現在共有中：
+                                {
+                                    new Set(
+                                        activeHistoricalRecipients.map(
+                                            (item) => item.recipientUserId,
+                                        ),
+                                    ).size
+                                }
+                                人
+                            </Text>
+
+                            {loadingHistoricalRecipients ? (
+                                <ActivityIndicator
+                                    style={{ marginVertical: 12 }}
+                                />
+                            ) : historicalRecipientsError ? (
+                                <View>
+                                    <Text style={styles.shareEmptyText}>
+                                        共有先一覧を取得できませんでした。
+                                    </Text>
+
+                                    <Pressable
+                                        onPress={() => {
+                                            if (!sharingSession) return;
+
+                                            const requestId =
+                                                ++shareModalRequestIdRef.current;
+
+                                            setSelectedShareUsers([]);
+
+                                            void loadHistoricalRecipients(
+                                                sharingSession.recordingSessionId,
+                                                requestId,
+                                            );
+                                            void loadShareUsers(requestId);
+                                        }}
+                                    >
+                                        <Text style={styles.shareSelectionText}>
+                                            再取得する
+                                        </Text>
+                                    </Pressable>
+                                </View>
+                            ) : activeHistoricalRecipients.length === 0 ? (
+                                <Text style={styles.shareEmptyText}>
+                                    現在共有中のユーザーはいません。
+                                </Text>
+                            ) : (
+                                Array.from(
+                                    new Set(
+                                        activeHistoricalRecipients.map(
+                                            (item) => item.recipientUserId,
+                                        ),
+                                    ),
+                                ).map((userId) => {
+                                    const user = shareUsers.find(
+                                        (candidate) =>
+                                            candidate.userId === userId,
+                                    );
+                                    const iconUrl = user
+                                        ? (shareUserIconUrls[user.id] ?? null)
+                                        : null;
+
+                                    return (
+                                        <View
+                                            key={userId}
+                                            style={styles.shareUserItem}
+                                        >
+                                            <View style={styles.shareUserRow}>
+                                                {iconUrl ? (
+                                                    <Image
+                                                        source={{ uri: iconUrl }}
+                                                        style={styles.shareUserIcon}
+                                                        onError={(event) => {
+                                                            console.error(
+                                                                "[ProfileIcon] Shared recipient image failed:",
+                                                                {
+                                                                    userId,
+                                                                    error: event.nativeEvent.error,
+                                                                },
+                                                            );
+                                                        }}
+                                                    />
+                                                ) : (
+                                                    <View style={styles.shareUserIconPlaceholder}>
+                                                        <Text style={styles.shareUserIconPlaceholderText}>
+                                                            {(user?.displayName ?? user?.email ?? "?")
+                                                                .trim()
+                                                                .slice(0, 1)
+                                                                .toUpperCase()}
+                                                        </Text>
+                                                    </View>
+                                                )}
+
+                                                <View
+                                                    style={
+                                                        styles.shareUserTextContainer
+                                                    }
+                                                >
+                                                    <Text
+                                                        style={
+                                                            styles.shareUserName
+                                                        }
+                                                    >
+                                                        {user?.displayName ||
+                                                            "共有済みユーザー"}
+                                                    </Text>
+
+                                                    <Text
+                                                        style={
+                                                            styles.shareUserEmail
+                                                        }
+                                                    >
+                                                        {user?.email ||
+                                                            "プロフィール情報を取得できません"}
+                                                    </Text>
+                                                </View>
+
+                                                <Text
+                                                    style={{ color: "#16824A" }}
+                                                >
+                                                    共有中
+                                                </Text>
+                                            </View>
+                                        </View>
+                                    );
+                                })
+                            )}
+
+                            <Text style={styles.shareSelectionText}>
+                                共有先を追加（選択中：
+                                {selectedShareUsers.length}人）
                             </Text>
 
                             <TextInput
@@ -2863,7 +3229,13 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                 placeholder="ユーザー名またはメールで絞り込み"
                                 autoCapitalize="none"
                                 autoCorrect={false}
-                                editable={!sharing}
+                                editable={
+                                    !sharing &&
+                                    !shareSearching &&
+                                    !shareCandidatesError &&
+                                    !loadingHistoricalRecipients &&
+                                    !historicalRecipientsError
+                                }
                             />
 
                             <ScrollView
@@ -2877,6 +3249,51 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                     <ActivityIndicator
                                         style={{ marginVertical: 20 }}
                                     />
+                                ) : shareCandidatesError ? (
+                                    <View style={{ paddingVertical: 16 }}>
+                                        <Text style={styles.shareEmptyText}>
+                                            共有候補を取得できませんでした。
+                                        </Text>
+
+                                        <Pressable
+                                            onPress={() => {
+                                                if (
+                                                    !sharingSession ||
+                                                    sharing
+                                                ) {
+                                                    return;
+                                                }
+
+                                                const requestId =
+                                                    ++shareModalRequestIdRef.current;
+
+                                                // 新しいリクエスト世代に切り替えたため、
+                                                // Grant一覧も再取得して整合性を維持する
+                                                setSelectedShareUsers([]);
+
+                                                void loadHistoricalRecipients(
+                                                    sharingSession.recordingSessionId,
+                                                    requestId,
+                                                );
+
+                                                void loadShareUsers(requestId);
+                                            }}
+                                            disabled={sharing}
+                                            style={{
+                                                padding: 10,
+                                                alignItems: "center",
+                                            }}
+                                        >
+                                            <Text
+                                                style={{
+                                                    color: "#2563EB",
+                                                    fontWeight: "600",
+                                                }}
+                                            >
+                                                再取得する
+                                            </Text>
+                                        </Pressable>
+                                    </View>
                                 ) : filteredShareUsers.length === 0 ? (
                                     <Text style={styles.shareEmptyText}>
                                         共有可能なユーザーが見つかりません。
@@ -2918,23 +3335,32 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                                             style={
                                                                 styles.shareUserIcon
                                                             }
+                                                            onLoad={() => {
+                                                                console.log(
+                                                                    "[ProfileIcon] Image loaded:",
+                                                                    {
+                                                                        userId: user.userId,
+                                                                    },
+                                                                );
+                                                            }}
+                                                            onError={(
+                                                                event,
+                                                            ) => {
+                                                                console.error(
+                                                                    "[ProfileIcon] Image load failed:",
+                                                                    {
+                                                                        userId: user.userId,
+                                                                        error: event
+                                                                            .nativeEvent
+                                                                            .error,
+                                                                    },
+                                                                );
+                                                            }}
                                                         />
                                                     ) : (
-                                                        <View
-                                                            style={
-                                                                styles.shareUserIconPlaceholder
-                                                            }
-                                                        >
-                                                            <Text
-                                                                style={
-                                                                    styles.shareUserIconPlaceholderText
-                                                                }
-                                                            >
-                                                                {(
-                                                                    user.displayName ||
-                                                                    user.email ||
-                                                                    "?"
-                                                                )
+                                                        <View style={styles.shareUserIconPlaceholder}>
+                                                            <Text style={styles.shareUserIconPlaceholderText}>
+                                                                {(user.displayName ?? user.email ?? "?")
                                                                     .trim()
                                                                     .slice(0, 1)
                                                                     .toUpperCase()}
@@ -3007,12 +3433,20 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                     style={[
                                         styles.modalPrimaryButton,
                                         (sharing ||
+                                            shareSearching ||
+                                            shareCandidatesError || // ★追加
+                                            loadingHistoricalRecipients ||
+                                            historicalRecipientsError ||
                                             selectedShareUsers.length === 0) &&
                                             styles.deleteButtonDisabled,
                                     ]}
                                     onPress={shareSessionWithSelectedUsers}
                                     disabled={
                                         sharing ||
+                                        shareSearching ||
+                                        shareCandidatesError || // ★追加
+                                        loadingHistoricalRecipients ||
+                                        historicalRecipientsError ||
                                         selectedShareUsers.length === 0
                                     }
                                 >

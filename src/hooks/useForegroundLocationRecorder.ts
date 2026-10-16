@@ -1,3 +1,4 @@
+import { createLocationLog } from "../services/locationLogWriteService";
 import { getCurrentUser } from "aws-amplify/auth";
 import * as Location from "expo-location";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -618,7 +619,7 @@ export function useForegroundLocationRecorder({
                     reservationReachedLimit =
                         reservation.reachedByThisReservation;
 
-                    const result = await client.models.LocationLog.create({
+                    const result = await createLocationLog({
                         id: locationLogId,
 
                         userId: currentUser.userId,

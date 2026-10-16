@@ -1,3 +1,4 @@
+import { groupFences, requireGroupCoverage } from "./groupAccessStore";
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
@@ -37,7 +38,8 @@ export type HistoricalShareOperationStatus =
 
 export type HistoricalShareOperationPhase =
     | "INTENT_RECORDED"
-    | "GRANT_WRITE_CONFIRMED";
+    | "GRANT_WRITE_CONFIRMED"
+    | "GROUP_REVOKING";
 
 export type HistoricalShareOperation = {
     recordingSessionRecordId: string;
@@ -532,6 +534,9 @@ export async function commitHistoricalMigrationGrant(
         recipientOwnerValue: string;
     },
 ): Promise<void> {
+    if (!(input.recipientOwnerValue === input.recipientUserId || input.recipientOwnerValue.startsWith(`${input.recipientUserId}::`))) throw new Error("共有先の所有者識別子が一致しません。");
+    requireGroupCoverage([input.groupId]);
+    if (!groupFences().length) throw new Error("共有グループの排他なしで移行できません。");
     if (
         !operation.recordingSessionRecordId.trim() ||
         !operation.operationId.trim() ||
@@ -560,6 +565,7 @@ export async function commitHistoricalMigrationGrant(
     await db.send(
         new TransactWriteCommand({
             TransactItems: [
+                ...groupFences(),
                 {
                     Put: {
                         TableName: getHistoricalGrantTableName(),
@@ -658,7 +664,9 @@ export async function commitLegacyShareGrantsAtomically(
         recipientOwnerValue: string;
     }[],
 ): Promise<void> {
-    if (grants.length === 0 || grants.length > 99) {
+    requireGroupCoverage(grants.map(grant => grant.groupId));
+    if (!groupFences().length) throw new Error("共有グループの排他なしで移行できません。");
+    if (grants.length === 0 || grants.length > 99 - groupFences().length) {
         throw new Error("旧共有先の件数が一括移行の上限外です。");
     }
     if (new Set(grants.map((grant) => grant.grantId)).size !== grants.length) {
@@ -669,13 +677,14 @@ export async function commitLegacyShareGrantsAtomically(
             "historical-grant", operation.recordingSessionRecordId,
             grant.groupId, grant.recipientUserId,
         ].join("#");
-        if (grant.grantId !== expected || !grant.recipientOwnerValue.trim()) {
+        if (grant.grantId !== expected || !grant.recipientOwnerValue.trim() || !(grant.recipientOwnerValue === grant.recipientUserId || grant.recipientOwnerValue.startsWith(`${grant.recipientUserId}::`))) {
             throw new Error("旧共有先Grantの指定が不正です。");
         }
     }
     const now = new Date().toISOString();
     await db.send(new TransactWriteCommand({
         TransactItems: [
+            ...groupFences(),
             ...grants.map((grant) => ({
                 Put: {
                     TableName: getHistoricalGrantTableName(),

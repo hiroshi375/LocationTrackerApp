@@ -1,3 +1,4 @@
+import { createLocationLog } from "../services/locationLogWriteService";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { getCurrentUser } from "aws-amplify/auth";
 import * as DocumentPicker from "expo-document-picker";
@@ -312,7 +313,7 @@ export default function AdminLocationLogImportScreen({ navigation }: Props) {
                      *
                      * ownerとTimestampはAmplify側で再生成させる。
                      */
-                    const createResult = await locationLogModel.create({
+                    const createResult = await createLocationLog({
                         id: row.id,
 
                         userId: row.userId,

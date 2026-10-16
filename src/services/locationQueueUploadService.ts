@@ -1,3 +1,4 @@
+import { createLocationLog } from "./locationLogWriteService";
 import { fetchAuthSession } from "aws-amplify/auth";
 
 import {
@@ -960,7 +961,7 @@ async function createLocationLogWithAuthRetry(
 
     try {
         firstResult = await withTimeout(
-            client.models.LocationLog.create(input),
+            createLocationLog(input),
             getRemainingQueueOperationTimeoutMs(deadlineAtMs, createTimeoutMs),
             "SQLite queue LocationLog.create",
         );
@@ -989,7 +990,7 @@ async function createLocationLogWithAuthRetry(
         );
 
         return withTimeout(
-            client.models.LocationLog.create(input),
+            createLocationLog(input),
             getRemainingQueueOperationTimeoutMs(deadlineAtMs, createTimeoutMs),
             "SQLite queue LocationLog.create retry",
         );
@@ -1011,7 +1012,7 @@ async function createLocationLogWithAuthRetry(
     );
 
     return withTimeout(
-        client.models.LocationLog.create(input),
+        createLocationLog(input),
         getRemainingQueueOperationTimeoutMs(deadlineAtMs, createTimeoutMs),
         "SQLite queue LocationLog.create retry",
     );

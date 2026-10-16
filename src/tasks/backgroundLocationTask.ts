@@ -1,3 +1,4 @@
+import { createLocationLog } from "../services/locationLogWriteService";
 // src/tasks/backgroundLocationTask.ts
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -946,7 +947,7 @@ async function createLocationLogWithAuthRetry(
 
     try {
         firstResult = await withTimeout(
-            client.models.LocationLog.create(input),
+            createLocationLog(input),
             LOCATION_LOG_CREATE_TIMEOUT_MS,
             "Background LocationLog.create",
         );
@@ -984,7 +985,7 @@ async function createLocationLogWithAuthRetry(
         }
 
         const retryResult = await withTimeout(
-            client.models.LocationLog.create(input),
+            createLocationLog(input),
             LOCATION_LOG_CREATE_TIMEOUT_MS,
             "Background LocationLog.create retry",
         );
@@ -1027,7 +1028,7 @@ async function createLocationLogWithAuthRetry(
     }
 
     const retryResult = await withTimeout(
-        client.models.LocationLog.create(input),
+        createLocationLog(input),
         LOCATION_LOG_CREATE_TIMEOUT_MS,
         "Background LocationLog.create retry",
     );

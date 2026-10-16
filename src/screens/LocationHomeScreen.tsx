@@ -1,5 +1,6 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { signOut, getCurrentUser } from "aws-amplify/auth";
+import { Hub } from "aws-amplify/utils";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
@@ -204,6 +205,8 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
     const [liveShareModalVisible, setLiveShareModalVisible] = useState(false);
     const [liveShareSearchText, setLiveShareSearchText] = useState("");
     const [liveShareUsers, setLiveShareUsers] = useState<UserProfileItem[]>([]);
+    const signingOutRef = useRef(false);
+    const pendingShareIconsRef = useRef(new Set<Promise<void>>());
     const [selectedLiveShareUsers, setSelectedLiveShareUsers] = useState<
         UserProfileItem[]
     >([]);
@@ -410,47 +413,38 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
 
     useEffect(() => {
         let cancelled = false;
-
+        const isCurrent = () => !cancelled && !signingOutRef.current;
+        setLiveShareUserIconUrls({});
         const loadLiveShareUserIcons = async () => {
-            const iconEntries = await Promise.all(
-                liveShareUsers.map(async (user) => {
-                    if (!user.iconImagePath) {
-                        return [user.id, null] as const;
-                    }
-
-                    try {
-                        const result = await getUrl({
-                            path: user.iconImagePath,
-                            options: {
-                                expiresIn: 3600,
-                            },
-                        });
-
-                        return [user.id, result.url.toString()] as const;
-                    } catch (error) {
-                        console.error("Load live share user icon error:", {
-                            userId: user.userId,
-                            iconImagePath: user.iconImagePath,
-                            error,
-                        });
-
-                        return [user.id, null] as const;
-                    }
-                }),
-            );
-
-            if (cancelled) {
-                return;
-            }
-
-            setLiveShareUserIconUrls(Object.fromEntries(iconEntries));
+            let ownerUserId: string;
+            try { ownerUserId = (await getCurrentUser()).userId; }
+            catch { return; }
+            if (!isCurrent()) return;
+            const iconEntries = await Promise.all(liveShareUsers.map(async user => {
+                if (!user.iconImagePath || !isCurrent()) return [user.id, null] as const;
+                try {
+                    const result = await getUrl({ path: user.iconImagePath, options: { expiresIn: 3600 } });
+                    return [user.id, result.url.toString()] as const;
+                } catch (error) {
+                    // A cancelled/account-switched request must not report an
+                    // old Identity Pool error as a failure for the new user.
+                    if (!isCurrent()) return [user.id, null] as const;
+                    let currentUserId: string | undefined;
+                    try { currentUserId = (await getCurrentUser()).userId; } catch { return [user.id, null] as const; }
+                    if (isCurrent() && currentUserId === ownerUserId) console.error("Load live share user icon error:", { userId: user.userId, error });
+                    return [user.id, null] as const;
+                }
+            }));
+            if (!isCurrent()) return;
+            try {
+                if ((await getCurrentUser()).userId !== ownerUserId || !isCurrent()) return;
+                setLiveShareUserIconUrls(Object.fromEntries(iconEntries));
+            } catch { /* Signed out while loading; discard the old result. */ }
         };
-
-        void loadLiveShareUserIcons();
-
-        return () => {
-            cancelled = true;
-        };
+        const pending = loadLiveShareUserIcons();
+        pendingShareIconsRef.current.add(pending);
+        void pending.finally(() => pendingShareIconsRef.current.delete(pending));
+        return () => { cancelled = true; };
     }, [liveShareUsers]);
 
     const {
@@ -651,7 +645,10 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
     }, []);
 
     const loadLiveShareUsers = useCallback(async () => {
+        if (signingOutRef.current) return;
         try {
+            const ownerUserId = (await getCurrentUser()).userId;
+            if (signingOutRef.current) return;
             setLoadingLiveShareUsers(true);
 
             /*
@@ -662,6 +659,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                 {},
             )) as ShareCandidateQueryResult;
 
+            if (signingOutRef.current || (await getCurrentUser()).userId !== ownerUserId) return;
             if (result.errors?.length) {
                 console.error("listMyShareCandidates errors:", result.errors);
 
@@ -711,6 +709,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             // Cloudで確定した共有先だけを有効な選択として反映する。
             // グループ候補との照合はuserIdではなくownerValueで行う。
             const sharingState = await getLiveLocationSharingState();
+            if (signingOutRef.current || (await getCurrentUser()).userId !== ownerUserId) return;
             const cloudOwners =
                 sharingState.enabled && sharingState.revision >= 1
                     ? new Set(sharingState.sharedOwners)
@@ -735,6 +734,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                 setDraftLiveShareUsers(verifiedUsers);
             }
         } catch (error) {
+            if (signingOutRef.current) return;
             console.error("Load live share users error:", error);
 
             /*
@@ -752,6 +752,19 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             setLoadingLiveShareUsers(false);
         }
     }, []);
+
+    useEffect(() => Hub.listen("auth", ({ payload }) => {
+        if (payload.event === "signedOut") {
+            signingOutRef.current = true;
+            setLiveShareUserIconUrls({});
+            setLiveShareUsers([]);
+            setSelectedLiveShareUsers([]);
+            setDraftLiveShareUsers([]);
+        } else if (payload.event === "signedIn") {
+            signingOutRef.current = false;
+            void loadLiveShareUsers();
+        }
+    }), [loadLiveShareUsers]);
 
     const filteredLiveShareUsers = useMemo(() => {
         const keyword = liveShareSearchText.trim().toLowerCase();
@@ -1672,9 +1685,17 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             return;
         }
 
+        if (signingOutRef.current) return;
+        signingOutRef.current = true;
+        setLiveShareUserIconUrls({});
         try {
+            // Let old getUrl credential lookups settle before Amplify clears
+            // the old Identity Pool cache. Do not start new icon requests.
+            await Promise.allSettled([...pendingShareIconsRef.current]);
             await signOut();
         } catch (error) {
+            signingOutRef.current = false;
+            void loadLiveShareUsers();
             console.error("Sign out error:", error);
             Alert.alert("サインアウトエラー", "サインアウトできませんでした。");
         }

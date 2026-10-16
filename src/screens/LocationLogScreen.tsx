@@ -1,3 +1,4 @@
+import { prepareGroupAccessTarget } from "../components/GroupAccessReadProbe";
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useTour, useTourTarget } from "guideway";
@@ -28,6 +29,7 @@ import {
 } from "react-native";
 
 import { client } from "../lib/client";
+import { getUnsharedHistoricalGroups, type HistoricalShareGroup } from "../services/historicalShareGroups";
 import { SAMPLE_ACTIVITY_SESSION } from "../data/sampleActivity";
 import { useSubscription } from "../hooks/useSubscription";
 import type { RootStackParamList } from "../navigation/RootNavigator";
@@ -240,6 +242,18 @@ export default function LocationLogScreen({ navigation, route }: Props) {
     // Phase ⑦-2：共有候補取得エラー
     const [shareCandidatesError, setShareCandidatesError] = useState(false); // ★追加
     const [sharing, setSharing] = useState(false);
+    const shareMutationLockRef = useRef(false);
+    const [historicalShareGroups, setHistoricalShareGroups] = useState<HistoricalShareGroup[]>([]);
+    const [shareGroupChoice, setShareGroupChoice] = useState<{
+        userName: string;
+        groups: { groupId: string; name: string }[];
+        resolve: (groupId: string | null) => void;
+    } | null>(null);
+    const finishShareGroupChoice = (groupId: string | null) => {
+        shareGroupChoice?.resolve(groupId);
+        setShareGroupChoice(null);
+    };
+
     // Phase ⑦-3：共有解除中のユーザー
     const [revokingUserId, setRevokingUserId] = useState<string | null>(null);
 
@@ -1185,22 +1199,12 @@ export default function LocationLogScreen({ navigation, route }: Props) {
         [historicalRecipients],
     );
 
-    // 有効Grantを持つユーザーID
-    const activeSharedUserIds = useMemo(
-        () =>
-            new Set(
-                activeHistoricalRecipients.map(
-                    (recipient) => recipient.recipientUserId,
-                ),
-            ),
-        [activeHistoricalRecipients],
-    );
-
-    // 共有可能なユーザーのうち、まだ共有していない人
+    // 同じ相手でも未共有グループが残っていれば追加共有できる。
     const availableShareUsers = useMemo(
-        () =>
-            shareUsers.filter((user) => !activeSharedUserIds.has(user.userId)),
-        [shareUsers, activeSharedUserIds],
+        () => shareUsers.filter(user => getUnsharedHistoricalGroups(
+            historicalShareGroups, historicalRecipients, user.userId,
+        ).length > 0),
+        [shareUsers, historicalShareGroups, historicalRecipients],
     );
 
     const toggleShareUser = useCallback(
@@ -1210,7 +1214,8 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                 historicalRecipientsError ||
                 shareSearching ||
                 shareCandidatesError ||
-                activeSharedUserIds.has(user.userId)
+                shareOperationBusy ||
+                !availableShareUsers.some(candidate => candidate.userId === user.userId)
             ) {
                 return;
             }
@@ -1230,7 +1235,8 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             });
         },
         [
-            activeSharedUserIds,
+            availableShareUsers,
+            shareOperationBusy,
             loadingHistoricalRecipients,
             historicalRecipientsError,
             shareSearching,
@@ -1668,6 +1674,7 @@ export default function LocationLogScreen({ navigation, route }: Props) {
         if (
             !sharingSession ||
             shareOperationBusy ||
+            shareMutationLockRef.current ||
             loadingHistoricalRecipients ||
             historicalRecipientsError ||
             shareSearching ||
@@ -1690,6 +1697,7 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             return;
         }
 
+        shareMutationLockRef.current = true;
         setRevokingUserId(recipientUserId);
 
         let completedCount = 0;
@@ -1759,6 +1767,7 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             setHistoricalRecipientsError(true);
             setHistoricalRecipients([]);
         } finally {
+            shareMutationLockRef.current = false;
             setRevokingUserId(null);
         }
 
@@ -1891,6 +1900,7 @@ export default function LocationLogScreen({ navigation, route }: Props) {
     const loadShareUsers = useCallback(async (requestId: number) => {
         try {
             setShareSearching(true);
+            setHistoricalShareGroups([]);
             setShareCandidatesError(false); // ★追加
 
             const currentUser = await getCurrentUser();
@@ -1901,9 +1911,14 @@ export default function LocationLogScreen({ navigation, route }: Props) {
              *
              * LocationHomeScreenの現在地共有と同じ方式。
              */
-            const result = (await (client.queries.listMyShareCandidates as any)(
-                {},
-            )) as ShareCandidateQueryResult;
+            const [result, groupsResult] = await Promise.all([
+                (client.queries.listMyShareCandidates as any)({}) as Promise<ShareCandidateQueryResult>,
+                (client.queries.listMyShareGroups as unknown as
+                    (args: Record<string, never>) => Promise<{ data: HistoricalShareGroup[] | null; errors?: readonly unknown[] }>)({}),
+            ]);
+            if (groupsResult.errors?.length || !Array.isArray(groupsResult.data)) {
+                throw new Error("共有グループの取得に失敗しました。");
+            }
 
             if (result.errors?.length || !Array.isArray(result.data)) {
                 // 古いモーダルの取得結果は反映しない
@@ -2006,6 +2021,7 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             setShareCandidatesError(false); // ★追加
             setShareUserIconUrls(Object.fromEntries(iconEntries));
             setShareUsers(users);
+            setHistoricalShareGroups(groupsResult.data);
 
             /*
              * Modalを開き直した場合も
@@ -2042,6 +2058,28 @@ export default function LocationLogScreen({ navigation, route }: Props) {
         }
     }, []);
 
+    const resumeHistoricalSharing = async () => {
+        if (!sharingSession || shareOperationBusy || shareMutationLockRef.current ||
+            loadingHistoricalRecipients || historicalRecipientsError || shareSearching || shareCandidatesError) return;
+        shareMutationLockRef.current = true;
+        setSharing(true);
+        try {
+            const resumeMutation = client.mutations.resumeHistoricalShareOperation as unknown as
+                (args: { recordingSessionId: string }) => Promise<{ data?: boolean | null; errors?: readonly { message: string }[] }>;
+            const result = await resumeMutation({ recordingSessionId: sharingSession.recordingSessionId });
+            if (result.errors?.length || result.data !== true) throw new Error(result.errors?.map(error => error.message).join("\n") || "共有処理を再開できませんでした。");
+            const requestId = ++shareModalRequestIdRef.current;
+            await loadHistoricalRecipients(sharingSession.recordingSessionId, requestId);
+            await loadShareUsers(requestId);
+            Alert.alert("共有状態の確認完了", "未完了の共有処理の反映を確認しました。共有先一覧を確認してください。");
+        } catch (error) {
+            Alert.alert("共有処理の再開失敗", error instanceof Error ? error.message : "時間を置いて再度お試しください。");
+        } finally {
+            shareMutationLockRef.current = false;
+            setSharing(false);
+        }
+    };
+
     const shareSessionWithSelectedUsers = async () => {
         if (
             loadingHistoricalRecipients ||
@@ -2056,7 +2094,7 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             return;
         }
 
-        if (!sharingSession || shareOperationBusy) {
+        if (!sharingSession || shareOperationBusy || shareMutationLockRef.current) {
             return;
         }
 
@@ -2081,6 +2119,7 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             return;
         }
 
+        shareMutationLockRef.current = true;
         setSharing(true);
 
         let completedCount = 0;
@@ -2092,19 +2131,11 @@ export default function LocationLogScreen({ navigation, route }: Props) {
              * listMyShareGroups はバックエンドで
              * 自分の所属グループとメンバーを返す。
              */
-            type ShareGroupForHistory = {
-                groupId: string;
-                name: string;
-                members: {
-                    userId: string;
-                }[];
-            };
-
             const groupsResult = await (
                 client.queries.listMyShareGroups as unknown as (
                     args: Record<string, never>,
                 ) => Promise<{
-                    data: ShareGroupForHistory[] | null;
+                    data: HistoricalShareGroup[] | null;
                     errors?: readonly unknown[];
                 }>
             )({});
@@ -2127,26 +2158,35 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             }[] = [];
 
             for (const user of selectedUsers) {
-                const matchingGroups = groups.filter((group) =>
-                    group.members.some(
-                        (member) => member.userId === user.userId,
-                    ),
+                const matchingGroups = getUnsharedHistoricalGroups(
+                    groups, historicalRecipients, user.userId,
                 );
 
                 if (matchingGroups.length === 0) {
                     throw new Error(
-                        `${user.displayName ?? user.userId}さんの共有グループを特定できません。`,
+                        `${user.displayName ?? user.userId}さんには追加可能な共有グループがありません。共有状態を再取得してください。`,
                     );
                 }
 
+                let selectedGroupId = matchingGroups[0].groupId;
                 if (matchingGroups.length > 1) {
-                    throw new Error(
-                        `${user.displayName ?? user.userId}さんは複数の共有グループに所属しています。共有グループの選択が必要です。`,
-                    );
+                    const chosen = await new Promise<string | null>((resolve) => {
+                        setShareGroupChoice({
+                            userName: user.displayName ?? user.email ?? user.userId,
+                            groups: matchingGroups.map(group => ({ groupId: group.groupId, name: group.name })),
+                            resolve,
+                        });
+                    });
+                    // 全ユーザーの選択完了まではGrantを書き込まない。
+                    if (chosen === null) return;
+                    if (!matchingGroups.some(group => group.groupId === chosen)) {
+                        throw new Error("選択した共有グループを確認できません。");
+                    }
+                    selectedGroupId = chosen;
                 }
 
                 targets.push({
-                    groupId: matchingGroups[0].groupId,
+                    groupId: selectedGroupId,
                     recipientUserId: user.userId,
                 });
             }
@@ -2276,6 +2316,11 @@ export default function LocationLogScreen({ navigation, route }: Props) {
             );
         } catch (error) {
             console.error("[LocationLogScreen] Share grant error:", error);
+            const refreshRequestId = ++shareModalRequestIdRef.current;
+            setSelectedShareUsers([]);
+            await loadHistoricalRecipients(sharingSession.recordingSessionId, refreshRequestId);
+            await loadShareUsers(refreshRequestId);
+
 
             const message =
                 error instanceof Error
@@ -2289,6 +2334,7 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                     : `${message}\n\n登録結果が不明な場合は、再操作する前に共有状態を確認してください。`,
             );
         } finally {
+            shareMutationLockRef.current = false;
             setSharing(false);
         }
     };
@@ -3296,15 +3342,53 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                     animationType="fade"
                     onRequestClose={closeShareModal}
                 >
-                    <View style={styles.modalOverlay}>
-                        <View style={styles.modalContent}>
+                    <KeyboardAvoidingView
+                        style={[styles.modalOverlay, { paddingTop: Math.max(insets.top, 20), paddingBottom: Math.max(insets.bottom, 20) }]}
+                        behavior={Platform.OS === "ios" ? "padding" : "height"}
+                    >
+                        <View style={[styles.modalContent, styles.shareModalContent]}>
+                            {shareGroupChoice ? (
+                                <View>
+                                    <Text style={styles.modalTitle}>共有グループを選択</Text>
+                                    <Text style={styles.modalDescription}>{shareGroupChoice.userName}さんへの共有に使うグループを選んでください。</Text>
+                                    <ScrollView style={{ maxHeight: 240 }}>
+                                        {shareGroupChoice.groups.map(group => (
+                                            <Pressable key={group.groupId} style={styles.shareUserItem}
+                                                onPress={() => finishShareGroupChoice(group.groupId)}>
+                                                <Text style={styles.shareUserName}>{group.name || "名称未設定のグループ"}</Text>
+                                                <Text style={styles.shareUserEmail}>{group.groupId}</Text>
+                                            </Pressable>
+                                        ))}
+                                    </ScrollView>
+                                    <Pressable onPress={() => finishShareGroupChoice(null)}>
+                                        <Text style={styles.shareSelectionText}>グループ選択をキャンセル</Text>
+                                    </Pressable>
+                                </View>
+                            ) : null}
+                            {!shareGroupChoice && <>
                             <Text style={styles.modalTitle}>
                                 履歴の共有管理
                             </Text>
 
+                            <ScrollView
+                                style={styles.shareModalBody}
+                                contentContainerStyle={styles.shareModalBodyContent}
+                                keyboardShouldPersistTaps="handled"
+                                keyboardDismissMode="on-drag"
+                            >
                             <Text style={styles.modalDescription}>
                                 {sharingSession?.recordingSessionName ?? ""}
                             </Text>
+                            <Pressable disabled={shareOperationBusy || loadingHistoricalRecipients || !!historicalRecipientsError || shareSearching || !!shareCandidatesError} onPress={() => void resumeHistoricalSharing()}>
+                                <Text style={styles.shareSelectionText}>未完了の共有処理を再開</Text>
+                            </Pressable>
+                            {__DEV__ && <Pressable disabled={shareOperationBusy || shareSearching || loadingHistoricalRecipients} onPress={() => {
+                                if (!sharingSession) return;
+                                void prepareGroupAccessTarget(sharingSession).catch(error => Alert.alert("検証対象の設定失敗", error instanceof Error ? error.message : "読み取りに失敗しました。"));
+                            }}>
+                                <Text style={styles.shareSelectionText}>開発用：この履歴をアクセス検証の対象に設定</Text>
+                            </Pressable>}
+
 
                             <Text style={styles.shareSelectionText}>
                                 現在共有中：
@@ -3440,6 +3524,16 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                                         {user?.email ||
                                                             "プロフィール情報を取得できません"}
                                                     </Text>
+                                                    {activeHistoricalRecipients.filter(grant => grant.recipientUserId === userId).map(grant => (
+                                                        <Text key={grant.grantId} style={styles.shareUserEmail}>
+                                                            共有に使用中のグループ：{historicalShareGroups.find(group => group.groupId === grant.groupId)?.name || "グループ名取得不可"}{"\n"}
+                                                            {grant.groupId}
+                                                        </Text>
+                                                    ))}
+                                                    <Text style={styles.shareUserEmail}>解除すると、この相手への全グループからの共有が解除されます。</Text>
+
+
+
                                                 </View>
 
                                                 <View
@@ -3516,9 +3610,10 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                             )}
 
                             <Text style={styles.shareSelectionText}>
-                                共有先を追加（選択中：
+                                グループを指定して共有（選択中：
                                 {selectedShareUsers.length}人）
                             </Text>
+                            <Text style={styles.shareEmptyText}>共有済みの相手にも、別のグループを通じて追加で共有できます。</Text>
 
                             <TextInput
                                 style={styles.shareSearchInput}
@@ -3536,13 +3631,7 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                 }
                             />
 
-                            <ScrollView
-                                style={styles.shareUserList}
-                                contentContainerStyle={
-                                    styles.shareUserListContent
-                                }
-                                keyboardShouldPersistTaps="handled"
-                            >
+                            <View style={styles.shareCandidateList}>
                                 {shareSearching ? (
                                     <ActivityIndicator
                                         style={{ marginVertical: 20 }}
@@ -3724,13 +3813,14 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                         );
                                     })
                                 )}
+                            </View>
                             </ScrollView>
 
                             <View style={styles.modalButtonRow}>
                                 <Pressable
                                     style={styles.modalSecondaryButton}
                                     onPress={closeShareModal}
-                                    disabled={sharing}
+                                    disabled={shareOperationBusy}
                                 >
                                     <Text
                                         style={styles.modalSecondaryButtonText}
@@ -3769,8 +3859,9 @@ export default function LocationLogScreen({ navigation, route }: Props) {
                                     </Text>
                                 </Pressable>
                             </View>
+                            </>}
                         </View>
-                    </View>
+                    </KeyboardAvoidingView>
                 </Modal>
 
                 <Modal
@@ -4620,6 +4711,26 @@ const styles = StyleSheet.create({
         fontSize: 18,
         fontWeight: "bold",
         marginBottom: 12,
+    },
+    shareModalContent: {
+        height: "90%",
+        maxHeight: "100%",
+        minHeight: 0,
+    },
+    shareModalBody: {
+        flex: 1,
+        minHeight: 0,
+    },
+    shareModalBodyContent: {
+        paddingBottom: 12,
+    },
+    shareCandidateList: {
+        marginTop: 10,
+        padding: 8,
+        borderWidth: 1,
+        borderColor: "#c8d6e0",
+        borderRadius: 8,
+        backgroundColor: "#f9fbfd",
     },
     shareSearchInput: {
         height: 44,

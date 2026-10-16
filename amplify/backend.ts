@@ -1,10 +1,25 @@
+import { CfnFunctionConfiguration } from "aws-cdk-lib/aws-appsync";
 import { defineBackend } from "@aws-amplify/backend";
 import { Function } from "aws-cdk-lib/aws-lambda";
 import { auth } from "./auth/resource";
 import { data } from "./data/resource";
 import { storage } from "./storage/resource";
 import { liveLocationApi } from "./functions/live-location-api/resource";
-import { AttributeType, BillingMode, Table } from "aws-cdk-lib/aws-dynamodb";
+import {
+    AttributeType,
+    BillingMode,
+    Table,
+    StreamViewType,
+} from "aws-cdk-lib/aws-dynamodb";
+import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
+import {
+    StartingPosition,
+    FilterCriteria,
+    FilterRule,
+} from "aws-cdk-lib/aws-lambda";
+import { Rule, Schedule, RuleTargetInput } from "aws-cdk-lib/aws-events";
+import { LambdaFunction } from "aws-cdk-lib/aws-events-targets";
+import { Duration, Stack } from "aws-cdk-lib";
 import { RemovalPolicy } from "aws-cdk-lib";
 
 import { shareGroupApi } from "./functions/share-group-api/resource";
@@ -58,6 +73,73 @@ liveLocationLambda.addEnvironment(
  * 変更を加えない。
  */
 const historicalShareStack = backend.createStack("HistoricalShareOperations");
+
+// Durable dispatch: committing READY emits a stream event. A watchdog also
+// resumes expired chunks and re-emits missed dispatch, without relying on the app.
+const groupAccessOperations = new Table(
+    historicalShareStack,
+    "GroupAccessOperationTable",
+    {
+        partitionKey: { name: "groupId", type: AttributeType.STRING },
+        sortKey: { name: "entryKey", type: AttributeType.STRING },
+        billingMode: BillingMode.PAY_PER_REQUEST,
+        stream: StreamViewType.NEW_IMAGE,
+        removalPolicy: RemovalPolicy.RETAIN,
+    },
+);
+groupAccessOperations.grantReadWriteData(
+    backend.shareGroupApi.resources.lambda,
+);
+const accessLambda = backend.shareGroupApi.resources.lambda as Function;
+// Strongly consistent, session-scoped log inventory. No client access.
+const sessionLogIndex = new Table(historicalShareStack, "SessionLogIndexTable", {
+    partitionKey: { name: "sessionKey", type: AttributeType.STRING },
+    sortKey: { name: "logId", type: AttributeType.STRING },
+    billingMode: BillingMode.PAY_PER_REQUEST,
+    removalPolicy: RemovalPolicy.RETAIN,
+});
+sessionLogIndex.grantReadWriteData(accessLambda);
+accessLambda.addEnvironment("SESSION_LOG_INDEX_TABLE_NAME", sessionLogIndex.tableName);
+accessLambda.addEnvironment(
+    "GROUP_ACCESS_OPERATION_TABLE_NAME",
+    groupAccessOperations.tableName,
+);
+shareGroupTable.grantReadWriteData(accessLambda);
+shareGroupMemberTable.grantReadWriteData(accessLambda);
+accessLambda.addEnvironment(
+    "SHARE_GROUP_TABLE_NAME",
+    shareGroupTable.tableName,
+);
+accessLambda.addEnvironment(
+    "SHARE_GROUP_MEMBER_TABLE_NAME",
+    shareGroupMemberTable.tableName,
+);
+accessLambda.addEventSource(
+    new DynamoEventSource(groupAccessOperations, {
+        startingPosition: StartingPosition.TRIM_HORIZON,
+        batchSize: 1,
+        retryAttempts: 3,
+        bisectBatchOnError: true,
+        filters: [
+            FilterCriteria.filter({
+                dynamodb: {
+                    NewImage: {
+                        recordType: { S: FilterRule.isEqual("JOB") },
+                        status: { S: FilterRule.isEqual("READY") },
+                    },
+                },
+            }),
+        ],
+    }),
+);
+const accessWatchdog = new Rule(Stack.of(accessLambda), "GroupAccessWatchdog", {
+    schedule: Schedule.rate(Duration.minutes(1)),
+});
+accessWatchdog.addTarget(
+    new LambdaFunction(accessLambda, {
+        event: RuleTargetInput.fromObject({ reconcileGroupAccess: true }),
+    }),
+);
 
 const historicalShareOperationTable = new Table(
     historicalShareStack,
@@ -124,3 +206,20 @@ historicalShareLambda.addEnvironment(
     "HISTORICAL_RECORDING_SESSION_TABLE_NAME",
     historicalRecordingSessionTable.tableName,
 );
+
+// Backward compatibility: released apps still call generated create mutations.
+// Keep their GraphQL names/input/return types while enforcing sharing in Lambda.
+for (const field of ["createLocationLog", "createRecordingSession"]) {
+    const resolver = Object.values(backend.data.resources.cfnResources.cfnResolvers)
+        .find(item => item.typeName === "Mutation" && item.fieldName === field);
+    if (!resolver) throw new Error(`Missing generated resolver: ${field}`);
+    const compat = new CfnFunctionConfiguration(Stack.of(resolver), `${field}CompatibilityFunction`, {
+        apiId: resolver.apiId,
+        name: `${field}Compatibility`,
+        dataSourceName: "FnIngestLocationLogLambdaDataSource",
+        functionVersion: "2018-05-29",
+        requestMappingTemplate: `$util.toJson({"version":"2018-05-29","operation":"Invoke","payload":{"fieldName":"${field}","arguments":$ctx.args,"identity":$ctx.identity}})`,
+        responseMappingTemplate: '#if($ctx.error) $util.error($ctx.error.message, $ctx.error.type) #end $util.toJson($ctx.result)',
+    });
+    resolver.pipelineConfig = { functions: [compat.attrFunctionId] };
+}

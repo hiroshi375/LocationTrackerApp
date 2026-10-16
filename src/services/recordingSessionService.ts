@@ -406,7 +406,12 @@ export async function upsertRecordingSessionSummary(
          * 並行処理などで固定IDが直前に作成された場合は、
          * 固定IDのレコードを更新して再試行する。
          */
-        if (!existing?.id) {
+        const createWasConditionalConflict =
+            Array.isArray(saveResult.errors) &&
+            saveResult.errors.some((error: any) =>
+                String(error?.errorType ?? "").includes("ConditionalCheckFailed"),
+            );
+        if (!existing?.id && createWasConditionalConflict) {
             const retryResult = await model.update({
                 id: recordingSessionRecordId,
                 ...payload,

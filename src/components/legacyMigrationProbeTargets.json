@@ -1,0 +1,58 @@
+[
+  {
+    "decisionId": "L003",
+    "name": "自動記録 2026-10-12 19:44",
+    "recordId": "recording-session:3704aac8-90e1-70e4-bc50-6acd159a5049:session-1791801801482-w7conigq",
+    "sessionId": "session-1791801801482-w7conigq",
+    "logId": "location#3704aac8-90e1-70e4-bc50-6acd159a5049#session-1791801801482-w7conigq#2026-10-12T10:43:54.762Z#35.7788971#139.3092875#6.254",
+    "logCount": 4,
+    "ownerUserId": "3704aac8-90e1-70e4-bc50-6acd159a5049",
+    "sharedUserIds": [
+      "47248aa8-a031-7004-66b8-e41578c805e7"
+    ]
+  },
+  {
+    "decisionId": "L012",
+    "name": "オザム",
+    "recordId": "recording-session:47248aa8-a031-7004-66b8-e41578c805e7:session-1791200620836-4f2zz6rb",
+    "sessionId": "session-1791200620836-4f2zz6rb",
+    "logId": "location#47248aa8-a031-7004-66b8-e41578c805e7#session-1791200620836-4f2zz6rb#2026-10-05T11:52:15.999Z#35.7799693#139.3048831#14.253",
+    "logCount": 69,
+    "ownerUserId": "47248aa8-a031-7004-66b8-e41578c805e7",
+    "sharedUserIds": [
+      "57b4eac8-4021-70cd-3f37-423820f9d5c5"
+    ]
+  },
+  {
+    "decisionId": "L014",
+    "name": "10/4 ランニング　今井",
+    "recordId": "recording-session:3704aac8-90e1-70e4-bc50-6acd159a5049:session-1791062915647-93a4sd73",
+    "sessionId": "session-1791062915647-93a4sd73",
+    "logId": "location#3704aac8-90e1-70e4-bc50-6acd159a5049#session-1791062915647-93a4sd73#2026-10-03T22:28:04.999Z#35.7797689#139.3156063#7.613",
+    "logCount": 275,
+    "ownerUserId": "3704aac8-90e1-70e4-bc50-6acd159a5049",
+    "sharedUserIds": [
+      "57b4eac8-4021-70cd-3f37-423820f9d5c5"
+    ]
+  },
+  {
+    "decisionId": "L056",
+    "name": "9/6 オザム 買い物",
+    "recordId": "recording-session:3704aac8-90e1-70e4-bc50-6acd159a5049:session-1788662437811-i2aoeben",
+    "sessionId": "session-1788662437811-i2aoeben",
+    "logId": "location#3704aac8-90e1-70e4-bc50-6acd159a5049#session-1788662437811-i2aoeben#2026-09-06T02:59:42.751Z#35.7793240#139.3078378#5.148",
+    "logCount": 54,
+    "ownerUserId": "3704aac8-90e1-70e4-bc50-6acd159a5049",
+    "sharedUserIds": []
+  },
+  {
+    "decisionId": "L192",
+    "name": "6/15 ベランダ",
+    "recordId": "recording-session:3704aac8-90e1-70e4-bc50-6acd159a5049:session-1781527529626-1mqal2rm",
+    "sessionId": "session-1781527529626-1mqal2rm",
+    "logId": "9f908ecd-ff69-4f33-99c0-826e73077b2a",
+    "logCount": 1,
+    "ownerUserId": "3704aac8-90e1-70e4-bc50-6acd159a5049",
+    "sharedUserIds": []
+  }
+]

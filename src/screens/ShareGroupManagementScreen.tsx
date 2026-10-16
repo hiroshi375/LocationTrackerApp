@@ -1,5 +1,8 @@
+import { GroupAccessReadProbe } from "../components/GroupAccessReadProbe";
+import { LegacyMigrationReadProbe } from "../components/LegacyMigrationReadProbe";
+import { GroupAccessActions, GroupAccessOperationsPanel } from "../components/GroupAccessControls";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
-import { useCallback, useLayoutEffect, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -38,6 +41,8 @@ type ShareGroupSummaryItem = {
     groupId: string;
     name: string;
     role: string;
+    lifecycle?: string | null;
+    operationId?: string | null;
     members?: (ShareGroupMemberSummaryItem | null)[] | null;
 };
 
@@ -48,6 +53,9 @@ type ShareGroupQueryResult = {
 
 type ShareGroupActionData = {
     success: boolean;
+    accepted?: boolean;
+    operationId?: string | null;
+    status?: string | null;
     message: string;
     groupId?: string | null;
     groupName?: string | null;
@@ -110,6 +118,7 @@ export default function ShareGroupManagementScreen() {
     const [createdInviteCode, setCreatedInviteCode] = useState<string | null>(
         null,
     );
+    const createdInviteGroupIdRef = useRef<string | null>(null);
     const [regeneratingGroupId, setRegeneratingGroupId] = useState<
         string | null
     >(null);
@@ -212,6 +221,11 @@ export default function ShareGroupManagementScreen() {
 
             setMemberIconUrls(nextMemberIconUrls);
             setGroups(items);
+            if (createdInviteGroupIdRef.current && !items.some(group => group.groupId === createdInviteGroupIdRef.current && !group.operationId)) {
+                createdInviteGroupIdRef.current = null;
+                setCreatedGroupName(null);
+                setCreatedInviteCode(null);
+            }
         } catch (error) {
             console.error("Load share groups error:", error);
 
@@ -276,6 +290,7 @@ export default function ShareGroupManagementScreen() {
                 );
             }
 
+            createdInviteGroupIdRef.current = result.data.groupId ?? null;
             setCreatedGroupName(result.data.groupName ?? trimmedName);
 
             setCreatedInviteCode(result.data.inviteCode ?? null);
@@ -404,6 +419,7 @@ export default function ShareGroupManagementScreen() {
                     );
                 }
 
+                createdInviteGroupIdRef.current = group.groupId;
                 setCreatedGroupName(result.data.groupName ?? group.name);
 
                 setCreatedInviteCode(inviteCode);
@@ -485,6 +501,11 @@ export default function ShareGroupManagementScreen() {
                     );
                 }
 
+                if (result.data?.accepted && result.data.status !== "COMPLETED") {
+                    await loadGroups();
+                    Alert.alert("削除を受け付けました", "過去の履歴の共有権限を処理しています。処理状況をご確認ください。");
+                    return;
+                }
                 if (!result.data?.success) {
                     throw new Error(
                         result.data?.message ??
@@ -524,6 +545,8 @@ export default function ShareGroupManagementScreen() {
                     "",
                     "このグループのメンバー情報も削除されます。",
                     "メンバーはこのグループを利用できなくなります。",
+                    "このグループを通じた過去の履歴共有も解除されます。",
+                    "別グループからの有効な共有と、所有者本人の記録は維持されます。",
                     "",
                     "この操作は元に戻せません。",
                     "",
@@ -860,6 +883,9 @@ export default function ShareGroupManagementScreen() {
                     </Pressable>
                 </View>
 
+                <GroupAccessOperationsPanel onChanged={loadGroups} />
+                {__DEV__ && <GroupAccessReadProbe />}
+                {__DEV__ && <LegacyMigrationReadProbe />}
                 {/* 所属グループ */}
                 <View style={styles.groupsSection}>
                     <View style={styles.groupsHeader}>
@@ -1084,7 +1110,8 @@ export default function ShareGroupManagementScreen() {
                                         </View>
                                     </View>
 
-                                    {isOwner && (
+                                    <GroupAccessActions group={group} onChanged={loadGroups} />
+                                    {isOwner && !group.operationId && (
                                         <View style={styles.ownerActionArea}>
                                             <Pressable
                                                 style={({ pressed }) => [

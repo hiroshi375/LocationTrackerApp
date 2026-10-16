@@ -19,7 +19,11 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "postinstall": "bash scripts/fix-nested-links.sh && patch-package"
+    "postinstall": "bash scripts/fix-nested-links.sh && patch-package",
+    "typecheck:backend": "tsc --noEmit -p amplify/tsconfig.json",
+    "verify:backend:synth": "tsx scripts/verify-backend-synth.ts",
+    "test:group-access": "tsx --test tests/groupAccess.local.test.ts tests/historicalShareGroups.test.ts",
+    "test:share-recovery": "tsx --test tests/shareRecovery.test.ts"
   },
   "dependencies": {
     "@aws-amplify/core": "^6.16.4",
@@ -81,6 +85,7 @@
   "devDependencies": {
     "@aws-amplify/backend": "^1.23.0",
     "@aws-amplify/backend-cli": "^1.8.3",
+    "@aws-cdk/cli-plugin-contract": "^2.182.2",
     "@aws-cdk/toolkit-lib": "^1.16.0",
     "@aws-sdk/client-cloudformation": "^3.1068.0",
     "@aws-sdk/client-s3": "^3.1068.0",

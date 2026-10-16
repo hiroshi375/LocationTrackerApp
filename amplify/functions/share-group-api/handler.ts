@@ -1,3 +1,9 @@
+import { createLegacyLocationLog, createLegacyRecordingSession } from "./legacyRecordingWrite";
+import { prepareStoppedHistoricalRecovery } from "./historicalRecoveryAdmission";
+import { readSessionLogs, withSessionLogInventory, resetSessionLogInventory } from "./sessionLogReader";
+import { getRow, scanRows, tables, gate, withGroupLocks, historicalWriteGroups, fencedWrite } from "./groupAccessStore";
+import { assertRecordOwner, requestGroupAccessChange, getGroupJob, groupJobView, resumeGroupJob, cancelGroupJob, advanceGroupJobBatch, reconcileGroupJobs } from "./groupAccessOperation";
+import { ingestLocationLog } from "./locationLogIngest";
 import { createHash, randomInt, randomUUID } from "node:crypto";
 
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
@@ -134,8 +140,7 @@ async function updateProjectedSharedOwners(input: {
     if (raw === null) values[":nullOwners"] = null;
     if (Array.isArray(raw)) values[":beforeOwners"] = raw;
     try {
-        await projectionDb.send(
-            new UpdateCommand({
+        await fencedWrite([{ Update: {
                 TableName: tableName,
                 Key: { id: input.id },
                 UpdateExpression: "SET #owners = :newOwners",
@@ -150,8 +155,7 @@ async function updateProjectedSharedOwners(input: {
                     "#owners": "sharedOwners",
                 },
                 ExpressionAttributeValues: values,
-            }),
-        );
+            } }]);
     } catch (error) {
         if (
             error instanceof Error &&
@@ -536,105 +540,13 @@ async function getOwnedRecordingSession(
     userId: string,
     recordingSessionId: string,
 ): Promise<OwnedRecordingSession> {
-    const model = client.models.RecordingSession;
-
-    const normalizedSessionId = recordingSessionId.trim();
-
-    if (!normalizedSessionId) {
-        throw new Error("recordingSessionIdが空です。");
-    }
-
-    // 現行の固定ID規則
-    const deterministicId = `recording-session:${userId}:${normalizedSessionId}`;
-
-    const directResult = await model.get({
-        id: deterministicId,
-    });
-
-    if (directResult.errors?.length) {
-        throw new Error("RecordingSessionの直接取得に失敗しました。");
-    }
-
-    const directSession = directResult.data;
-
-    if (directSession) {
-        if (
-            directSession.userId !== userId ||
-            directSession.recordingSessionId !== normalizedSessionId
-        ) {
-            throw new Error("RecordingSessionの所有者またはIDが一致しません。");
-        }
-
-        return {
-            id: directSession.id,
-            userId: directSession.userId,
-            recordingSessionId: directSession.recordingSessionId,
-        };
-    }
-
-    // 古い自動採番ID形式との互換性
-    let nextToken: string | null = null;
-    const matches: OwnedRecordingSession[] = [];
-    const seenTokens = new Set<string>();
-
-    do {
-        const result: {
-            data: Schema["RecordingSession"]["type"][];
-            errors?: readonly unknown[];
-            nextToken?: string | null;
-        } = await model.list({
-            filter: {
-                and: [
-                    { userId: { eq: userId } },
-                    { recordingSessionId: { eq: normalizedSessionId } },
-                ],
-            },
-            limit: 1000,
-            nextToken: nextToken ?? undefined,
-        });
-
-        if (result.errors?.length) {
-            throw new Error("RecordingSessionの検索に失敗しました。");
-        }
-
-        for (const session of result.data ?? []) {
-            if (
-                session.id &&
-                session.userId === userId &&
-                session.recordingSessionId === normalizedSessionId
-            ) {
-                matches.push({
-                    id: session.id,
-                    userId: session.userId,
-                    recordingSessionId: session.recordingSessionId,
-                });
-            }
-        }
-
-        nextToken = result.nextToken ?? null;
-
-        if (nextToken) {
-            if (seenTokens.has(nextToken)) {
-                throw new Error(
-                    "RecordingSessionのページングが循環しています。",
-                );
-            }
-
-            seenTokens.add(nextToken);
-        }
-    } while (nextToken);
-
-    if (matches.length === 0) {
-        throw new Error("共有対象のRecordingSessionが見つかりません。");
-    }
-
-    if (matches.length !== 1) {
-        throw new Error(
-            "同一セッションのレコードが複数存在します。共有更新を中止します。",
-        );
-    }
-
-    return matches[0];
+    const normalized = recordingSessionId.trim();
+    if (!normalized) throw new Error("recordingSessionIdが空です。");
+    const deterministic = await getRow(tables.sessions(), { id: `recording-session:${userId}:${normalized}` });
+    const matches = deterministic ? [deterministic] : await scanRows(tables.sessions(), row => row.userId === userId && row.recordingSessionId === normalized);
+    if (matches.length !== 1 || matches[0].recordingSessionId !== normalized) throw new Error("共有対象の履歴を一意に確認できません。");
+    assertRecordOwner(matches[0], userId);
+    return { id: matches[0].id, userId, recordingSessionId: normalized };
 }
 
 /*
@@ -669,11 +581,8 @@ async function loadUserProfile(userId: string) {
         throw new Error("ユーザープロフィールが存在しません。");
     }
 
-    const ownerValue = profile.ownerValue;
-
-    if (!ownerValue) {
-        throw new Error("ユーザーの共有情報が設定されていません。");
-    }
+    // Owner identifiers must come from the authenticated sub, never a mutable profile field.
+    const ownerValue = userId;
 
     return {
         ...profile,
@@ -851,71 +760,10 @@ async function createShareGroup(
     /*
      * ShareGroup作成。
      */
-    const groupResult = await client.models.ShareGroup.create({
-        groupId,
-        name,
-        ownerUserId: userId,
-        inviteCodeHash,
-        isActive: true,
-    });
-
-    if (groupResult.errors) {
-        console.error(
-            "[ShareGroup] Create ShareGroup errors:",
-            groupResult.errors,
-        );
-
-        throw new Error("グループの作成に失敗しました。");
-    }
-
-    /*
-     * グループ作成者自身を
-     * OWNERメンバーとして登録する。
-     */
-    const membershipId = `${groupId}#${userId}`;
-
-    const memberResult = await client.models.ShareGroupMember.create({
-        membershipId,
-        groupId,
-        userId,
-
-        ownerValue: profile.ownerValue,
-
-        displayName: profile.displayName ?? undefined,
-
-        email: profile.email ?? undefined,
-
-        iconImagePath: profile.iconImagePath ?? undefined,
-
-        role: "OWNER",
-
-        joinedAt: now,
-    });
-
-    if (memberResult.errors) {
-        console.error(
-            "[ShareGroup] Create owner member errors:",
-            memberResult.errors,
-        );
-
-        /*
-         * グループだけ残る状態を避けるため、
-         * OWNERメンバー登録に失敗した場合は
-         * 作成済みグループを削除する。
-         */
-        try {
-            await client.models.ShareGroup.delete({
-                groupId,
-            });
-        } catch (rollbackError) {
-            console.error(
-                "[ShareGroup] Rollback group delete error:",
-                rollbackError,
-            );
-        }
-
-        throw new Error("グループメンバーの作成に失敗しました。");
-    }
+    await withGroupLocks([groupId], () => fencedWrite([
+        { Put: { TableName: tables.groups(), Item: { groupId, name, ownerUserId: userId, inviteCodeHash, isActive: true, lifecycle: "ACTIVE", createdAt: now, updatedAt: now, __typename: "ShareGroup" }, ConditionExpression: "attribute_not_exists(groupId)" } },
+        { Put: { TableName: tables.members(), Item: { membershipId: `${groupId}#${userId}`, groupId, userId, ownerValue: profile.ownerValue, displayName: profile.displayName, email: profile.email, iconImagePath: profile.iconImagePath, role: "OWNER", joinedAt: now, createdAt: now, updatedAt: now, __typename: "ShareGroupMember" }, ConditionExpression: "attribute_not_exists(membershipId)" } },
+    ]));
 
     console.log("[ShareGroup] Group created:", {
         groupId,
@@ -996,90 +844,18 @@ async function joinShareGroupByInviteCode(
     /*
      * groupId + userId をmembershipIdとする。
      */
-    const membershipId = `${group.groupId}#${userId}`;
-
-    /*
-     * すでに所属しているか確認する。
-     */
-    const existingResult = await client.models.ShareGroupMember.get({
-        membershipId,
+    return withGroupLocks([group.groupId], async () => {
+        const currentGroup = await getRow(tables.groups(), { groupId: group.groupId });
+        if (currentGroup?.isActive !== true || currentGroup.inviteCodeHash !== inviteCodeHash) throw new Error("グループが無効または招待コードが更新されています。");
+        const membershipId = `${group.groupId}#${userId}`;
+        const existing = await getRow(tables.members(), { membershipId });
+        if (existing) return { success: true, message: "すでにこのグループへ参加しています。", groupId: group.groupId, groupName: group.name };
+        await assertCanJoinShareGroup(group.groupId, group.ownerUserId);
+        const profile = await loadUserProfile(userId);
+        const timestamp = new Date().toISOString();
+        await fencedWrite([{ Put: { TableName: tables.members(), Item: { membershipId, groupId: group.groupId, userId, ownerValue: profile.ownerValue, displayName: profile.displayName, email: profile.email, iconImagePath: profile.iconImagePath, role: "MEMBER", joinedAt: timestamp, createdAt: timestamp, updatedAt: timestamp, __typename: "ShareGroupMember" }, ConditionExpression: "attribute_not_exists(membershipId)" } }]);
+        return { success: true, message: "グループへ参加しました。", groupId: group.groupId, groupName: group.name };
     });
-
-    if (existingResult.errors) {
-        console.error(
-            "[ShareGroup] Existing membership lookup errors:",
-            existingResult.errors,
-        );
-
-        throw new Error("グループ参加状態の確認に失敗しました。");
-    }
-
-    if (existingResult.data) {
-        return {
-            success: true,
-            message: "すでにこのグループへ参加しています。",
-            groupId: group.groupId,
-            groupName: group.name,
-        };
-    }
-
-    /*
-     * グループOWNERのプランに応じて、
-     * グループ人数上限を確認する。
-     */
-    await assertCanJoinShareGroup(group.groupId, group.ownerUserId);
-
-    /*
-     * 参加ユーザーのプロフィール取得。
-     */
-    const profile = await loadUserProfile(userId);
-
-    /*
-     * MEMBERとして登録。
-     */
-    const createResult = await client.models.ShareGroupMember.create({
-        membershipId,
-
-        groupId: group.groupId,
-
-        userId,
-
-        ownerValue: profile.ownerValue,
-
-        displayName: profile.displayName ?? undefined,
-
-        email: profile.email ?? undefined,
-
-        iconImagePath: profile.iconImagePath ?? undefined,
-
-        role: "MEMBER",
-
-        joinedAt: new Date().toISOString(),
-    });
-
-    if (createResult.errors) {
-        console.error(
-            "[ShareGroup] Join group member create errors:",
-            createResult.errors,
-        );
-
-        throw new Error("グループへの参加に失敗しました。");
-    }
-
-    console.log("[ShareGroup] User joined group:", {
-        groupId: group.groupId,
-
-        userId,
-    });
-
-    return {
-        success: true,
-        message: "グループへ参加しました。",
-
-        groupId: group.groupId,
-
-        groupName: group.name,
-    };
 }
 
 /*
@@ -1143,6 +919,7 @@ async function listMyShareCandidates(
          * 削除済み・無効化済みグループのMembershipが
          * 万一残っていても共有候補へ含めない。
          */
+        if ((await gate(membership.groupId))?.activeJobId) continue;
         const groupResult = await client.models.ShareGroup.get({
             groupId: membership.groupId,
         });
@@ -1307,7 +1084,45 @@ async function listMyShareCandidates(
  * 1つのLambdaを複数のCustom Query / Mutationから利用するため、
  * AppSyncから渡されるfieldNameで処理を振り分ける。
  */
+async function runHistoricalWrite(event: any, bulk: boolean, write: () => Promise<boolean>): Promise<boolean> {
+    const userId = getCaller(event).userId;
+    const { recordingSessionId, groupId } = event.arguments;
+    const session = await getOwnedRecordingSession(userId, recordingSessionId);
+    if (bulk && (!Array.isArray(event.arguments.recipientUserIds) || event.arguments.recipientUserIds.length === 0 || event.arguments.recipientUserIds.some((value: unknown) => typeof value !== "string" || !value.trim() || value === userId))) throw new Error("共有先が不正です。");
+    if (!bulk && event.arguments.enabled === false) {
+        const grant = await getRow(tables.grants(), { grantId: makeHistoricalGrantId(session.id, groupId, event.arguments.recipientUserId) });
+        const membership = await getRow(tables.members(), { membershipId: `${groupId}#${userId}` });
+        if ((!grant || grant.ownerUserId !== userId) && membership?.userId !== userId) throw new Error("このグループの共有を変更する権限がありません。");
+    } else {
+        for (const recipient of bulk ? [...new Set(event.arguments.recipientUserIds ?? [])] : [event.arguments.recipientUserId]) {
+            await validateHistoricalRecipient(userId, groupId, String(recipient));
+        }
+    }
+    return withGroupLocks(await historicalWriteGroups(userId, groupId, recordingSessionId), () =>
+        withSessionLogInventory(async () => {
+            const previous = await getHistoricalShareOperation(session.id);
+            if (previous && previous.status !== "COMPLETED") {
+                await prepareStoppedHistoricalRecovery(previous, userId, event.arguments);
+                await recoverFailedHistoricalShareProjection(userId, recordingSessionId, previous.operationId);
+                // This retry repeats the persisted intent; do not create a second operation.
+                if (!bulk) return true;
+            }
+            return write();
+        }),
+    );
+}
+
 export const handler = async (event: any) => {
+    if (event?.reconcileGroupAccess === true && !event?.identity) { await reconcileGroupJobs(); return; }
+    if (Array.isArray(event?.Records) && !event?.identity) {
+        for (const record of event.Records) {
+            const image = record?.dynamodb?.NewImage;
+            if (record.eventSource === "aws:dynamodb" && image?.recordType?.S === "JOB" && image?.status?.S === "READY") {
+                await advanceGroupJobBatch(image.groupId.S, image.operationId.S);
+            }
+        }
+        return;
+    }
     const operation =
         event?.fieldName ??
         event?.info?.fieldName ??
@@ -1320,7 +1135,7 @@ export const handler = async (event: any) => {
             typeName: event?.typeName ?? null,
             fieldName: event?.fieldName ?? null,
             operation,
-            arguments: event?.arguments ?? null,
+            argumentNames: Object.keys(event?.arguments ?? {}),
             userId: event?.identity?.sub ?? event?.identity?.username ?? null,
         }),
     );
@@ -1341,17 +1156,59 @@ export const handler = async (event: any) => {
         case "listMyShareGroups":
             return await listMyShareGroups(event);
 
-        case "regenerateShareGroupInviteCode":
-            return await regenerateShareGroupInviteCode(event);
+        case "regenerateShareGroupInviteCode": {
+            const group = await getRow(tables.groups(), { groupId: event.arguments.groupId });
+            if (group?.ownerUserId !== getCaller(event).userId || group?.isActive !== true) throw new Error("招待コードを再発行する権限がありません。");
+            return await withGroupLocks([event.arguments.groupId], () => regenerateShareGroupInviteCode(event));
+        }
 
         case "deleteOwnedShareGroup":
-            return await deleteOwnedShareGroup(event);
+            return await requestGroupAccessChange(getCaller(event).userId, event.arguments.groupId, "DELETE", undefined, event.arguments.requestId);
+        case "deactivateOwnedShareGroup":
+            return await requestGroupAccessChange(getCaller(event).userId, event.arguments.groupId, "DEACTIVATE", undefined, event.arguments.requestId);
+        case "leaveShareGroup":
+            return await requestGroupAccessChange(getCaller(event).userId, event.arguments.groupId, "LEAVE", undefined, event.arguments.requestId);
+        case "removeShareGroupMember":
+            return await requestGroupAccessChange(getCaller(event).userId, event.arguments.groupId, "REMOVE", event.arguments.targetUserId, event.arguments.requestId);
+        case "listMyShareGroupAccessOperations": {
+            const caller = getCaller(event).userId;
+            const jobs = await scanRows(tables.jobs(), row => row.recordType === "JOB" && (!["COMPLETED", "CANCELLED"].includes(row.status) || Date.now() - Date.parse(row.updatedAt) < 600000) && (row.requesterUserId === caller || row.groupOwnerUserId === caller));
+            return jobs.map(groupJobView);
+        }
+        case "getShareGroupAccessOperation":
+            return groupJobView(await getGroupJob(event.arguments.groupId, event.arguments.operationId, getCaller(event).userId));
+        case "resumeShareGroupAccessOperation":
+            return await resumeGroupJob(event.arguments.groupId, event.arguments.operationId, getCaller(event).userId);
+        case "cancelShareGroupAccessOperation":
+            return await cancelGroupJob(event.arguments.groupId, event.arguments.operationId, getCaller(event).userId);
+        case "createLocationLog": {
+            const caller = getCaller(event);
+            return createLegacyLocationLog(caller.userId, caller.username, event.arguments.input);
+        }
+        case "createRecordingSession": {
+            const caller = getCaller(event);
+            return createLegacyRecordingSession(caller.userId, caller.username, event.arguments.input);
+        }
+        case "ingestLocationLog": {
+            const caller = getCaller(event);
+            return await ingestLocationLog(caller.userId, caller.username, event.arguments.input);
+        }
 
         case "shareHistoricalRecordingSession":
-            return await shareHistoricalRecordingSession(event);
+            return await runHistoricalWrite(event, true, () => shareHistoricalRecordingSession(event));
+
+        case "resumeHistoricalShareOperation": {
+            const caller = getCaller(event).userId;
+            const session = await getOwnedRecordingSession(caller, event.arguments.recordingSessionId);
+            const previous = await getHistoricalShareOperation(session.id);
+            if (!previous || previous.status === "COMPLETED") return true;
+            const retry = { ...event, arguments: { recordingSessionId: session.recordingSessionId,
+                groupId: previous.groupId, recipientUserId: previous.recipientUserId, enabled: previous.requestedEnabled } };
+            return await runHistoricalWrite(retry, false, async () => true);
+        }
 
         case "setHistoricalShareGrant":
-            return await setHistoricalShareGrant(event);
+            return await runHistoricalWrite(event, false, () => setHistoricalShareGrant(event));
 
         case "diagnoseHistoricalShareMigrationAdmin":
             return await diagnoseHistoricalShareMigrationAdmin(event);
@@ -1519,32 +1376,19 @@ async function listMyShareGroups(
                 );
             });
 
+            const accessState = await gate(group.groupId);
             return {
                 groupId: group.groupId,
                 name: group.name,
+                lifecycle: accessState?.activeJobId ? "CHANGING" : group.lifecycle ?? "ACTIVE",
+                operationId: accessState?.activeJobId,
                 role: membership.role === "OWNER" ? "OWNER" : "MEMBER",
                 members,
             };
         }),
     );
 
-    return groups
-        .filter(
-            (
-                group,
-            ): group is {
-                groupId: string;
-                name: string;
-                role: string;
-                members: {
-                    userId: string;
-                    displayName: string | undefined;
-                    iconImagePath: string | undefined;
-                    role: string;
-                }[];
-            } => group !== null,
-        )
-        .sort((a, b) => a.name.localeCompare(b.name, "ja"));
+    return groups.filter((group): group is NonNullable<typeof group> => group !== null).sort((a, b) => a.name.localeCompare(b.name, "ja"));
 }
 
 async function regenerateShareGroupInviteCode(
@@ -1588,19 +1432,12 @@ async function regenerateShareGroupInviteCode(
      */
     const { inviteCode, inviteCodeHash } = await createUniqueInviteCode();
 
-    const updateResult = await client.models.ShareGroup.update({
-        groupId,
-        inviteCodeHash,
-    });
-
-    if (updateResult.errors?.length) {
-        console.error(
-            "[ShareGroupApi] regenerate update errors:",
-            updateResult.errors,
-        );
-
-        throw new Error("招待コードを再発行できませんでした。");
-    }
+    await fencedWrite([{ Update: {
+        TableName: tables.groups(), Key: { groupId },
+        UpdateExpression: "SET inviteCodeHash = :hash, updatedAt = :now",
+        ConditionExpression: "ownerUserId = :owner AND isActive = :yes",
+        ExpressionAttributeValues: { ":hash": inviteCodeHash, ":now": new Date().toISOString(), ":owner": userId, ":yes": true },
+    } }]);
 
     return {
         success: true,
@@ -1611,181 +1448,6 @@ async function regenerateShareGroupInviteCode(
     };
 }
 
-/*
- * 自分が作成した共有グループを削除する。
- *
- * OWNERのみ実行可能。
- *
- * ShareGroupMemberを先にすべて削除し、
- * 最後にShareGroup本体を削除する。
- */
-async function deleteOwnedShareGroup(
-    event: Parameters<Schema["deleteOwnedShareGroup"]["functionHandler"]>[0],
-) {
-    const { userId } = getCaller(event);
-
-    const groupId = event.arguments.groupId;
-
-    /*
-     * 対象グループを取得する。
-     */
-    const groupResult = await client.models.ShareGroup.get({
-        groupId,
-    });
-
-    if (groupResult.errors?.length) {
-        console.error(
-            "[ShareGroup] Delete group lookup errors:",
-            groupResult.errors,
-            {
-                groupId,
-                userId,
-            },
-        );
-
-        throw new Error("共有グループを取得できませんでした。");
-    }
-
-    const group = groupResult.data;
-
-    if (!group) {
-        throw new Error("共有グループが見つかりません。");
-    }
-
-    /*
-     * 他ユーザーが作成したグループを削除できないようにする。
-     *
-     * クライアント側の表示制御だけには依存せず、
-     * 必ずLambda側でもOWNER確認を行う。
-     */
-    if (group.ownerUserId !== userId) {
-        throw new Error("共有グループを削除できるのは作成者だけです。");
-    }
-
-    /*
-     * グループに所属している全ShareGroupMemberを取得する。
-     */
-    const allMembers: {
-        membershipId: string;
-    }[] = [];
-
-    let nextToken: string | null = null;
-
-    do {
-        const memberResult = (await (
-            client.models.ShareGroupMember as any
-        ).listShareGroupMembersByGroup(
-            {
-                groupId,
-            },
-            {
-                limit: 1000,
-                nextToken: nextToken ?? undefined,
-            },
-        )) as ShareGroupMemberDeleteListResult;
-
-        if (memberResult.errors?.length) {
-            console.error(
-                "[ShareGroup] Delete group member list errors:",
-                memberResult.errors,
-                {
-                    groupId,
-                },
-            );
-
-            throw new Error(
-                "共有グループのメンバー情報を取得できませんでした。",
-            );
-        }
-
-        for (const member of memberResult.data ?? []) {
-            allMembers.push({
-                membershipId: member.membershipId,
-            });
-        }
-
-        nextToken = memberResult.nextToken ?? null;
-    } while (nextToken);
-
-    /*
-     * Memberを削除する。
-     *
-     * 1件ずつ直列にすると人数が増えた場合に遅いため、
-     * 25件単位で並列削除する。
-     */
-    for (let index = 0; index < allMembers.length; index += 25) {
-        const batch = allMembers.slice(index, index + 25);
-
-        const deleteResults = await Promise.all(
-            batch.map((member) =>
-                client.models.ShareGroupMember.delete({
-                    membershipId: member.membershipId,
-                }),
-            ),
-        );
-
-        const failedResult = deleteResults.find(
-            (result) => result.errors?.length,
-        );
-
-        if (failedResult?.errors?.length) {
-            console.error(
-                "[ShareGroup] Delete group member errors:",
-                failedResult.errors,
-                {
-                    groupId,
-                },
-            );
-
-            throw new Error(
-                "共有グループのメンバー情報を削除できませんでした。",
-            );
-        }
-    }
-
-    /*
-     * Member削除完了後にグループ本体を削除する。
-     */
-    const deleteGroupResult = await client.models.ShareGroup.delete({
-        groupId,
-    });
-
-    if (deleteGroupResult.errors?.length) {
-        console.error(
-            "[ShareGroup] Delete group errors:",
-            deleteGroupResult.errors,
-            {
-                groupId,
-            },
-        );
-
-        throw new Error("共有グループを削除できませんでした。");
-    }
-
-    console.log("[ShareGroup] Group deleted:", {
-        groupId,
-        groupName: group.name,
-        ownerUserId: userId,
-        deletedMemberCount: allMembers.length,
-    });
-
-    return {
-        success: true,
-        message: "共有グループを削除しました。",
-        groupId,
-        groupName: group.name,
-    };
-}
-
-/*
- * グループOWNERのプランに応じて、
- * 1グループあたりの最大人数を確認する。
- *
- * OWNERも1人として数える。
- *
- * 既存のgroupId GSIのみ使用するため、
- * DynamoDB schema変更は不要。
- */
 async function assertCanJoinShareGroup(
     groupId: string,
     ownerUserId: string,
@@ -1918,7 +1580,10 @@ async function shareHistoricalRecordingSession(
         recipientCount: verifiedOwners.length,
     });
 
-    // この段階ではまだ履歴を変更しない
+    // Legacy public entry point delegates to the same Grant-authoritative writer.
+    for (const recipientUserId of requestedUsers) {
+        await setHistoricalShareGrant({ ...event, arguments: { recordingSessionId, groupId, recipientUserId, enabled: true } } as Parameters<typeof setHistoricalShareGrant>[0]);
+    }
     return true;
 }
 
@@ -1928,68 +1593,9 @@ async function loadHistoricalGrantsBySession(
     recordingSessionRecordId: string,
     ownerUserId: string,
 ): Promise<HistoricalGrantRecord[]> {
-    const allGrants: HistoricalGrantRecord[] = [];
-    const seenIds = new Set<string>();
-    const seenTokens = new Set<string>();
-
-    let nextToken: string | null = null;
-
-    do {
-        const result: {
-            data: HistoricalGrantRecord[];
-            errors?: readonly unknown[];
-            nextToken?: string | null;
-        } =
-            await client.models.HistoricalShareGrant.listHistoricalGrantsBySession(
-                {
-                    recordingSessionRecordId,
-                },
-                {
-                    limit: 100,
-                    nextToken: nextToken ?? undefined,
-                },
-            );
-
-        if (result.errors?.length) {
-            throw new Error("HistoricalShareGrantの取得に失敗しました。");
-        }
-
-        for (const grant of result.data ?? []) {
-            // セッション・所有者の整合性を検証
-            if (
-                grant.recordingSessionRecordId !== recordingSessionRecordId ||
-                grant.ownerUserId !== ownerUserId
-            ) {
-                throw new Error(
-                    "HistoricalShareGrantの所有者またはセッションが一致しません。",
-                );
-            }
-
-            // ページ間で同一レコードが重複した場合も検出
-            if (seenIds.has(grant.grantId)) {
-                throw new Error(
-                    "HistoricalShareGrantが重複して取得されました。",
-                );
-            }
-
-            seenIds.add(grant.grantId);
-            allGrants.push(grant);
-        }
-
-        nextToken = result.nextToken ?? null;
-
-        if (nextToken) {
-            if (seenTokens.has(nextToken)) {
-                throw new Error(
-                    "HistoricalShareGrantのページングが循環しています。",
-                );
-            }
-
-            seenTokens.add(nextToken);
-        }
-    } while (nextToken);
-
-    return allGrants;
+    const rows = await scanRows(tables.grants(), row => row.recordingSessionRecordId === recordingSessionRecordId);
+    if (rows.some(row => row.ownerUserId !== ownerUserId || typeof row.recipientUserId !== "string" || typeof row.recipientOwnerValue !== "string" || !(row.recipientOwnerValue === row.recipientUserId || row.recipientOwnerValue.startsWith(`${row.recipientUserId}::`)))) throw new Error("Grantの所有者または共有先識別子が一致しません。");
+    return rows as HistoricalGrantRecord[];
 }
 
 /**
@@ -2077,71 +1683,9 @@ async function loadOwnedLocationLogsBySession(
     recordingSessionId: string,
     ownerUserId: string,
 ): Promise<HistoricalLocationLog[]> {
-    const allLogs: HistoricalLocationLog[] = [];
-    const seenIds = new Set<string>();
-    const seenTokens = new Set<string>();
-
-    let nextToken: string | null = null;
-
-    do {
-        const result: {
-            data: HistoricalLocationLog[];
-            errors?: readonly unknown[];
-            nextToken?: string | null;
-        } =
-            await client.models.LocationLog.listLocationLogsBySessionAndRecordedAt(
-                {
-                    recordingSessionId,
-                },
-                {
-                    limit: 100,
-                    nextToken: nextToken ?? undefined,
-                },
-            );
-
-        if (result.errors?.length) {
-            throw new Error("LocationLogのセッション別取得に失敗しました。");
-        }
-
-        for (const log of result.data ?? []) {
-            if (log.recordingSessionId !== recordingSessionId) {
-                throw new Error(
-                    "異なるセッションのLocationLogが取得されました。",
-                );
-            }
-
-            /*
-             * GSIはrecordingSessionIdのみで検索するため、
-             * 所有者の異なるログを誤って更新しない。
-             *
-             * この段階では安全側に倒し、混在があれば中断する。
-             */
-            if (log.userId !== ownerUserId) {
-                throw new Error(
-                    "同一セッションIDに他ユーザーのLocationLogが存在します。",
-                );
-            }
-
-            if (seenIds.has(log.id)) {
-                throw new Error("LocationLogが重複して取得されました。");
-            }
-
-            seenIds.add(log.id);
-            allLogs.push(log);
-        }
-
-        nextToken = result.nextToken ?? null;
-
-        if (nextToken) {
-            if (seenTokens.has(nextToken)) {
-                throw new Error("LocationLogのページングが循環しています。");
-            }
-
-            seenTokens.add(nextToken);
-        }
-    } while (nextToken);
-
-    return allLogs;
+    const rows = await readSessionLogs(ownerUserId, recordingSessionId);
+    for (const row of rows) assertRecordOwner(row, ownerUserId);
+    return rows as HistoricalLocationLog[];
 }
 
 function makeHistoricalGrantId(
@@ -2155,6 +1699,16 @@ function makeHistoricalGrantId(
         groupId,
         recipientUserId,
     ].join("#");
+}
+
+async function validateHistoricalRecipient(userId: string, groupId: string, recipientUserId: string) {
+    const group = await getRow(tables.groups(), { groupId });
+    const caller = await getRow(tables.members(), { membershipId: `${groupId}#${userId}` });
+    const recipient = await getRow(tables.members(), { membershipId: `${groupId}#${recipientUserId}` });
+    if (group?.isActive !== true || caller?.userId !== userId || caller?.groupId !== groupId || recipient?.userId !== recipientUserId || recipient?.groupId !== groupId || typeof recipient.ownerValue !== "string" || !(recipient.ownerValue === recipientUserId || recipient.ownerValue.startsWith(`${recipientUserId}::`))) {
+        throw new Error("有効な共有グループと双方の所属を確認できません。");
+    }
+    return recipient;
 }
 
 async function setHistoricalShareGrant(
@@ -2180,8 +1734,13 @@ async function setHistoricalShareGrant(
     // 所有者本人のRecordingSessionを確定する
     const session = await getOwnedRecordingSession(userId, recordingSessionId);
 
+    // Reject invalid requests before creating a session Operation; the group
+    // admission lock already prevents membership changes during validation.
+    const verifiedRecipient = enabled ? await validateHistoricalRecipient(userId, groupId, recipientUserId) : undefined;
+
     // Grantの変更より前にロックを取得する
     const operation = await beginHistoricalShareOperation(session.id, userId);
+    resetSessionLogInventory();
 
     try {
         const grantId = makeHistoricalGrantId(
@@ -2205,115 +1764,34 @@ async function setHistoricalShareGrant(
             session.recordingSessionId,
         );
 
-        const existingResult = await client.models.HistoricalShareGrant.get({
-            grantId,
-        });
-
-        if (existingResult.errors?.length) {
-            throw new Error("既存共有権限の取得に失敗しました。");
-        }
-
-        const existing = existingResult.data;
-
-        if (
-            existing &&
-            (existing.ownerUserId !== userId ||
-                existing.recordingSessionRecordId !== session.id ||
-                existing.groupId !== groupId ||
-                existing.recipientUserId !== recipientUserId)
-        ) {
+        const existing = await getRow(tables.grants(), { grantId });
+        if (existing && (existing.ownerUserId !== userId || existing.recordingSessionRecordId !== session.id || existing.groupId !== groupId || existing.recipientUserId !== recipientUserId)) {
             throw new Error("Grantの整合性が不正です。");
         }
-
-        const now = new Date().toISOString();
-
+        const timestamp = new Date().toISOString();
+        const sessionCondition = { ConditionCheck: {
+            TableName: tables.operations(), Key: { recordingSessionRecordId: session.id },
+            ConditionExpression: "operationId = :op AND ownerUserId = :owner AND #s = :pending",
+            ExpressionAttributeNames: { "#s": "status" }, ExpressionAttributeValues: { ":op": operation.operationId, ":owner": userId, ":pending": "PENDING" },
+        } };
         if (!enabled) {
-            // 共有解除：有効なGrantがある場合だけ失効
-            if (existing?.isActive) {
-                const result = await client.models.HistoricalShareGrant.update({
-                    grantId,
-                    isActive: false,
-                    revokedAt: now,
-                });
-
-                if (result.errors?.length || !result.data) {
-                    throw new Error("Grantの失効に失敗しました。");
-                }
-            }
+            if (existing?.isActive) await fencedWrite([sessionCondition, { Update: {
+                TableName: tables.grants(), Key: { grantId },
+                UpdateExpression: "SET isActive = :no, revokedAt = :now, updatedAt = :now",
+                ConditionExpression: "ownerUserId = :owner AND recordingSessionRecordId = :sid",
+                ExpressionAttributeValues: { ":no": false, ":now": timestamp, ":owner": userId, ":sid": session.id },
+            } }]);
         } else {
-            // 共有付与：グループの有効性を確認
-            const groupResult = await client.models.ShareGroup.get({
-                groupId,
-            });
-
-            if (
-                groupResult.errors?.length ||
-                !groupResult.data ||
-                !groupResult.data.isActive
-            ) {
-                throw new Error("有効な共有グループではありません。");
-            }
-
-            // 呼び出し元の所属を確認
-            const callerResult = await client.models.ShareGroupMember.get({
-                membershipId: `${groupId}#${userId}`,
-            });
-
-            if (
-                callerResult.errors?.length ||
-                !callerResult.data ||
-                callerResult.data.userId !== userId ||
-                callerResult.data.groupId !== groupId
-            ) {
-                throw new Error("共有元のグループ所属を確認できません。");
-            }
-
-            // 共有先の所属とownerValueを確認
-            const recipientResult = await client.models.ShareGroupMember.get({
-                membershipId: `${groupId}#${recipientUserId}`,
-            });
-
-            const recipient = recipientResult.data;
-
-            if (
-                recipientResult.errors?.length ||
-                !recipient ||
-                recipient.userId !== recipientUserId ||
-                recipient.groupId !== groupId ||
-                !recipient.ownerValue
-            ) {
-                throw new Error("共有先のグループ所属を確認できません。");
-            }
-
-            if (existing) {
-                // 既存Grantを再有効化
-                const result = await client.models.HistoricalShareGrant.update({
-                    grantId,
-                    recipientOwnerValue: recipient.ownerValue,
-                    isActive: true,
-                    revokedAt: null,
-                });
-
-                if (result.errors?.length || !result.data) {
-                    throw new Error("Grantの再有効化に失敗しました。");
-                }
-            } else {
-                // 新規Grantを登録
-                const result = await client.models.HistoricalShareGrant.create({
-                    grantId,
-                    recordingSessionRecordId: session.id,
-                    ownerUserId: userId,
-                    groupId,
-                    recipientUserId,
-                    recipientOwnerValue: recipient.ownerValue,
-                    isActive: true,
-                    grantedAt: now,
-                });
-
-                if (result.errors?.length || !result.data) {
-                    throw new Error("Grantの登録に失敗しました。");
-                }
-            }
+            const recipient = verifiedRecipient!;
+            await fencedWrite([sessionCondition, { Put: {
+                TableName: tables.grants(), Item: {
+                    grantId, recordingSessionRecordId: session.id, ownerUserId: userId, groupId, recipientUserId,
+                    recipientOwnerValue: recipient.ownerValue, isActive: true, grantedAt: existing?.grantedAt ?? timestamp,
+                    revokedAt: null, createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp, __typename: "HistoricalShareGrant",
+                },
+                ConditionExpression: existing ? "ownerUserId = :owner AND recordingSessionRecordId = :sid" : "attribute_not_exists(grantId)",
+                ...(existing ? { ExpressionAttributeValues: { ":owner": userId, ":sid": session.id } } : {}),
+            } }]);
         }
 
         // Grant登録・解除（または変更不要）の確認結果を保存
@@ -3073,7 +2551,7 @@ async function applyHistoricalShareProjection(
     );
     // 同一レコードの並列更新はせず、異なるログを8件単位で処理する。
     for (let offset = 0; offset < logsToUpdate.length; offset += 8) {
-        await Promise.all(
+        const updates = await Promise.allSettled(
             logsToUpdate.slice(offset, offset + 8).map((log) =>
                 updateProjectedSharedOwners({
                     kind: "log",
@@ -3085,6 +2563,9 @@ async function applyHistoricalShareProjection(
                 }),
             ),
         );
+        // Keep group fencing until every in-flight update has settled.
+        const rejected = updates.find(result => result.status === "rejected");
+        if (rejected?.status === "rejected") throw rejected.reason;
     }
 
     if (snapshot.recordingSessionNeedsUpdate) {
@@ -3188,7 +2669,7 @@ async function applyHistoricalShareProjection(
  *
  * これらを確認できない場合は実行しない。
  *
- * 現段階ではAppSync mutationや自動再試行には接続しない。
+ * 通常APIの同一操作再試行から、期限確認・グループロック取得後にのみ接続する。
  */
 export async function recoverFailedHistoricalShareProjection(
     ownerUserId: string,
@@ -3284,6 +2765,7 @@ export async function recoverFailedHistoricalShareProjection(
         expectedFailedOperationId,
     );
 
+    resetSessionLogInventory();
     try {
         // 6. GrantからsharedOwnersを再計算して反映
         await applyHistoricalShareProjection(

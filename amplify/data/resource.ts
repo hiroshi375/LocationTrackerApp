@@ -14,21 +14,28 @@ const schema = a
     .schema({
         LocationLog: a
             .model({
-                userId: a.string().required(),
+                // Creation goes through ingestLocationLog. Indexed identity is immutable.
+                userId: a.string().required().authorization(allow => [
+                    allow.owner().to(["read"]),
+                    allow.ownersDefinedIn("sharedOwners").to(["read"]),
+                ]),
                 latitude: a.float().required(),
                 longitude: a.float().required(),
                 accuracy: a.float(),
                 recordedAt: a.datetime().required(),
                 memo: a.string(),
-                recordingSessionId: a.string(),
+                recordingSessionId: a.string().authorization(allow => [
+                    allow.owner().to(["read"]),
+                    allow.ownersDefinedIn("sharedOwners").to(["read"]),
+                ]),
                 recordingSessionName: a.string(),
                 sharedOwners: a
                     .string()
                     .array()
                     .authorization((allow) => [
-                        // 記録所有者は作成時の指定と読み取りが可能
-                        // ただしクライアントからの更新は許可しない
-                        allow.owner().to(["create", "read"]),
+                        // 記録所有者は読み取りのみ可能。
+                        // 作成・更新時の共有先指定はバックエンドに限定する。
+                        allow.owner().to(["read"]),
 
                         // 既存の共有相手からの読み取りを維持
                         allow.ownersDefinedIn("sharedOwners").to(["read"]),
@@ -62,6 +69,12 @@ const schema = a
             ]),
         RecordingSession: a
             .model({
+                // フィールド認可があるモデルでは固定IDも作成許可を明示する。
+                // sharedOwnersの書き込み権限は付与しない。
+                id: a.id().required().authorization((allow) => [
+                    allow.owner(),
+                    allow.ownersDefinedIn("sharedOwners").to(["read"]),
+                ]),
                 recordingSessionId: a.string().required(),
                 userId: a.string().required(),
 
@@ -80,9 +93,9 @@ const schema = a
                     .string()
                     .array()
                     .authorization((allow) => [
-                        // 記録所有者は作成時の指定と読み取りが可能
-                        // ただしクライアントからの更新は許可しない
-                        allow.owner().to(["create", "read"]),
+                        // 記録所有者は読み取りのみ可能。
+                        // 作成・更新時の共有先指定はバックエンドに限定する。
+                        allow.owner().to(["read"]),
 
                         // 既存の共有相手からの読み取りを維持
                         allow.ownersDefinedIn("sharedOwners").to(["read"]),
@@ -263,6 +276,7 @@ const schema = a
                  * 例: 家族、ランニング仲間
                  */
                 name: a.string().required(),
+                lifecycle: a.string(),
 
                 /*
                  * グループ作成者のCognito user sub。
@@ -300,10 +314,10 @@ const schema = a
             ])
             .authorization((allow) => [
                 /*
-                 * 通常のクライアントから直接扱えるのは
-                 * グループ作成者だけ。
+                 * 作成者は参照のみ可能。
+                 * 変更・削除は正式なFunction API経由に限定する。
                  */
-                allow.ownerDefinedIn("ownerUserId"),
+                allow.ownerDefinedIn("ownerUserId").to(["read"]),
             ]),
         ShareGroupMember: a
             .model({
@@ -416,9 +430,19 @@ const schema = a
                 allow.ownerDefinedIn("ownerUserId").to(["read"]),
             ]),
 
+        LocationLogWriteResult: a.customType({
+            id: a.id().required(),
+            created: a.boolean().required(),
+        }),
         ShareGroupActionResult: a.customType({
             success: a.boolean().required(),
             message: a.string().required(),
+            accepted: a.boolean(),
+            operationId: a.string(),
+            status: a.string(),
+            phase: a.string(),
+            completedSessionCount: a.integer(),
+            canCancel: a.boolean(),
 
             groupId: a.id(),
             groupName: a.string(),
@@ -463,6 +487,8 @@ const schema = a
         ShareGroupSummary: a.customType({
             groupId: a.id().required(),
             name: a.string().required(),
+            lifecycle: a.string(),
+            operationId: a.string(),
             role: a.string().required(),
             /*
              * このグループに所属しているメンバー。
@@ -495,10 +521,50 @@ const schema = a
             .authorization((allow) => [allow.authenticated()])
             .handler(a.handler.function(shareGroupApi)),
 
+        ingestLocationLog: a.mutation()
+            .arguments({ input: a.json().required() })
+            .returns(a.ref("LocationLogWriteResult"))
+            .authorization(allow => [allow.authenticated()])
+            .handler(a.handler.function(shareGroupApi)),
+        leaveShareGroup: a.mutation()
+            .arguments({ groupId: a.id().required(), requestId: a.string().required() })
+            .returns(a.ref("ShareGroupActionResult"))
+            .authorization(allow => [allow.authenticated()])
+            .handler(a.handler.function(shareGroupApi)),
+        removeShareGroupMember: a.mutation()
+            .arguments({ groupId: a.id().required(), targetUserId: a.string().required(), requestId: a.string().required() })
+            .returns(a.ref("ShareGroupActionResult"))
+            .authorization(allow => [allow.authenticated()])
+            .handler(a.handler.function(shareGroupApi)),
+        deactivateOwnedShareGroup: a.mutation()
+            .arguments({ groupId: a.id().required(), requestId: a.string().required() })
+            .returns(a.ref("ShareGroupActionResult"))
+            .authorization(allow => [allow.authenticated()])
+            .handler(a.handler.function(shareGroupApi)),
+        listMyShareGroupAccessOperations: a.query()
+            .returns(a.ref("ShareGroupActionResult").array())
+            .authorization(allow => [allow.authenticated()])
+            .handler(a.handler.function(shareGroupApi)),
+        getShareGroupAccessOperation: a.query()
+            .arguments({ groupId: a.id().required(), operationId: a.string().required() })
+            .returns(a.ref("ShareGroupActionResult"))
+            .authorization(allow => [allow.authenticated()])
+            .handler(a.handler.function(shareGroupApi)),
+        resumeShareGroupAccessOperation: a.mutation()
+            .arguments({ groupId: a.id().required(), operationId: a.string().required() })
+            .returns(a.ref("ShareGroupActionResult"))
+            .authorization(allow => [allow.authenticated()])
+            .handler(a.handler.function(shareGroupApi)),
+        cancelShareGroupAccessOperation: a.mutation()
+            .arguments({ groupId: a.id().required(), operationId: a.string().required() })
+            .returns(a.ref("ShareGroupActionResult"))
+            .authorization(allow => [allow.authenticated()])
+            .handler(a.handler.function(shareGroupApi)),
         deleteOwnedShareGroup: a
             .mutation()
             .arguments({
                 groupId: a.id().required(),
+                requestId: a.string(),
             })
             .returns(a.ref("ShareGroupActionResult"))
             .authorization((allow) => [allow.authenticated()])
@@ -536,6 +602,13 @@ const schema = a
          *
          * GrantやsharedOwnersは変更しない。
          */
+        resumeHistoricalShareOperation: a
+            .mutation()
+            .arguments({ recordingSessionId: a.string().required() })
+            .returns(a.boolean())
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(shareGroupApi)),
+
         listHistoricalShareRecipients: a
             .query()
             .arguments({

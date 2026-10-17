@@ -29,6 +29,7 @@ import TermsConsentScreen from "../screens/TermsConsentScreen";
 import ActivityAnalyticsScreen from "../screens/ActivityAnalyticsScreen";
 
 import { getLegalConsentStatus } from "../services/legalConsentService";
+import { Test8OfflineSignOut } from "../components/GroupQueueTestControls";
 
 export type RootStackParamList = {
     LocationHome:
@@ -189,6 +190,7 @@ export default function RootNavigator() {
                 >
                     <Text style={styles.retryButtonText}>再試行</Text>
                 </Pressable>
+                {__DEV__ && <Test8OfflineSignOut />}
             </View>
         );
     }

@@ -362,7 +362,7 @@ export default function ActivityCalendarScreen({ navigation }: Props) {
             </View>
 
             {/* 画面本体 */}
-            <View style={styles.container}>
+            <View style={[styles.container, { paddingBottom: 14 + insets.bottom }]}>
                 {/* カレンダー */}
                 <View style={styles.calendarCard}>
                     <ActivityCalendar
@@ -1011,7 +1011,7 @@ const styles = StyleSheet.create({
     selectedDaySection: {
         flex: 1,
 
-        minHeight: 140,
+        minHeight: 0,
 
         marginTop: 12,
 
@@ -1050,6 +1050,7 @@ const styles = StyleSheet.create({
 
     selectedDayScrollView: {
         flex: 1,
+        minHeight: 0,
     },
 
     selectedDayList: {

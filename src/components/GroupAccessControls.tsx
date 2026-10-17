@@ -80,6 +80,7 @@ export function GroupAccessActions({
                 requestId,
                 ...(targetUserId ? { targetUserId } : {}),
             });
+            if (__DEV__) console.log("[GroupAccessAccepted]", JSON.stringify({ groupId: group.groupId, operationId: result.operationId, status: result.status, accepted: result.accepted, at: new Date().toISOString() }));
             if (result.status === "CANCELLED") {
                 delete requestIds.current[key];
                 throw new Error(
@@ -182,7 +183,7 @@ export function GroupAccessActions({
                     >
                         <Text>除外するメンバーを選択</Text>
                         <ScrollView
-                            style={{ flex: 1, minHeight: 0 }}
+                            style={{ flexGrow: 0, flexShrink: 1 }}
                             keyboardShouldPersistTaps="handled"
                         >
                             {(group.members ?? [])

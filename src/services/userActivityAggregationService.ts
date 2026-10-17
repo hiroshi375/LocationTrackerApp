@@ -210,12 +210,8 @@ async function findUserProfile(userId: string): Promise<any | null> {
     let nextToken: string | null = null;
 
     do {
-        const result = (await model.list({
-            filter: {
-                userId: {
-                    eq: userId,
-                },
-            },
+        const result = (await model.listUserProfilesByUserId({
+            userId,
             limit: 100,
             nextToken: nextToken ?? undefined,
         })) as ListResult;
@@ -277,6 +273,18 @@ async function synchronizeMonthlySummaries(
             displayName: profile.displayName ?? profile.email ?? "ユーザー",
             iconImagePath: profile.iconImagePath ?? null,
         };
+
+        // Recompute from the source sessions, but only write changed totals.
+        // Remove unchanged rows from the stale set before skipping the write.
+        if (
+            existing?.id &&
+            Object.entries(payload).every(
+                ([key, value]) => (existing[key] ?? null) === (value ?? null),
+            )
+        ) {
+            existingMap.delete(aggregate.monthKey);
+            continue;
+        }
 
         const result = existing?.id
             ? await model.update({
@@ -352,6 +360,18 @@ async function synchronizeWeeklySummaries(
 
             iconImagePath: profile.iconImagePath ?? null,
         };
+
+        // Recompute from the source sessions, but only write changed totals.
+        // Remove unchanged rows from the stale set before skipping the write.
+        if (
+            existing?.id &&
+            Object.entries(payload).every(
+                ([key, value]) => (existing[key] ?? null) === (value ?? null),
+            )
+        ) {
+            existingMap.delete(aggregate.weekKey);
+            continue;
+        }
 
         const result = existing?.id
             ? await model.update({

@@ -480,8 +480,10 @@ export async function upsertRecordingSessionSummary(
      * skipSubscriptionUsageRecalculation = true として
      * 各sessionごとの再計算をスキップする。
      */
+    let currentMonthRecordedActivityCount: number | undefined;
     if (!options?.skipSubscriptionUsageRecalculation) {
-        await recalculateCurrentMonthRecordedActivityUsage(currentUser.userId);
+        currentMonthRecordedActivityCount =
+            await recalculateCurrentMonthRecordedActivityUsage(currentUser.userId);
     }
 
     /*
@@ -493,6 +495,8 @@ export async function upsertRecordingSessionSummary(
     if (!options?.skipAggregation) {
         await recalculateUserActivityAggregates(currentUser.userId);
     }
+
+    return { currentMonthRecordedActivityCount };
 }
 
 export async function updateRecordingSessionActivityType(
@@ -1282,10 +1286,16 @@ async function updateLocationLogClassification(
 
     const model = client.models.LocationLog as any;
 
-    for (let index = 0; index < logs.length; index += 25) {
+    const changedLogs = logs.filter(
+        (log) =>
+            log.activityType !== activityType ||
+            log.isAggregationTarget !== isAggregationTarget,
+    );
+
+    for (let index = 0; index < changedLogs.length; index += 25) {
         // 各バッチの直前にも認証状態を確認する。
         await assertCurrentRecordingOwner(expectedUserId);
-        const batch = logs.slice(index, index + 25);
+        const batch = changedLogs.slice(index, index + 25);
         const results = await Promise.all(
             batch.map((log) =>
                 model.update({
@@ -1310,11 +1320,13 @@ async function listLocationLogsBySessionId(
     const model = client.models.LocationLog as any;
 
     do {
-        const result = (await model.list({
-            filter: { recordingSessionId: { eq: recordingSessionId } },
-            limit: 1000,
-            nextToken: nextToken ?? undefined,
-        })) as ListResult;
+        const result =
+            (await model.listLocationLogsBySessionAndRecordedAt({
+                recordingSessionId,
+                sortDirection: "ASC",
+                limit: 1000,
+                nextToken: nextToken ?? undefined,
+            })) as ListResult;
 
         if (result.errors) {
             throw new Error(

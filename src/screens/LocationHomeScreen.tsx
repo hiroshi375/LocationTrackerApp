@@ -1709,30 +1709,14 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             const locationLogModel = client.models.LocationLog as any;
 
             do {
-                const listParams: {
-                    filter: {
-                        recordingSessionId: {
-                            eq: string;
-                        };
-                    };
-                    limit: number;
-                    nextToken?: string;
-                } = {
-                    filter: {
-                        recordingSessionId: {
-                            eq: recordingSessionId,
-                        },
-                    },
-                    limit: 1000,
-                };
-
-                if (nextToken) {
-                    listParams.nextToken = nextToken;
-                }
-
-                const result = (await locationLogModel.list(
-                    listParams,
-                )) as LocationLogListResult;
+                // Query only this session; keep all pages and fail on API errors.
+                const result =
+                    (await locationLogModel.listLocationLogsBySessionAndRecordedAt({
+                        recordingSessionId,
+                        sortDirection: "ASC",
+                        limit: 1000,
+                        nextToken: nextToken ?? undefined,
+                    })) as LocationLogListResult;
 
                 if (result.errors) {
                     console.error(
@@ -1849,7 +1833,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                     ? continuationState
                     : null;
 
-            await upsertRecordingSessionSummary(
+            const savedSummary = await upsertRecordingSessionSummary(
                 pendingSessionId,
                 sessionName,
                 pendingSessionShareOwnerValues,
@@ -1876,7 +1860,15 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
              * RecordingSession保存によって更新された
              * 今月のアクティビティ件数をホーム画面へ即時反映する。
              */
-            await loadCurrentMonthActivityUsage();
+            if (
+                typeof savedSummary?.currentMonthRecordedActivityCount === "number"
+            ) {
+                setCurrentMonthActivityCount(
+                    savedSummary.currentMonthRecordedActivityCount,
+                );
+            } else {
+                await loadCurrentMonthActivityUsage();
+            }
 
             await clearRecordingContinuationState(pendingSessionId);
 

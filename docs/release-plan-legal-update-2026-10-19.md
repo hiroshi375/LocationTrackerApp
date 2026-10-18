@@ -46,3 +46,16 @@ app-version.jsonのlatestVersion/latestBuildはストアから取得可能な公
 ローカル検証：関連16テストPASS、フロント・バックエンド型チェック、公開文書全文の一致、iOS隔離再生成・pod install・最低OS設定・署名Team・Bundle ID・位置情報・地図・runtime1.0.3の照合。production JSはAndroid/iOSそれぞれ書き出す（Web版は今回の対象外）。保存API・共有バックエンドの追加デプロイは行わない。
 
 2026-10-19ローカル検証結果：公開文書・再同意・削除の16件PASS。production JS書き出しはAndroid/iOSとも成功。隔離prebuildとpod installが成功し、署名・識別子・runtime1.0.3・最低iOS15.1・地図・バックグラウンド位置情報とPods306設定が一致した。EAS送信対象から生成ネイティブ、docs、tests、ローカル環境・認証テスト出力・エディタ設定・旧サンプルルートを除外した。
+
+## ビルド受付・公開Web反映の記録
+
+ソースコミット2bf6e3fをorigin/mainへpush後、productionを各OS1回のみ起動した（追加APKなし）。
+
+| OS | バージョン | EASビルドID |
+|---|---|---|
+| Android | 1.0.3（24） | 1fd14aab-eb52-4f11-a5e8-120ee81779a8 |
+| iOS | 1.0.3（9） | a4367138-5404-475e-98a1-0bbd111329b9 |
+
+GitHub Pagesのmain/docsデプロイが2bf6e3fで成功し、privacy/index.html、terms/index.html、account-deletion/index.html、app-version.jsonのHTTP取得内容がローカルのコミット内容と完全一致した。公開最新版通知の切替は各ストアで実際に取得可能になってから行う。
+
+Apple側は1.0.2（8）がWaiting for Review、手動公開設定。旧版の審査取り下げ・一般公開はこの時点では行っていない。新IPA完成後にTestFlight確認を進め、審査提出前に1.0.2の扱いを確定する。

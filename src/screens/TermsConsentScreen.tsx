@@ -18,12 +18,13 @@ import type { RootStackParamList } from "../navigation/RootNavigator";
 import { acceptLegalDocuments } from "../services/legalConsentService";
 
 type Props = {
+    requiresRenewal?: boolean;
     onAccepted: () => void;
 };
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
-export default function TermsConsentScreen({ onAccepted }: Props) {
+export default function TermsConsentScreen({ onAccepted, requiresRenewal = false }: Props) {
     const navigation = useNavigation<NavigationProp>();
     const insets = useSafeAreaInsets();
 
@@ -104,11 +105,12 @@ export default function TermsConsentScreen({ onAccepted }: Props) {
                         />
                     </View>
 
-                    <Text style={styles.welcomeTitle}>AcLog Fitへようこそ</Text>
+                    <Text style={styles.welcomeTitle}>{requiresRenewal ? "利用規約・プライバシーポリシー改定のお知らせ" : "AcLog Fitへようこそ"}</Text>
 
                     <Text style={styles.welcomeDescription}>
-                        AcLog Fitをご利用いただく前に、
-                        利用規約とプライバシーポリシーをご確認ください。
+                        {requiresRenewal
+                            ? "以前に同意いただいた文書が改定されました。共有範囲と解除、位置情報の取扱い、保存・削除について、両文書の全文を再度ご確認ください。同意は自動では行われません。"
+                            : "AcLog Fitをご利用いただく前に、利用規約とプライバシーポリシーをご確認ください。"}
                     </Text>
                 </View>
 
@@ -326,7 +328,7 @@ export default function TermsConsentScreen({ onAccepted }: Props) {
                             />
 
                             <Text style={styles.acceptButtonText}>
-                                同意して利用を開始
+                                {requiresRenewal ? "改定後の両文書に同意して続ける" : "同意して利用を開始"}
                             </Text>
                         </>
                     )}
@@ -340,8 +342,8 @@ export default function TermsConsentScreen({ onAccepted }: Props) {
                     />
 
                     <Text style={styles.note}>
-                        一度同意すると、次回以降のログイン時には
-                        この画面は表示されません。
+                        同意済みの文書について、通常は再表示しません。
+                        同意の再確認が必要な改定時には、再度お知らせします。
                     </Text>
                 </View>
             </ScrollView>

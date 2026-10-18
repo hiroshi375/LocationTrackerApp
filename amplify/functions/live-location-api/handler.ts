@@ -1,3 +1,4 @@
+import { assertAccountNotDeleting } from "../share-group-api/accountDeletionGuard";
 import {
     readShareState,
     updateCoordinates,
@@ -36,6 +37,10 @@ export const handler = async (event: LiveLocationEvent) => {
         throw new Error("UNAUTHORIZED");
     }
 
+    await assertAccountNotDeleting(sub);
+    for (const owner of event.arguments?.sharedOwners ?? []) {
+        if (typeof owner === "string") await assertAccountNotDeleting(owner.split("::")[0]);
+    }
     const fieldName = event.info?.fieldName ?? event.fieldName;
 
     switch (fieldName) {

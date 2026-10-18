@@ -1,3 +1,5 @@
+import { advanceAccountDeletion } from "./accountDeletion";
+import { assertAccountNotDeleting } from "./accountDeletionGuard";
 import { createLegacyLocationLog, createLegacyRecordingSession } from "./legacyRecordingWrite";
 import { prepareStoppedHistoricalRecovery } from "./historicalRecoveryAdmission";
 import { readSessionLogs, withSessionLogInventory, resetSessionLogInventory } from "./sessionLogReader";
@@ -1139,6 +1141,18 @@ export const handler = async (event: any) => {
             userId: event?.identity?.sub ?? event?.identity?.username ?? null,
         }),
     );
+
+    if (operation === "deleteCurrentAccountData") {
+        if (Object.keys(event.arguments ?? {}).length) throw new Error("削除対象は本人に限定されます。");
+        const result = await advanceAccountDeletion(getCaller(event).userId);
+        console.log("[AccountDeletion] progress", result);
+        return result;
+    }
+    // Deny only accounts with an explicit deletion request; existing save API contracts are unchanged.
+    const recoveryOperations = ["resumeHistoricalShareOperation", "resumeShareGroupAccessOperation", "getShareGroupAccessOperation", "listMyShareGroupAccessOperations"];
+    if (!recoveryOperations.includes(operation)) await assertAccountNotDeleting(getCaller(event).userId);
+    const recipients = [event.arguments?.recipientUserId, ...(event.arguments?.recipientUserIds ?? [])];
+    for (const recipient of recipients) if (typeof recipient === "string") await assertAccountNotDeleting(recipient);
 
     switch (operation) {
         case "createShareGroupWithInviteCode":

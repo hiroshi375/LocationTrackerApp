@@ -1,3 +1,6 @@
+import { getCurrentUser, signOut } from "aws-amplify/auth";
+import { isAccountDeletionPending } from "../services/accountDeletionState";
+import { deleteCurrentAccount } from "../services/accountDeletionService";
 import {
     NavigationContainer,
     createNavigationContainerRef,
@@ -101,6 +104,9 @@ export default function RootNavigator() {
     // 利用規約・プライバシーポリシーへの同意状態
     // ============================================================
 
+    const [pendingAccountDeletion, setPendingAccountDeletion] = useState(false);
+    const [resumingAccountDeletion, setResumingAccountDeletion] = useState(false);
+    const [requiresLegalRenewal, setRequiresLegalRenewal] = useState(false);
     const [checkingConsent, setCheckingConsent] = useState(true);
 
     const [hasAcceptedLegalDocuments, setHasAcceptedLegalDocuments] =
@@ -113,17 +119,23 @@ export default function RootNavigator() {
     /*
      * UserProfileから同意状態を取得する。
      *
-     * termsAcceptedAt と privacyPolicyAcceptedAt の両方が
-     * 保存されていれば同意済みと判断する。
+     * 有効化された文書版と保存済みの同意状態を確認する。
      */
     const loadConsentStatus = useCallback(async () => {
         try {
             setCheckingConsent(true);
             setConsentLoadError(null);
 
+            const user = await getCurrentUser();
+            if (await isAccountDeletionPending(user.userId)) {
+                setPendingAccountDeletion(true);
+                return;
+            }
+            setPendingAccountDeletion(false);
             const status = await getLegalConsentStatus();
 
             setHasAcceptedLegalDocuments(status.hasAccepted);
+            setRequiresLegalRenewal(status.requiresRenewal);
         } catch (error) {
             console.error("[RootNavigator] Legal consent check error:", error);
 
@@ -169,6 +181,32 @@ export default function RootNavigator() {
     // この場合、未確認のままホーム画面へ進ませず、
     // 再試行できるようにする。
     // ============================================================
+
+    if (pendingAccountDeletion) {
+        return (
+            <View style={styles.centerContainer}>
+                <Text style={styles.errorTitle}>アカウント削除が未完了です</Text>
+                <Text style={styles.errorText}>通信を確認し、削除を再開してください。削除済みデータは元に戻せません。</Text>
+                {consentLoadError && <Text style={styles.errorText}>{consentLoadError}</Text>}
+                {resumingAccountDeletion ? <ActivityIndicator /> : (
+                    <>
+                        <Pressable style={styles.retryButton} onPress={() => {
+                            setResumingAccountDeletion(true);
+                            setConsentLoadError(null);
+                            void deleteCurrentAccount().catch(error => {
+                                setConsentLoadError(error instanceof Error ? error.message : "削除を再開できませんでした。");
+                            }).finally(() => setResumingAccountDeletion(false));
+                        }}>
+                            <Text style={styles.retryButtonText}>アカウント削除を再開</Text>
+                        </Pressable>
+                        <Pressable onPress={() => { void signOut(); }}>
+                            <Text style={styles.statusText}>ログアウト</Text>
+                        </Pressable>
+                    </>
+                )}
+            </View>
+        );
+    }
 
     if (consentLoadError) {
         return (
@@ -241,6 +279,7 @@ export default function RootNavigator() {
                         >
                             {() => (
                                 <TermsConsentScreen
+                                    requiresRenewal={requiresLegalRenewal}
                                     onAccepted={() => {
                                         /*
                                          * acceptLegalDocuments()による

@@ -581,6 +581,15 @@ const schema = a
             .authorization((allow) => [allow.authenticated()])
             .handler(a.handler.function(shareGroupApi)),
 
+        AccountDeletionProgress: a.customType({
+            completed: a.boolean().required(),
+            phase: a.string().required(),
+        }),
+        deleteCurrentAccountData: a.mutation()
+            .returns(a.ref("AccountDeletionProgress"))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(shareGroupApi)),
+
         setHistoricalShareGrant: a
             .mutation()
             .arguments({

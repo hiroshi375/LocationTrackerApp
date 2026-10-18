@@ -1,3 +1,4 @@
+import { isAccountDeletionPending } from "./accountDeletionState";
 import { createLocationLog } from "./locationLogWriteService";
 import { fetchAuthSession } from "aws-amplify/auth";
 
@@ -178,7 +179,7 @@ export async function drainLocationQueueSafely(
      * timeout後も元のPromise自体はキャンセルされないため、
      * ロックだけを失効させると多重drainになる。
      */
-    if (drainQueueState) {
+    if (await isAccountDeletionPending(input.userId) || drainQueueState) {
         return {
             pendingCount: 0,
             processedCount: 0,

@@ -223,3 +223,20 @@ for (const field of ["createLocationLog", "createRecordingSession"]) {
     });
     resolver.pipelineConfig = { functions: [compat.attrFunctionId] };
 }
+
+// Account deletion is isolated from recording schemas/resolvers. No client table access.
+const accountDeletionTable = new Table(historicalShareStack, "AccountDeletionTable", {
+    timeToLiveAttribute: "expiresAt",
+    partitionKey: { name: "userId", type: AttributeType.STRING },
+    billingMode: BillingMode.PAY_PER_REQUEST,
+    removalPolicy: RemovalPolicy.RETAIN,
+});
+accountDeletionTable.grantReadWriteData(accessLambda);
+accessLambda.addEnvironment("ACCOUNT_DELETION_TABLE_NAME", accountDeletionTable.tableName);
+for (const name of ["LiveLocation", "UserActivityMonthlySummary", "UserActivityWeeklySummary", "BackgroundLocationDebugLog", "UserDeviceSession"]) {
+    const table = backend.data.resources.tables[name];
+    table.grantReadWriteData(accessLambda);
+    accessLambda.addEnvironment(`ACCOUNT_DELETE_${name.toUpperCase()}_TABLE_NAME`, table.tableName);
+}
+accountDeletionTable.grantReadData(liveLocationLambda);
+liveLocationLambda.addEnvironment("ACCOUNT_DELETION_TABLE_NAME", accountDeletionTable.tableName);

@@ -3,19 +3,21 @@ import { getCurrentUser } from "aws-amplify/auth";
 import { client } from "../lib/client";
 import { ensureUserProfile } from "./userProfileService";
 
-/*
- * 現在の利用規約・プライバシーポリシーのバージョン。
- *
- * 今回は「初回同意のみ」で判定するため、
- * バージョンが変わっても自動的な再同意は行わない。
- *
- * ただし、同意時点のバージョンはDBへ保存しておく。
- */
-export const CURRENT_TERMS_VERSION = "2026-09-23";
-export const CURRENT_PRIVACY_POLICY_VERSION = "2026-09-23";
+import {
+    ACTIVE_LEGAL_DOCUMENT_VERSION,
+    PENDING_LEGAL_DOCUMENT_VERSION,
+    LEGAL_DOCUMENTS_V2_ENABLED,
+    evaluateLegalConsent,
+} from "./legalConsentPolicy";
+
+// Match the consent version to the documents displayed by the application.
+export const CURRENT_TERMS_VERSION = LEGAL_DOCUMENTS_V2_ENABLED
+    ? PENDING_LEGAL_DOCUMENT_VERSION : ACTIVE_LEGAL_DOCUMENT_VERSION;
+export const CURRENT_PRIVACY_POLICY_VERSION = CURRENT_TERMS_VERSION;
 
 export type LegalConsentStatus = {
     hasAccepted: boolean;
+    requiresRenewal: boolean;
 
     termsAcceptedAt: string | null;
     termsVersion: string | null;
@@ -86,8 +88,8 @@ async function getCurrentConsentProfile(): Promise<UserProfileConsentRecord> {
 /*
  * 利用規約・プライバシーポリシーへの同意状態を取得する。
  *
- * 現在は「初回同意のみ」の仕様なので、
- * versionではなくacceptedAtの有無で判定する。
+ * 承認済みの改定を有効化した後は、両文書の同意版も照合する。
+ * 取得に失敗した場合は呼び出し元の再試行画面へ戻す。
  */
 export async function getLegalConsentStatus(): Promise<LegalConsentStatus> {
     const profile = await getCurrentConsentProfile();
@@ -96,8 +98,10 @@ export async function getLegalConsentStatus(): Promise<LegalConsentStatus> {
     const privacyPolicyAcceptedAt = profile.privacyPolicyAcceptedAt ?? null;
 
     return {
-        hasAccepted:
-            Boolean(termsAcceptedAt) && Boolean(privacyPolicyAcceptedAt),
+        ...evaluateLegalConsent(profile, {
+            terms: CURRENT_TERMS_VERSION,
+            privacy: CURRENT_PRIVACY_POLICY_VERSION,
+        }, LEGAL_DOCUMENTS_V2_ENABLED),
 
         termsAcceptedAt,
         termsVersion: profile.termsVersion ?? null,
@@ -125,7 +129,7 @@ export async function acceptLegalDocuments(): Promise<void> {
         privacyPolicyVersion: CURRENT_PRIVACY_POLICY_VERSION,
     });
 
-    if (result.errors?.length) {
+    if (result.errors?.length || !result.data) {
         console.error(
             "[LegalConsent] UserProfile update errors:",
             result.errors,

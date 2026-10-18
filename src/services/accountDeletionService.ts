@@ -1,3 +1,5 @@
+import { accountDeletionStateKey } from "./accountDeletionState";
+import { deleteLocationQueueForAccount } from "./locationLocationQueueService";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { deleteUser, getCurrentUser } from "aws-amplify/auth";
 import { remove } from "aws-amplify/storage";
@@ -26,6 +28,7 @@ type ListResult<T> = {
 };
 
 export type AccountDeletionProgress =
+    | "deletingServerData"
     | "stoppingRecording"
     | "loadingProfile"
     | "deletingLocationLogs"
@@ -63,6 +66,9 @@ export async function deleteCurrentAccount(
 
     const recordingStatus = await getBackgroundRecordingStatus();
 
+    if (recordingStatus.state?.userId && recordingStatus.state.userId !== userId) {
+        throw new Error("別アカウントの記録状態が残っています。そのアカウントで記録を停止してから削除してください。");
+    }
     if (recordingStatus.hasStarted || recordingStatus.state) {
         await stopBackgroundLocationRecording();
     }
@@ -88,63 +94,36 @@ export async function deleteCurrentAccount(
         ),
     );
 
-    /*
-     * 3. LocationLogを削除
-     */
-    onProgress?.("deletingLocationLogs");
+    // Persist the image inventory before cloud profiles can be removed. Resume after app exit.
+    const stateKey = accountDeletionStateKey(userId);
+    const previousRaw = await AsyncStorage.getItem(stateKey);
+    const previous = previousRaw ? JSON.parse(previousRaw) as { imagePaths?: string[] } : {};
+    const allImagePaths = [...new Set([...profileImagePaths, ...(previous.imagePaths ?? [])])];
+    await AsyncStorage.setItem(stateKey, JSON.stringify({ imagePaths: allImagePaths }));
 
-    await deleteAllByUserId(
-        client.models.LocationLog as any,
-        userId,
-        "LocationLog",
-    );
-
-    /*
-     * 4. RecordingSessionを削除
-     */
-    onProgress?.("deletingRecordingSessions");
-
-    await deleteAllByUserId(
-        client.models.RecordingSession as any,
-        userId,
-        "RecordingSession",
-    );
-
-    /*
-     * 5. LiveLocationを削除
-     */
-    onProgress?.("deletingLiveLocations");
-
-    await deleteAllByUserId(
-        client.models.LiveLocation as any,
-        userId,
-        "LiveLocation",
-    );
-
-    /*
-     * 6. UserActivityMonthlySummaryを削除
-     */
-    onProgress?.("deletingMonthlySummaries");
-
-    await deleteAllByUserId(
-        client.models.UserActivityMonthlySummary as any,
-        userId,
-        "UserActivityMonthlySummary",
-    );
-
-    /*
-     * 7. BackgroundLocationDebugLogを削除
-     *
-     * ユーザー指定には含まれていませんでしたが、
-     * userIdや記録セッション情報を持つため削除対象に含めています。
-     */
-    onProgress?.("deletingDebugLogs");
-
-    await deleteAllByUserId(
-        client.models.BackgroundLocationDebugLog as any,
-        userId,
-        "BackgroundLocationDebugLog",
-    );
+    onProgress?.("deletingServerData");
+    // Each call processes one durable page; a hard timeout does not lose the cursor.
+    // A bounded UI wait leaves the account intact for a deliberate retry.
+    const deadline = Date.now() + 10 * 60 * 1000;
+    let complete = false;
+    let emptyResponses = 0;
+    while (Date.now() < deadline) {
+        const result = await client.mutations.deleteCurrentAccountData({}) as unknown as {
+            data?: { completed: boolean; phase: string } | null; errors?: readonly unknown[];
+        };
+        if (!result.errors?.length && !result.data && emptyResponses++ < 3) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
+        }
+        if (result.errors?.length || !result.data) {
+            throw new Error("サーバーデータの削除が完了していません。通信を確認し、アカウント削除を再実行して再開してください。");
+        }
+        emptyResponses = 0;
+        if (result.data.completed) { complete = true; break; }
+        const waiting = result.data.phase === "処理中" || result.data.phase === "実行中の記録処理の終了待ち";
+        await new Promise(resolve => setTimeout(resolve, waiting ? 1000 : 150));
+    }
+    if (!complete) throw new Error("削除処理の進捗を保存しました。アカウント削除を再実行して続きから再開してください。");
 
     /*
      * 8. S3プロフィール画像を削除
@@ -153,7 +132,7 @@ export async function deleteCurrentAccount(
      */
     onProgress?.("deletingProfileImage");
 
-    for (const imagePath of profileImagePaths) {
+    for (const imagePath of allImagePaths) {
         await deleteProfileImage(imagePath);
     }
 
@@ -176,6 +155,7 @@ export async function deleteCurrentAccount(
      */
     onProgress?.("deletingLocalData");
 
+    await deleteLocationQueueForAccount(userId);
     await removeLocationTrackerStorageKeys();
 
     /*
@@ -186,6 +166,7 @@ export async function deleteCurrentAccount(
     onProgress?.("deletingCognitoUser");
 
     await deleteUser();
+    await AsyncStorage.removeItem(stateKey);
 }
 
 async function listAllByUserId<T extends DeletableItem>(
@@ -207,7 +188,7 @@ async function listAllByUserId<T extends DeletableItem>(
             nextToken: nextToken ?? undefined,
         })) as ListResult<T>;
 
-        if (result.errors) {
+        if (Array.isArray(result.errors) ? result.errors.length > 0 : Boolean(result.errors)) {
             console.error(`${modelName} list errors:`, result.errors);
 
             throw new Error(`${modelName}の取得に失敗しました。`);
@@ -218,20 +199,6 @@ async function listAllByUserId<T extends DeletableItem>(
     } while (nextToken);
 
     return allItems;
-}
-
-async function deleteAllByUserId(
-    model: any,
-    userId: string,
-    modelName: string,
-): Promise<void> {
-    const items = await listAllByUserId<DeletableItem>(
-        model,
-        userId,
-        modelName,
-    );
-
-    await deleteItems(model, items, modelName);
 }
 
 async function deleteItems(
@@ -256,9 +223,9 @@ async function deleteItems(
             ),
         );
 
-        const errorResult = results.find((result) => result.errors);
+        const errorResult = results.find((result) => result.errors?.length || !result.data);
 
-        if (errorResult?.errors) {
+        if (errorResult) {
             console.error(`${modelName} delete errors:`, errorResult.errors);
 
             throw new Error(`${modelName}の削除に失敗しました。`);

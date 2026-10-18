@@ -969,6 +969,9 @@ function getDeleteAccountProgressText(
     progress: AccountDeletionProgress | null,
 ): string {
     switch (progress) {
+        case "deletingServerData":
+            return "共有解除・関連データの削除中（途中終了しても再実行できます）...";
+
         case "stoppingRecording":
             return "自動記録を停止中...";
 

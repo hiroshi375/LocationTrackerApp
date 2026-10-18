@@ -1537,3 +1537,11 @@ export async function debugPrintLocationQueueRecoverySummary(): Promise<void> {
 
     console.log("[SQLiteRecovery] sessions:", JSON.stringify(sessions));
 }
+
+/** Explicit account deletion only. Never used by routine queue retention. */
+export async function deleteLocationQueueForAccount(userId: string): Promise<number> {
+    if (!userId.trim()) throw new Error("削除するユーザーを特定できません。");
+    const db = await getDatabase();
+    const result = await db.runAsync(`DELETE FROM ${TABLE_NAME} WHERE user_id = $userId`, {$userId: userId});
+    return result.changes;
+}

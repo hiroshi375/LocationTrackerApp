@@ -14,7 +14,13 @@
     "user_verification_types": [
       "email"
     ],
-    "groups": [],
+    "groups": [
+      {
+        "Admins": {
+          "precedence": 0
+        }
+      }
+    ],
     "mfa_configuration": "NONE",
     "password_policy": {
       "min_length": 8,
@@ -434,6 +440,14 @@
             {
               "type": "key",
               "properties": {
+                "fields": [
+                  "id"
+                ]
+              }
+            },
+            {
+              "type": "key",
+              "properties": {
                 "name": "recordingSessionsByUserIdAndEndedAt",
                 "queryField": "listRecordingSessionsByUserAndEndedAt",
                 "fields": [
@@ -625,6 +639,41 @@
               "isRequired": false,
               "attributes": []
             },
+            "weightKg": {
+              "name": "weightKg",
+              "isArray": false,
+              "type": "Float",
+              "isRequired": false,
+              "attributes": []
+            },
+            "termsAcceptedAt": {
+              "name": "termsAcceptedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": []
+            },
+            "termsVersion": {
+              "name": "termsVersion",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "privacyPolicyAcceptedAt": {
+              "name": "privacyPolicyAcceptedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": []
+            },
+            "privacyPolicyVersion": {
+              "name": "privacyPolicyVersion",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
             "totalAggregationDistanceMeters": {
               "name": "totalAggregationDistanceMeters",
               "isArray": false,
@@ -685,6 +734,34 @@
               "name": "currentMonthRecordedActivityCount",
               "isArray": false,
               "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "appVersion": {
+              "name": "appVersion",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "appBuildVersion": {
+              "name": "appBuildVersion",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "lastAppPlatform": {
+              "name": "lastAppPlatform",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "lastAppOpenedAt": {
+              "name": "lastAppOpenedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
               "isRequired": false,
               "attributes": []
             },
@@ -891,6 +968,143 @@
             "sortKeyFieldNames": []
           }
         },
+        "UserActivityWeeklySummary": {
+          "name": "UserActivityWeeklySummary",
+          "fields": {
+            "id": {
+              "name": "id",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true,
+              "attributes": []
+            },
+            "userId": {
+              "name": "userId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "weekKey": {
+              "name": "weekKey",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "distanceMeters": {
+              "name": "distanceMeters",
+              "isArray": false,
+              "type": "Float",
+              "isRequired": true,
+              "attributes": []
+            },
+            "durationSeconds": {
+              "name": "durationSeconds",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": true,
+              "attributes": []
+            },
+            "sessionCount": {
+              "name": "sessionCount",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": true,
+              "attributes": []
+            },
+            "displayName": {
+              "name": "displayName",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "iconImagePath": {
+              "name": "iconImagePath",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "createdAt": {
+              "name": "createdAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": [],
+              "isReadOnly": true
+            },
+            "updatedAt": {
+              "name": "updatedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": [],
+              "isReadOnly": true
+            }
+          },
+          "syncable": true,
+          "pluralName": "UserActivityWeeklySummaries",
+          "attributes": [
+            {
+              "type": "model",
+              "properties": {}
+            },
+            {
+              "type": "key",
+              "properties": {
+                "name": "userActivityWeeklySummariesByUserIdAndWeekKey",
+                "queryField": "listWeeklyActivitySummariesByUser",
+                "fields": [
+                  "userId",
+                  "weekKey"
+                ]
+              }
+            },
+            {
+              "type": "key",
+              "properties": {
+                "name": "userActivityWeeklySummariesByWeekKeyAndDistanceMeters",
+                "queryField": "listWeeklyActivityRanking",
+                "fields": [
+                  "weekKey",
+                  "distanceMeters"
+                ]
+              }
+            },
+            {
+              "type": "auth",
+              "properties": {
+                "rules": [
+                  {
+                    "provider": "userPools",
+                    "ownerField": "owner",
+                    "allow": "owner",
+                    "identityClaim": "cognito:username",
+                    "operations": [
+                      "create",
+                      "update",
+                      "delete",
+                      "read"
+                    ]
+                  },
+                  {
+                    "allow": "private",
+                    "operations": [
+                      "read"
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "primaryKeyInfo": {
+            "isCustomPrimaryKey": false,
+            "primaryKeyFieldName": "id",
+            "sortKeyFieldNames": []
+          }
+        },
         "LiveLocation": {
           "name": "LiveLocation",
           "fields": {
@@ -920,6 +1134,13 @@
               "isArray": false,
               "type": "Boolean",
               "isRequired": true,
+              "attributes": []
+            },
+            "lastStoppedRecordingSessionId": {
+              "name": "lastStoppedRecordingSessionId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
               "attributes": []
             },
             "latitude": {
@@ -965,6 +1186,20 @@
               "attributes": [],
               "isArrayNullable": true
             },
+            "shareRevision": {
+              "name": "shareRevision",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "shareEnabled": {
+              "name": "shareEnabled",
+              "isArray": false,
+              "type": "Boolean",
+              "isRequired": false,
+              "attributes": []
+            },
             "createdAt": {
               "name": "createdAt",
               "isArray": false,
@@ -989,13 +1224,10 @@
                     "provider": "userPools",
                     "ownerField": "owner",
                     "allow": "owner",
-                    "identityClaim": "cognito:username",
                     "operations": [
-                      "create",
-                      "update",
-                      "delete",
                       "read"
-                    ]
+                    ],
+                    "identityClaim": "cognito:username"
                   },
                   {
                     "provider": "userPools",
@@ -1031,6 +1263,13 @@
               "isArray": false,
               "type": "String",
               "isRequired": true,
+              "attributes": []
+            },
+            "lifecycle": {
+              "name": "lifecycle",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
               "attributes": []
             },
             "ownerUserId": {
@@ -1114,13 +1353,10 @@
                     "provider": "userPools",
                     "ownerField": "ownerUserId",
                     "allow": "owner",
-                    "identityClaim": "cognito:username",
                     "operations": [
-                      "create",
-                      "update",
-                      "delete",
                       "read"
-                    ]
+                    ],
+                    "identityClaim": "cognito:username"
                   }
                 ]
               }
@@ -1274,6 +1510,147 @@
           "primaryKeyInfo": {
             "isCustomPrimaryKey": true,
             "primaryKeyFieldName": "membershipId",
+            "sortKeyFieldNames": []
+          }
+        },
+        "HistoricalShareGrant": {
+          "name": "HistoricalShareGrant",
+          "fields": {
+            "grantId": {
+              "name": "grantId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "recordingSessionRecordId": {
+              "name": "recordingSessionRecordId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true,
+              "attributes": []
+            },
+            "ownerUserId": {
+              "name": "ownerUserId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "groupId": {
+              "name": "groupId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true,
+              "attributes": []
+            },
+            "recipientUserId": {
+              "name": "recipientUserId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "recipientOwnerValue": {
+              "name": "recipientOwnerValue",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "isActive": {
+              "name": "isActive",
+              "isArray": false,
+              "type": "Boolean",
+              "isRequired": true,
+              "attributes": []
+            },
+            "grantedAt": {
+              "name": "grantedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": true,
+              "attributes": []
+            },
+            "revokedAt": {
+              "name": "revokedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": []
+            },
+            "createdAt": {
+              "name": "createdAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": [],
+              "isReadOnly": true
+            },
+            "updatedAt": {
+              "name": "updatedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": [],
+              "isReadOnly": true
+            }
+          },
+          "syncable": true,
+          "pluralName": "HistoricalShareGrants",
+          "attributes": [
+            {
+              "type": "model",
+              "properties": {}
+            },
+            {
+              "type": "key",
+              "properties": {
+                "fields": [
+                  "grantId"
+                ]
+              }
+            },
+            {
+              "type": "key",
+              "properties": {
+                "name": "historicalShareGrantsByRecordingSessionRecordId",
+                "queryField": "listHistoricalGrantsBySession",
+                "fields": [
+                  "recordingSessionRecordId"
+                ]
+              }
+            },
+            {
+              "type": "key",
+              "properties": {
+                "name": "historicalShareGrantsByGroupId",
+                "queryField": "listHistoricalGrantsByGroup",
+                "fields": [
+                  "groupId"
+                ]
+              }
+            },
+            {
+              "type": "auth",
+              "properties": {
+                "rules": [
+                  {
+                    "provider": "userPools",
+                    "ownerField": "ownerUserId",
+                    "allow": "owner",
+                    "operations": [
+                      "read"
+                    ],
+                    "identityClaim": "cognito:username"
+                  }
+                ]
+              }
+            }
+          ],
+          "primaryKeyInfo": {
+            "isCustomPrimaryKey": true,
+            "primaryKeyFieldName": "grantId",
             "sortKeyFieldNames": []
           }
         },
@@ -1523,6 +1900,25 @@
         }
       },
       "nonModels": {
+        "LocationLogWriteResult": {
+          "name": "LocationLogWriteResult",
+          "fields": {
+            "id": {
+              "name": "id",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true,
+              "attributes": []
+            },
+            "created": {
+              "name": "created",
+              "isArray": false,
+              "type": "Boolean",
+              "isRequired": true,
+              "attributes": []
+            }
+          }
+        },
         "ShareGroupActionResult": {
           "name": "ShareGroupActionResult",
           "fields": {
@@ -1538,6 +1934,48 @@
               "isArray": false,
               "type": "String",
               "isRequired": true,
+              "attributes": []
+            },
+            "accepted": {
+              "name": "accepted",
+              "isArray": false,
+              "type": "Boolean",
+              "isRequired": false,
+              "attributes": []
+            },
+            "operationId": {
+              "name": "operationId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "status": {
+              "name": "status",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "phase": {
+              "name": "phase",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "completedSessionCount": {
+              "name": "completedSessionCount",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "canCancel": {
+              "name": "canCancel",
+              "isArray": false,
+              "type": "Boolean",
+              "isRequired": false,
               "attributes": []
             },
             "groupId": {
@@ -1585,6 +2023,53 @@
               "isArray": false,
               "type": "String",
               "isRequired": true,
+              "attributes": []
+            }
+          }
+        },
+        "HistoricalShareRecipient": {
+          "name": "HistoricalShareRecipient",
+          "fields": {
+            "grantId": {
+              "name": "grantId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "groupId": {
+              "name": "groupId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true,
+              "attributes": []
+            },
+            "recipientUserId": {
+              "name": "recipientUserId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "isActive": {
+              "name": "isActive",
+              "isArray": false,
+              "type": "Boolean",
+              "isRequired": true,
+              "attributes": []
+            },
+            "grantedAt": {
+              "name": "grantedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": true,
+              "attributes": []
+            },
+            "revokedAt": {
+              "name": "revokedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
               "attributes": []
             }
           }
@@ -1679,6 +2164,20 @@
               "isRequired": true,
               "attributes": []
             },
+            "lifecycle": {
+              "name": "lifecycle",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "operationId": {
+              "name": "operationId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
             "role": {
               "name": "role",
               "isArray": false,
@@ -1697,9 +2196,103 @@
               "isArrayNullable": true
             }
           }
+        },
+        "AccountDeletionProgress": {
+          "name": "AccountDeletionProgress",
+          "fields": {
+            "completed": {
+              "name": "completed",
+              "isArray": false,
+              "type": "Boolean",
+              "isRequired": true,
+              "attributes": []
+            },
+            "phase": {
+              "name": "phase",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            }
+          }
+        },
+        "LiveLocationSharingState": {
+          "name": "LiveLocationSharingState",
+          "fields": {
+            "revision": {
+              "name": "revision",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": true,
+              "attributes": []
+            },
+            "enabled": {
+              "name": "enabled",
+              "isArray": false,
+              "type": "Boolean",
+              "isRequired": true,
+              "attributes": []
+            },
+            "sharedOwners": {
+              "name": "sharedOwners",
+              "isArray": true,
+              "type": "String",
+              "isRequired": false,
+              "attributes": [],
+              "isArrayNullable": false
+            }
+          }
         }
       },
       "queries": {
+        "listMyShareGroupAccessOperations": {
+          "name": "listMyShareGroupAccessOperations",
+          "isArray": true,
+          "type": {
+            "nonModel": "ShareGroupActionResult"
+          },
+          "isRequired": false,
+          "isArrayNullable": true
+        },
+        "getShareGroupAccessOperation": {
+          "name": "getShareGroupAccessOperation",
+          "isArray": false,
+          "type": {
+            "nonModel": "ShareGroupActionResult"
+          },
+          "isRequired": false,
+          "arguments": {
+            "groupId": {
+              "name": "groupId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true
+            },
+            "operationId": {
+              "name": "operationId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            }
+          }
+        },
+        "listHistoricalShareRecipients": {
+          "name": "listHistoricalShareRecipients",
+          "isArray": true,
+          "type": {
+            "nonModel": "HistoricalShareRecipient"
+          },
+          "isRequired": false,
+          "isArrayNullable": false,
+          "arguments": {
+            "recordingSessionId": {
+              "name": "recordingSessionId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            }
+          }
+        },
         "listMyShareCandidates": {
           "name": "listMyShareCandidates",
           "isArray": true,
@@ -1728,6 +2321,54 @@
           "arguments": {
             "deviceId": {
               "name": "deviceId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            }
+          }
+        },
+        "getLiveLocationSharingState": {
+          "name": "getLiveLocationSharingState",
+          "isArray": false,
+          "type": {
+            "nonModel": "LiveLocationSharingState"
+          },
+          "isRequired": false
+        },
+        "diagnoseHistoricalShareMigrationAdmin": {
+          "name": "diagnoseHistoricalShareMigrationAdmin",
+          "isArray": false,
+          "type": "AWSJSON",
+          "isRequired": false,
+          "arguments": {
+            "ownerUserId": {
+              "name": "ownerUserId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            },
+            "recordingSessionId": {
+              "name": "recordingSessionId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            }
+          }
+        },
+        "diagnoseHistoricalShareRecoveryAdmin": {
+          "name": "diagnoseHistoricalShareRecoveryAdmin",
+          "isArray": false,
+          "type": "AWSJSON",
+          "isRequired": false,
+          "arguments": {
+            "ownerUserId": {
+              "name": "ownerUserId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            },
+            "recordingSessionId": {
+              "name": "recordingSessionId",
               "isArray": false,
               "type": "String",
               "isRequired": true
@@ -1784,6 +2425,241 @@
             }
           }
         },
+        "ingestLocationLog": {
+          "name": "ingestLocationLog",
+          "isArray": false,
+          "type": {
+            "nonModel": "LocationLogWriteResult"
+          },
+          "isRequired": false,
+          "arguments": {
+            "input": {
+              "name": "input",
+              "isArray": false,
+              "type": "AWSJSON",
+              "isRequired": true
+            }
+          }
+        },
+        "leaveShareGroup": {
+          "name": "leaveShareGroup",
+          "isArray": false,
+          "type": {
+            "nonModel": "ShareGroupActionResult"
+          },
+          "isRequired": false,
+          "arguments": {
+            "groupId": {
+              "name": "groupId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true
+            },
+            "requestId": {
+              "name": "requestId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            }
+          }
+        },
+        "removeShareGroupMember": {
+          "name": "removeShareGroupMember",
+          "isArray": false,
+          "type": {
+            "nonModel": "ShareGroupActionResult"
+          },
+          "isRequired": false,
+          "arguments": {
+            "groupId": {
+              "name": "groupId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true
+            },
+            "targetUserId": {
+              "name": "targetUserId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            },
+            "requestId": {
+              "name": "requestId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            }
+          }
+        },
+        "deactivateOwnedShareGroup": {
+          "name": "deactivateOwnedShareGroup",
+          "isArray": false,
+          "type": {
+            "nonModel": "ShareGroupActionResult"
+          },
+          "isRequired": false,
+          "arguments": {
+            "groupId": {
+              "name": "groupId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true
+            },
+            "requestId": {
+              "name": "requestId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            }
+          }
+        },
+        "resumeShareGroupAccessOperation": {
+          "name": "resumeShareGroupAccessOperation",
+          "isArray": false,
+          "type": {
+            "nonModel": "ShareGroupActionResult"
+          },
+          "isRequired": false,
+          "arguments": {
+            "groupId": {
+              "name": "groupId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true
+            },
+            "operationId": {
+              "name": "operationId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            }
+          }
+        },
+        "cancelShareGroupAccessOperation": {
+          "name": "cancelShareGroupAccessOperation",
+          "isArray": false,
+          "type": {
+            "nonModel": "ShareGroupActionResult"
+          },
+          "isRequired": false,
+          "arguments": {
+            "groupId": {
+              "name": "groupId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true
+            },
+            "operationId": {
+              "name": "operationId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            }
+          }
+        },
+        "deleteOwnedShareGroup": {
+          "name": "deleteOwnedShareGroup",
+          "isArray": false,
+          "type": {
+            "nonModel": "ShareGroupActionResult"
+          },
+          "isRequired": false,
+          "arguments": {
+            "groupId": {
+              "name": "groupId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true
+            },
+            "requestId": {
+              "name": "requestId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false
+            }
+          }
+        },
+        "shareHistoricalRecordingSession": {
+          "name": "shareHistoricalRecordingSession",
+          "isArray": false,
+          "type": "Boolean",
+          "isRequired": false,
+          "arguments": {
+            "recordingSessionId": {
+              "name": "recordingSessionId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            },
+            "groupId": {
+              "name": "groupId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true
+            },
+            "recipientUserIds": {
+              "name": "recipientUserIds",
+              "isArray": true,
+              "type": "String",
+              "isRequired": false,
+              "isArrayNullable": false
+            }
+          }
+        },
+        "deleteCurrentAccountData": {
+          "name": "deleteCurrentAccountData",
+          "isArray": false,
+          "type": {
+            "nonModel": "AccountDeletionProgress"
+          },
+          "isRequired": false
+        },
+        "setHistoricalShareGrant": {
+          "name": "setHistoricalShareGrant",
+          "isArray": false,
+          "type": "Boolean",
+          "isRequired": false,
+          "arguments": {
+            "recordingSessionId": {
+              "name": "recordingSessionId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            },
+            "groupId": {
+              "name": "groupId",
+              "isArray": false,
+              "type": "ID",
+              "isRequired": true
+            },
+            "recipientUserId": {
+              "name": "recipientUserId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            },
+            "enabled": {
+              "name": "enabled",
+              "isArray": false,
+              "type": "Boolean",
+              "isRequired": true
+            }
+          }
+        },
+        "resumeHistoricalShareOperation": {
+          "name": "resumeHistoricalShareOperation",
+          "isArray": false,
+          "type": "Boolean",
+          "isRequired": false,
+          "arguments": {
+            "recordingSessionId": {
+              "name": "recordingSessionId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            }
+          }
+        },
         "activateMyDeviceSession": {
           "name": "activateMyDeviceSession",
           "isArray": false,
@@ -1815,6 +2691,99 @@
               "isRequired": true
             }
           }
+        },
+        "updateLiveLocationCoordinates": {
+          "name": "updateLiveLocationCoordinates",
+          "isArray": false,
+          "type": "Boolean",
+          "isRequired": false,
+          "arguments": {
+            "expectedRevision": {
+              "name": "expectedRevision",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": true
+            },
+            "latitude": {
+              "name": "latitude",
+              "isArray": false,
+              "type": "Float",
+              "isRequired": true
+            },
+            "longitude": {
+              "name": "longitude",
+              "isArray": false,
+              "type": "Float",
+              "isRequired": true
+            },
+            "accuracy": {
+              "name": "accuracy",
+              "isArray": false,
+              "type": "Float",
+              "isRequired": false
+            }
+          }
+        },
+        "changeLiveLocationSharing": {
+          "name": "changeLiveLocationSharing",
+          "isArray": false,
+          "type": "Int",
+          "isRequired": false,
+          "arguments": {
+            "expectedRevision": {
+              "name": "expectedRevision",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": true
+            },
+            "sharedOwners": {
+              "name": "sharedOwners",
+              "isArray": true,
+              "type": "String",
+              "isRequired": false,
+              "isArrayNullable": false
+            }
+          }
+        },
+        "startLiveLocationRecording": {
+          "name": "startLiveLocationRecording",
+          "isArray": false,
+          "type": "Boolean",
+          "isRequired": false,
+          "arguments": {
+            "expectedRevision": {
+              "name": "expectedRevision",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": true
+            },
+            "recordingSessionId": {
+              "name": "recordingSessionId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            }
+          }
+        },
+        "stopLiveLocationRecording": {
+          "name": "stopLiveLocationRecording",
+          "isArray": false,
+          "type": "Boolean",
+          "isRequired": false,
+          "arguments": {
+            "expectedRevision": {
+              "name": "expectedRevision",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": true
+            },
+            "expectedRecordingSessionId": {
+              "name": "expectedRecordingSessionId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            }
+          }
         }
       }
     }
@@ -1838,6 +2807,10 @@
           },
           "profile-icons/*": {
             "authenticated": [
+              "get",
+              "list"
+            ],
+            "groupsAdmins": [
               "get",
               "list"
             ]

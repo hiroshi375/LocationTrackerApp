@@ -96,3 +96,54 @@ export function GroupQueueTestControls() {
         <Text selectable>{report}</Text>
     </View>;
 }
+
+/** Final regression recovery, restricted to the two retained development fixtures. */
+export function HistoricalPendingFixtureRecovery() {
+    const running = useRef(false);
+    const [busy, setBusy] = useState(false);
+    const [report, setReport] = useState("");
+    const run = async () => {
+        if (!__DEV__ || running.current) return;
+        running.current = true; setBusy(true);
+        const lines: string[] = [];
+        const emit = (line: string) => { lines.push(line); setReport(lines.join("\n")); console.log("[PendingFixtureRecovery]", line); };
+        try {
+            const user = await getCurrentUser();
+            const fixtures: Record<string, { sessionId: string; name: string; allowMissingSummary: boolean }> = {
+                "3704aac8-90e1-70e4-bc50-6acd159a5049": { sessionId: "session-1792209126703-mto64ofx", name: "Phase7SavedTest", allowMissingSummary: true },
+                "87c4ca18-80d1-70d4-85ee-8b4204fc226c": { sessionId: "session-1792218537243-zp0x2p61", name: "Phase7Ctest", allowMissingSummary: false },
+            };
+            const fixture = fixtures[user.userId];
+            if (!fixture) throw new Error("AまたはCの旧検証記録だけが対象です");
+            const assertUser = async () => {
+                if ((await getCurrentUser()).userId !== user.userId) throw new Error("認証ユーザーが変更されました");
+            };
+            if ((await getBackgroundRecordingStatus()).state?.isRecording) throw new Error("自動記録を停止してください");
+            const model = client.models.RecordingSession as unknown as { get: (args: object, options: object) => Promise<{ data?: { userId?: string; recordingSessionName?: string | null; recordingIntervalMs?: number | null; recordingDistanceMeters?: number | null }; errors?: { errorType?: string }[] }> };
+            const read = await model.get({ id: `recording-session:${user.userId}:${fixture.sessionId}` }, { authMode: "userPool" });
+            if (read.data && (read.errors?.length || read.data.userId !== user.userId || read.data.recordingSessionName !== fixture.name)) throw new Error("専用履歴の所有者・名前を確認できません");
+            if (!read.data && (!fixture.allowMissingSummary || read.errors?.some(error => error.errorType !== "Unauthorized"))) throw new Error("専用履歴を確認できません");
+            // A's interrupted fixture has no summary. Use the 30s/50m settings
+            // retained on its immediate follow-up verification record.
+            const intervalMs = read.data?.recordingIntervalMs ?? 30000;
+            const distanceMeters = read.data?.recordingDistanceMeters ?? 50;
+            if (!Number.isFinite(intervalMs) || intervalMs < 0 || !Number.isFinite(distanceMeters) || distanceMeters < 0) throw new Error("記録条件が不正です");
+            const before = await getLocationQueueStatusSummary({ userId: user.userId, recordingSessionId: fixture.sessionId });
+            emit(`復旧前: ${JSON.stringify(before)}`);
+            await assertUser();
+            const result = await drainLocationQueueRepeatedly({ userId: user.userId, recordingSessionId: fixture.sessionId, intervalMs, distanceMeters, fallbackSharedOwners: [], forceIncludeRecent: true, maxItems: 5, maxIterations: 3 });
+            emit(`通常再送結果: ${JSON.stringify(result)}`);
+            if (result.remainingPendingCount !== 0) throw new Error("未送信が残っています");
+            await assertUser();
+            await upsertRecordingSessionSummary(fixture.sessionId, fixture.name, [], intervalMs, distanceMeters);
+            emit(`復旧後: ${JSON.stringify(await getLocationQueueStatusSummary({ userId: user.userId, recordingSessionId: fixture.sessionId }))}`);
+            emit("通常サマリ保存まで完了。全ログ・権限・集計の別途照合が必要です。");
+        } catch (error) { emit(`未完了: ${error instanceof Error ? error.message : String(error)}`); }
+        finally { running.current = false; setBusy(false); }
+    };
+    if (!__DEV__) return null;
+    return <View style={{ gap: 8, marginVertical: 12 }}>
+        <Button title="最終監査：本人の旧検証キューを通常処理で復旧" disabled={busy} onPress={() => { void run(); }} />
+        <Text selectable>{report}</Text>
+    </View>;
+}

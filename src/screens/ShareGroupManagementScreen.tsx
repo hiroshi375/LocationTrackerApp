@@ -1,6 +1,7 @@
 import { GroupAccessReadProbe } from "../components/GroupAccessReadProbe";
 import { GroupAccessApiProbe } from "../components/GroupAccessApiProbe";
-import { GroupQueueTestControls } from "../components/GroupQueueTestControls";
+import { GroupQueueTestControls, HistoricalPendingFixtureRecovery } from "../components/GroupQueueTestControls";
+import { GroupRecoveryProbe } from "../components/GroupRecoveryProbe";
 import { LegacyMigrationReadProbe } from "../components/LegacyMigrationReadProbe";
 import { GroupAccessActions, GroupAccessOperationsPanel } from "../components/GroupAccessControls";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
@@ -889,6 +890,8 @@ export default function ShareGroupManagementScreen() {
                 {__DEV__ && <GroupAccessReadProbe />}
                 {__DEV__ && <GroupAccessApiProbe />}
                 {__DEV__ && <GroupQueueTestControls />}
+                {__DEV__ && <HistoricalPendingFixtureRecovery />}
+                {__DEV__ && <GroupRecoveryProbe />}
                 {__DEV__ && <LegacyMigrationReadProbe />}
                 {/* 所属グループ */}
                 <View style={styles.groupsSection}>

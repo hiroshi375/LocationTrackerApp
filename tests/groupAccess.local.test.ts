@@ -425,6 +425,64 @@ test("resume after grant revocation completes projection instead of losing inact
             ?.operationId,
     );
 });
+test("failed log transaction is persisted and resumes without restoring revoked grants", async () => {
+    const { sid } = await setup(7);
+    const op = await requestGroupAccessChange("A", "G", "DELETE", undefined, "failed-log-write");
+    await until("G", op.operationId, "LOGS");
+    let injected = false;
+    accessDb.send = (async (command: any) => {
+        if (!injected && command.constructor.name === "TransactWriteCommand") {
+            injected = true;
+            throw new Error("local-only injected transaction outage");
+        }
+        return local.send(command);
+    }) as any;
+    try {
+        await advanceGroupJob("G", op.operationId);
+    } finally {
+        accessDb.send = local.send.bind(local);
+    }
+    assert.equal(injected, true);
+    assert.equal((await getGroupJob("G", op.operationId, "A")).status, "FAILED");
+    assert.equal((await getRow(tables.grants(), { grantId: "GB" }))?.isActive, false);
+    await assert.rejects(cancelGroupJob("G", op.operationId, "A"));
+    await resumeGroupJob("G", op.operationId, "A");
+    await finish("G", op.operationId);
+    assert.deepEqual((await getRow(tables.sessions(), { id: sid }))?.sharedOwners, ["B"]);
+    const logs = await scanRows(tables.logs(), () => true);
+    assert.equal(logs.length, 7);
+    for (const log of logs) assert.deepEqual(log.sharedOwners, ["B"]);
+    const repeated = await requestGroupAccessChange("A", "G", "DELETE", undefined, "failed-log-write");
+    assert.equal(repeated.operationId, op.operationId);
+});
+
+test("simultaneous workers advance one checkpoint and reject a different pending intent", async () => {
+    await setup();
+    const op = await requestGroupAccessChange("A", "G", "DELETE", undefined, "concurrent-worker");
+    await assert.rejects(requestGroupAccessChange("A", "G", "DEACTIVATE", undefined, "different-intent"));
+    await Promise.all(Array.from({ length: 4 }, () => advanceGroupJob("G", op.operationId)));
+    const job = await getGroupJob("G", op.operationId, "A");
+    assert.equal(job.status, "READY");
+    await finish("G", op.operationId);
+    assert.equal((await scanRows(tables.jobs(), row => row.recordType === "JOB")).length, 1);
+    assert.equal((await getRow(tables.grants(), { grantId: "HB" }))?.isActive, true);
+});
+
+test("ordinary sharing lock excludes group revocation, and pending revocation excludes ordinary sharing", async () => {
+    await setup();
+    await withGroupLocks(["G"], async () => {
+        await assert.rejects(requestGroupAccessChange("A", "G", "DEACTIVATE", undefined, "while-sharing"));
+        await assert.rejects(withGroupLocks(["G"], async () => undefined));
+    });
+    const op = await requestGroupAccessChange("A", "G", "DEACTIVATE", undefined, "after-sharing");
+    let entered = false;
+    await assert.rejects(withGroupLocks(["G"], async () => { entered = true; }));
+    assert.equal(entered, false);
+    await finish("G", op.operationId);
+    assert.equal((await getRow(tables.grants(), { grantId: "GB" }))?.isActive, false);
+    assert.equal((await getRow(tables.grants(), { grantId: "HB" }))?.isActive, true);
+});
+
 test("late queued sharedOwners cannot restore revoked access, with ownership and duplicate checks", async () => {
     await setup();
     const op = await requestGroupAccessChange(

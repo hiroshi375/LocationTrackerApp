@@ -116,7 +116,7 @@ export function GroupAccessReadProbe() {
     const [busy, setBusy] = useState(false);
     const [report, setReport] = useState("");
     const running = useRef(false);
-    const run = async (readable: boolean) => {
+    const run = async (readable: boolean, walkFixture = false) => {
         if (running.current) return;
         running.current = true;
         setBusy(true);
@@ -128,7 +128,20 @@ export function GroupAccessReadProbe() {
         };
         try {
             const user = await bounded(getCurrentUser(), 15000);
-            const raw = await AsyncStorage.getItem(targetKey);
+            let raw = await AsyncStorage.getItem(targetKey);
+            if (walkFixture) {
+                if (!__DEV__ || user.userId !== "3704aac8-90e1-70e4-bc50-6acd159a5049")
+                    throw new Error("再共有の専用履歴はAの取得確認だけが対象です。");
+                const sessionId = "session-1792263728796-xwut6pzm";
+                const ids = readable ? await readLogs(sessionId, Date.now() + 60000) : null;
+                if (ids && ids.size !== 24) throw new Error("専用履歴の24ログを取得できませんでした。");
+                const logId = ids ? [...ids][0] : process.env.EXPO_PUBLIC_PHASE8_PROBE_LOG_ID;
+                if (!logId) throw new Error("専用履歴の直接取得用IDが未設定です。");
+                raw = JSON.stringify({
+                    recordId: `recording-session:47248aa8-a031-7004-66b8-e41578c805e7:${sessionId}`,
+                    sessionId, name: "Phase8WalkTest", logId, logCount: 24,
+                });
+            }
             if (!raw)
                 throw new Error(
                     "Aの履歴共有管理で、先に検証対象を設定してください。",
@@ -209,6 +222,8 @@ export function GroupAccessReadProbe() {
             />
             {expanded && (
                 <>
+                    <Button title="最終監査：AでPhase8WalkTestの再共有を検証" disabled={busy} onPress={() => { void run(true, true); }} />
+                    <Button title="最終監査：AでPhase8WalkTestの取得拒否を検証" disabled={busy} onPress={() => { void run(false, true); }} />
                     <Text>
                         所有者の履歴共有管理で設定した対象を、現在ログイン中の認証で新規取得します。
                     </Text>

@@ -63,3 +63,18 @@ yarn-error.*
 # amplify_outputs.json
 
 amplifyconfiguration*
+
+# Unrelated local screenshot; not an application asset.
+/src/screens/0303_paella_04.jpg
+
+# Web documentation and test fixtures are not runtime application assets.
+/docs/
+/tests/
+
+# Local tooling, auth-test outputs and archived sample routes.
+/.auth-test-output/
+/.claude/
+/.vscode/
+/app-router-backup/
+/AGENTS.md
+/CLAUDE.md

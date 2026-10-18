@@ -11,8 +11,13 @@ const {evaluateLegalConsent, LEGAL_DOCUMENTS_V2_ENABLED} = exportsObject;
 const required = {terms:'2026-10-19',privacy:'2026-10-19'};
 const accepted = {termsAcceptedAt:'2026-10-01',privacyPolicyAcceptedAt:'2026-10-01',termsVersion:'2026-09-23',privacyPolicyVersion:'2026-09-23'};
 test('approved revised documents require renewed consent',()=>assert.equal(LEGAL_DOCUMENTS_V2_ENABLED,true));
-test('active document screens match approved v2 content',()=>{
- for(const name of ['PrivacyPolicyScreen','TermsOfServiceScreen']) assert.equal(fs.readFileSync('src/screens/'+name+'.tsx','utf8'),fs.readFileSync('src/screens/'+name+'_v2.tsx','utf8'));
+test('original document screens are active without duplicate v2 screens',()=>{
+ const nav=fs.readFileSync('src/navigation/RootNavigator.tsx','utf8');
+ for(const name of ['PrivacyPolicyScreen','TermsOfServiceScreen']) {
+  assert.ok(nav.includes('../screens/'+name+'\"'));
+  assert.equal(fs.existsSync('src/screens/'+name+'_v2.tsx'),false);
+  assert.ok(fs.readFileSync('src/screens/'+name+'.tsx','utf8').includes('2026年10月19日'));
+ }
 });
 test('previous consent requires renewal for revised documents',()=>{
  const s=evaluateLegalConsent(accepted,required,true);assert.equal(s.hasAccepted,false);assert.equal(s.requiresRenewal,true);

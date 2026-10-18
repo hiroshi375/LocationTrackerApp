@@ -21,5 +21,6 @@ function read(file){
  ts.forEachChild(n,visit);
  }visit(sf);return{intro,date,sections};
 }
-const result={};for(const name of ['PrivacyPolicyScreen','TermsOfServiceScreen'])result[name]={before:read(`docs/legal-previous/${name}.tsx.txt`),after:read(`src/screens/${name}_v2.tsx`)};
-fs.writeFileSync('docs/legal-v2-review-data.json',JSON.stringify(result,null,2));
+const result={};for(const name of ['PrivacyPolicyScreen','TermsOfServiceScreen'])result[name]={before:read(`docs/legal-previous/${name}.tsx.txt`),after:read(`src/screens/${name}.tsx`)};
+if (require.main === module) fs.writeFileSync('docs/legal-v2-review-data.json',JSON.stringify(result,null,2));
+module.exports = { read };

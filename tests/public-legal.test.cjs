@@ -11,10 +11,10 @@ for(const [name,dir,count] of [['PrivacyPolicyScreen','privacy',13],['TermsOfSer
   for(const section of doc.sections)assert.ok(html.includes(`<h2>${escape(section.title)}</h2><p>${escape(section.text)}</p>`),section.title);
  });
 }
-test('unpublished 1.0.3 release is recorded without advertising it as publicly available',()=>{
+test('unpublished 1.0.4 release is recorded without advertising it as publicly available',()=>{
  const v=JSON.parse(fs.readFileSync('docs/app-version.json','utf8'));
- for(const [platform,build,min] of [['android',24,19],['ios',9,3]]){
-  assert.equal(v[platform].pendingRelease.version,'1.0.3');assert.equal(v[platform].pendingRelease.build,build);
+ for(const [platform,build,min] of [['android',25,19],['ios',10,3]]){
+  assert.equal(v[platform].pendingRelease.version,'1.0.4');assert.equal(v[platform].pendingRelease.build,build);
   assert.ok(v[platform].latestBuild<build);assert.equal(v[platform].minimumSupportedBuild,min);
  }
 });

@@ -6,10 +6,10 @@
         "storeUrl": "https://play.google.com/store/apps/details?id=com.hiroshisato.locationtrackerapp",
         "message": "AcLog Fitの新しいバージョンをご利用いただけます。",
         "pendingRelease": {
-            "version": "1.0.3",
-            "build": 24,
+            "version": "1.0.4",
+            "build": 25,
             "status": "preparing",
-            "message": "利用規約・プライバシーポリシーの改訂と再同意、アカウント削除機能の改善を含む更新です。"
+            "message": "SDKの情報取扱いに関する利用規約・プライバシーポリシーの追記と再同意に対応した更新です。"
         }
     },
     "ios": {
@@ -19,10 +19,10 @@
         "storeUrl": "https://apps.apple.com/app/id6818737493",
         "message": "AcLog Fitの新しいバージョンをご利用いただけます。",
         "pendingRelease": {
-            "version": "1.0.3",
-            "build": 9,
+            "version": "1.0.4",
+            "build": 10,
             "status": "preparing",
-            "message": "利用規約・プライバシーポリシーの改訂と再同意、アカウント削除機能の改善を含む更新です。"
+            "message": "SDKの情報取扱いに関する利用規約・プライバシーポリシーの追記と再同意に対応した更新です。"
         }
     }
 }

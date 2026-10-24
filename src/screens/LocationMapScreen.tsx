@@ -1,5 +1,6 @@
+import { watchLiveLocations } from "../services/liveLocationReadService";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect, useIsFocused } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { getCurrentUser } from "aws-amplify/auth";
 import { useTour, useTourTarget } from "guideway";
@@ -219,6 +220,7 @@ const ROUTE_ENDPOINT_MARKER_ANCHOR_Y = 0.82;
  */
 const ROUTE_ENDPOINT_MARKER_VERTICAL_OFFSET = 6;
 export default function LocationMapScreen({ route, navigation }: Props) {
+    const isFocused = useIsFocused();
     const insets = useSafeAreaInsets();
     const { start: startTour } = useTour();
     const activityMapLayerTourRef = useTourTarget("activity-map-layer");
@@ -1314,6 +1316,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
 
     useEffect(() => {
         if (
+            !isFocused ||
             !isSharedLiveLocationMap ||
             !sharedLiveUserId ||
             !sharedLiveLocationId
@@ -1321,10 +1324,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             return;
         }
 
-        const liveLocationModel = client.models.LiveLocation as any;
-
-        const subscription = liveLocationModel
-            .observeQuery({
+        const subscription = watchLiveLocations({
                 filter: {
                     userId: {
                         eq: sharedLiveUserId,
@@ -1333,9 +1333,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                         eq: true,
                     },
                 },
-            })
-            .subscribe({
-                next: ({ items }: { items: any[] }) => {
+                onItems: (items: any[]) => {
                     const validItems = (items ?? [])
                         .filter((item) => {
                             if (sharedLiveLocationId) {
@@ -1372,15 +1370,16 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                         longitude: Number(latest.longitude),
                     });
                 },
-                error: (error: unknown) => {
-                    console.error("Shared LiveLocation observe error:", error);
+                onError: (error: unknown) => {
+                    setCurrentLocation(null);
+                    console.error("Shared LiveLocation refresh error:", error);
                 },
             });
 
         return () => {
             subscription.unsubscribe();
         };
-    }, [isSharedLiveLocationMap, sharedLiveUserId, sharedLiveLocationId]);
+    }, [isFocused, isSharedLiveLocationMap, sharedLiveUserId, sharedLiveLocationId]);
 
     useEffect(() => {
         if (!shouldShowLiveCurrentLocation) {
@@ -2130,13 +2129,13 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     const sessionStartAt =
         isOwnLiveRecordingMap && recordingSessionSummary?.startedAt
             ? recordingSessionSummary.startedAt
-            : activeSessionId && routeLogs.length > 0
-              ? routeLogs[0].recordedAt
+            : activeSessionId && editableLocationLogs.length > 0
+              ? editableLocationLogs[0].recordedAt
               : null;
 
     const sessionEndAt =
-        activeSessionId && routeLogs.length > 0
-            ? routeLogs[routeLogs.length - 1].recordedAt
+        activeSessionId && editableLocationLogs.length > 0
+            ? editableLocationLogs[editableLocationLogs.length - 1].recordedAt
             : null;
 
     /*

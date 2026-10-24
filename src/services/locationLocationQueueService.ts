@@ -1,3 +1,4 @@
+import { acceptedLocationBaselines } from "./acceptedLocationBaselineService";
 import * as Location from "expo-location";
 import * as SQLite from "expo-sqlite";
 
@@ -13,7 +14,7 @@ import {
 
 const DATABASE_NAME = "location-tracker.db";
 const TABLE_NAME = "location_location_queue";
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION = 3;
 
 type LocationQueueSource = "background" | "foreground";
 
@@ -213,6 +214,14 @@ async function openAndInitializeDatabase(): Promise<SQLite.SQLiteDatabase> {
             created_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS discarded_recording_sessions (
+            user_id TEXT NOT NULL,
+            recording_session_id TEXT NOT NULL,
+            discarded_at TEXT NOT NULL,
+            completed_at TEXT,
+            PRIMARY KEY (user_id, recording_session_id)
+        );
+
         CREATE UNIQUE INDEX IF NOT EXISTS
             idx_location_location_queue_unique_key
         ON ${TABLE_NAME}(location_unique_key);
@@ -233,6 +242,9 @@ async function openAndInitializeDatabase(): Promise<SQLite.SQLiteDatabase> {
     );
     await ensureQueueColumn(db, "processed_at", "TEXT");
     await ensureQueueColumn(db, "skip_reason", "TEXT");
+    const discardColumns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(discarded_recording_sessions)");
+    if (!discardColumns.some(column => column.name === "completed_at"))
+        await db.execAsync("ALTER TABLE discarded_recording_sessions ADD COLUMN completed_at TEXT");
     await ensureQueueColumn(db, "shared_owners_json", "TEXT");
 
     await db.execAsync(`
@@ -524,7 +536,7 @@ async function enqueueLocationBatchForAuditInternal(
                 queue_status,
                 shared_owners_json,
                 created_at
-            ) VALUES (
+            ) SELECT
                 $locationLogId,
                 $locationUniqueKey,
                 $userId,
@@ -544,6 +556,9 @@ async function enqueueLocationBatchForAuditInternal(
                 'pending',
                 $sharedOwnersJson,
                 $createdAt
+            WHERE NOT EXISTS (
+                SELECT 1 FROM discarded_recording_sessions
+                WHERE user_id = $userId AND recording_session_id = $recordingSessionId
             )
             `,
                 {
@@ -674,6 +689,7 @@ export async function getPendingLocationQueueRows(input: {
 export async function getLatestAcceptedLocationQueueRow(input: {
     userId: string;
     recordingSessionId: string;
+    atOrBeforeMs?: number;
 }): Promise<PendingLocationQueueRow | null> {
     const db = await getDatabase();
 
@@ -703,12 +719,14 @@ export async function getLatestAcceptedLocationQueueRow(input: {
             user_id = $userId
             AND recording_session_id = $recordingSessionId
             AND queue_status IN ('sent', 'duplicate')
+            AND recorded_at_ms <= $atOrBeforeMs
         ORDER BY recorded_at_ms DESC
         LIMIT 1
         `,
         {
             $userId: input.userId,
             $recordingSessionId: input.recordingSessionId,
+            $atOrBeforeMs: input.atOrBeforeMs ?? Number.MAX_SAFE_INTEGER,
         },
     );
 
@@ -1543,5 +1561,51 @@ export async function deleteLocationQueueForAccount(userId: string): Promise<num
     if (!userId.trim()) throw new Error("削除するユーザーを特定できません。");
     const db = await getDatabase();
     const result = await db.runAsync(`DELETE FROM ${TABLE_NAME} WHERE user_id = $userId`, {$userId: userId});
+    await db.runAsync(`DELETE FROM discarded_recording_sessions WHERE user_id = $userId`, { $userId: userId });
     return result.changes;
+}
+
+
+/** Call only after the server has fenced the discarded session against late writes. */
+export async function discardLocationQueueSession(userId: string, recordingSessionId: string): Promise<void> {
+    if (!userId.trim() || !recordingSessionId.trim()) throw new Error("破棄する記録を特定できません。");
+    const db = await getDatabase();
+    // Persist the fence first: an old callback can otherwise reinsert after DELETE.
+    await db.runAsync(`INSERT OR IGNORE INTO discarded_recording_sessions
+        (user_id, recording_session_id, discarded_at) VALUES ($userId, $sessionId, $now)`,
+        { $userId: userId, $sessionId: recordingSessionId, $now: new Date().toISOString() });
+    await db.runAsync(`DELETE FROM ${TABLE_NAME} WHERE user_id = $userId AND recording_session_id = $sessionId`,
+        { $userId: userId, $sessionId: recordingSessionId });
+    await acceptedLocationBaselines.discard(userId, recordingSessionId);
+    const { discardNativeQualityEvidence } = await import("./nativeRecordingInboxService");
+    await discardNativeQualityEvidence(userId, recordingSessionId);
+    await db.runAsync(`UPDATE discarded_recording_sessions SET completed_at = $now
+        WHERE user_id = $userId AND recording_session_id = $sessionId`,
+        { $userId: userId, $sessionId: recordingSessionId, $now: new Date().toISOString() });
+}
+
+
+/** Durable user intent; keep queued rows until cloud discard is confirmed. */
+export async function requestLocationQueueSessionDiscard(userId: string, recordingSessionId: string): Promise<void> {
+    if (!userId.trim() || !recordingSessionId.trim()) throw new Error("破棄する記録を特定できません。");
+    const db = await getDatabase();
+    await db.runAsync(`INSERT OR IGNORE INTO discarded_recording_sessions
+        (user_id, recording_session_id, discarded_at) VALUES ($userId, $sessionId, $now)`,
+        { $userId: userId, $sessionId: recordingSessionId, $now: new Date().toISOString() });
+}
+
+export async function isLocationQueueSessionDiscarded(userId: string, recordingSessionId: string): Promise<boolean> {
+    const db = await getDatabase();
+    const row = await db.getFirstAsync<{ found: number }>(`SELECT 1 AS found FROM discarded_recording_sessions
+        WHERE user_id = $userId AND recording_session_id = $sessionId`,
+        { $userId: userId, $sessionId: recordingSessionId });
+    return !!row;
+}
+
+
+export async function listPendingLocationQueueDiscards(userId: string): Promise<{ recordingSessionId: string }[]> {
+    const db = await getDatabase();
+    return db.getAllAsync<{ recordingSessionId: string }>(`SELECT recording_session_id AS recordingSessionId
+        FROM discarded_recording_sessions WHERE user_id = $userId AND completed_at IS NULL
+        ORDER BY discarded_at ASC`, { $userId: userId });
 }

@@ -1,3 +1,7 @@
+import { acceptedLocationBaselines } from "../services/acceptedLocationBaselineService";
+import { selectAcceptedBaseline } from "../services/acceptedLocationBaselineCore";
+import { planStopReceipts } from "../services/recordingFinalizationService";
+import type { PlanStopReceipt } from "../services/recordingFinalizationCore";
 import { createLocationLog } from "../services/locationLogWriteService";
 import { getCurrentUser } from "aws-amplify/auth";
 import * as Location from "expo-location";
@@ -74,10 +78,7 @@ export type RecordingPlanLimitAutoStopReason =
     | "FREE_PLAN_DURATION_LIMIT"
     | "FREE_PLAN_POINT_LIMIT";
 
-export type RecordingPlanLimitAutoStop = {
-    recordingSessionId: string;
-    reason: RecordingPlanLimitAutoStopReason;
-};
+export type RecordingPlanLimitAutoStop = PlanStopReceipt;
 
 const FOREGROUND_LOCATION_SAMPLE_INTERVAL_MS = 5_000;
 
@@ -349,6 +350,7 @@ export function useForegroundLocationRecorder({
                 return;
             }
 
+
             const recordedAtMs =
                 typeof location.timestamp === "number" &&
                 Number.isFinite(location.timestamp)
@@ -581,6 +583,15 @@ export function useForegroundLocationRecorder({
                 let reservationReachedLimit = false;
 
                 try {
+                    if (!forceSave) {
+                        let shared: SavedLocation | null = null;
+                        try { shared = await acceptedLocationBaselines.read(currentUser.userId, recordingSessionId); }
+                        catch (error) { console.error("Read accepted baseline cache failed:", error); }
+                        const lockedBaseline = selectAcceptedBaseline(recordedAtMs, baselineLocation, shared);
+                        if (isExactDuplicateLocation(lockedBaseline, latitude, longitude, recordedAtMs) ||
+                            isNearDuplicateLocation(lockedBaseline, latitude, longitude, recordedAtMs) ||
+                            !shouldSaveLocation(latitude, longitude, recordedAtMs, lockedBaseline)) return;
+                    }
                     const reservation = await reserveRecordingPlanPoint(
                         recordingSessionId,
                         locationLogId,
@@ -1262,6 +1273,9 @@ export function useForegroundLocationRecorder({
             sessionIntervalMsRef.current = intervalMs;
             sessionDistanceMetersRef.current = distanceMeters;
 
+            const pendingOwner = await getCurrentUser();
+            if (await planStopReceipts.read(pendingOwner.userId))
+                throw new Error("前のアクティビティの保存確認を完了してください。");
             const newSessionId = createRecordingSessionId();
 
             recordingSessionIdRef.current = newSessionId;
@@ -2080,6 +2094,16 @@ export function useForegroundLocationRecorder({
              * 上限超過になる可能性があるため、
              * final LocationLogは保存しない。
              */
+            const owner = await getCurrentUser();
+            if (recordingUserIdRef.current !== owner.userId) return;
+            const settings = getActiveRecordingSettings();
+            await planStopReceipts.prepare({
+                userId: owner.userId, recordingSessionId,
+                reason: reason === "DURATION" ? "FREE_PLAN_DURATION_LIMIT" : "FREE_PLAN_POINT_LIMIT",
+                stoppedAt: new Date().toISOString(),
+                intervalMs: settings.intervalMs, distanceMeters: settings.distanceMeters,
+                sharedOwners: [...normalizedLiveShareOwnerValues], phase: "stopping",
+            });
             const finishedSessionId = await stopRecording({
                 skipFinalLocationSave: true,
             });
@@ -2097,10 +2121,11 @@ export function useForegroundLocationRecorder({
              * LocationHomeScreenへ
              * セッションIDとPlan上限停止理由を通知する。
              */
-            setPlanLimitAutoStop({
-                recordingSessionId: finishedSessionId,
-                reason: autoStopReason,
-            });
+            const stoppedStatus = await getBackgroundRecordingStatus();
+            if (stoppedStatus.state?.isRecording) return;
+            const receipt = await planStopReceipts.ready(owner.userId, finishedSessionId);
+            if (receipt && (await getCurrentUser()).userId === owner.userId)
+                setPlanLimitAutoStop(receipt);
 
             console.log("[SubscriptionPlanLimit] Recording stopped:", {
                 recordingSessionId: finishedSessionId,
@@ -2109,8 +2134,10 @@ export function useForegroundLocationRecorder({
             });
         };
 
-        void stopByPlanLimit();
-    }, [pendingPlanLimitStop, stopRecording]);
+        void stopByPlanLimit().catch(error => {
+            console.error("[SubscriptionPlanLimit] Stop/finalization receipt error:", error);
+        });
+    }, [pendingPlanLimitStop, stopRecording, getActiveRecordingSettings, normalizedLiveShareOwnerValues]);
 
     /*
      * Phase 3:

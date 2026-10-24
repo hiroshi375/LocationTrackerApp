@@ -18,6 +18,18 @@ export async function createLocationLog(input: Record<string, unknown>) {
                 ? result.errors
                 : [{ message: "位置情報保存の結果を確認できません。" }],
         };
+    // Publish only a confirmed server receipt, including an idempotent replay.
+    // Keep cloud success successful even if the local cache cannot be written.
+    if (typeof record.userId === "string" && typeof record.recordingSessionId === "string" &&
+        typeof record.latitude === "number" && typeof record.longitude === "number" &&
+        typeof record.recordedAt === "string") {
+        try {
+            const { acceptedLocationBaselines } = await import("./acceptedLocationBaselineService");
+            await acceptedLocationBaselines.record(record.userId, record.recordingSessionId, {
+                latitude: record.latitude, longitude: record.longitude, recordedAt: Date.parse(record.recordedAt),
+            });
+        } catch (error) { console.error("Accepted location baseline cache update failed:", error); }
+    }
     if (!result.data.created)
         return {
             data: null,

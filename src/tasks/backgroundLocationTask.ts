@@ -1,3 +1,9 @@
+import { recordIOSReceipt, recordIOSDelayStage } from "../services/iosDelayDiagnosticService";
+import { acceptedLocationBaselines } from "../services/acceptedLocationBaselineService";
+import { selectAcceptedBaseline } from "../services/acceptedLocationBaselineCore";
+import { createBackgroundLiveUpdateScheduler } from "../services/backgroundLiveUpdateScheduler";
+import { runBackgroundLiveFastPath } from "../services/backgroundLiveFastPath";
+import { matchesRecordingReceipt } from "../services/nativeRecordingInboxCore";
 import { createLocationLog } from "../services/locationLogWriteService";
 // src/tasks/backgroundLocationTask.ts
 
@@ -175,6 +181,7 @@ function recordBackgroundTaskStage(
     stage: BackgroundLocationTaskStage,
     details?: Record<string, unknown>,
 ): void {
+    recordIOSDelayStage(context.eventId, stage, Date.now(), details);
     if (!ENABLE_BACKGROUND_LOCATION_TASK_STAGE_DIAGNOSTICS) {
         return;
     }
@@ -1068,12 +1075,9 @@ const BACKGROUND_QUEUE_DRAIN_INTERVAL_MS = 15_000;
  */
 const BACKGROUND_LIVE_LOCATION_UPDATE_INTERVAL_MS = 30_000;
 
-/*
- * このJS Runtime内で最後にLiveLocation更新を開始した時刻。
- *
- * single-flightは行わず、単純に更新頻度だけを抑制する。
- */
-let lastBackgroundLiveLocationUpdateAtMs = 0;
+const backgroundLiveUpdateScheduler = createBackgroundLiveUpdateScheduler(
+    BACKGROUND_LIVE_LOCATION_UPDATE_INTERVAL_MS,
+);
 
 const BACKGROUND_RUNTIME_BOOT_ID = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
@@ -1093,6 +1097,59 @@ let hasRunBackgroundKeepAliveTimerTest = false;
 TaskManager.defineTask(
     BACKGROUND_LOCATION_TASK_NAME,
     async ({ data, error, executionInfo }) => {
+        const recordingInbox = (data as { aclogRecordingInbox?: string } | undefined)?.aclogRecordingInbox;
+        if (typeof recordingInbox === "string") {
+            try {
+                if (error) return;
+                const { receiveNativeRecordingInbox } = await import("../services/nativeRecordingInboxService");
+                await receiveNativeRecordingInbox(recordingInbox);
+                const receipt = JSON.parse(recordingInbox) as { context: { userId: string; recordingSessionId: string }; rows: unknown[] };
+                const current = await getBackgroundRecordingState();
+                if (current?.isRecording && current.userId === receipt.context.userId &&
+                    current.recordingSessionId === receipt.context.recordingSessionId) {
+                    const firedAt = Date.now();
+                    await safeSaveBackgroundLocationTaskHeartbeat({ firedAt, taskFiredAt: new Date(firedAt).toISOString(),
+                        locationsLength: receipt.rows.length, userId: current.userId,
+                        recordingSessionId: current.recordingSessionId, isRecording: true, hasTaskError: false });
+                }
+                console.log("[BG_RECORDING_INBOX] handed off");
+            } catch (inboxError) {
+                // Native retains unacknowledged receipts; acknowledged receipts remain in JS SQLite.
+                console.warn("[BG_RECORDING_INBOX] retry pending", getErrorMessage(inboxError));
+            }
+            return;
+        }
+        // Native's fast lane updates current location only. Historical batches still
+        // use the existing JobScheduler -> SQLite -> recording save path below.
+        if ((data as { aclogLiveOnly?: boolean } | undefined)?.aclogLiveOnly === true) {
+            try {
+                if (error) return;
+                const nowMs = Date.now();
+                const result = await runBackgroundLiveFastPath({
+                    locations: (data as { locations: Location.LocationObject[] }).locations ?? [],
+                    nowMs,
+                    loadState: getBackgroundRecordingState,
+                    authorize: async userId => {
+                        const auth = await withTimeout(fetchAuthSession(), AUTH_SESSION_REFRESH_TIMEOUT_MS, "Live fast auth");
+                        return auth.tokens?.idToken?.payload.sub === userId;
+                    },
+                    schedule: (state, location) => backgroundLiveUpdateScheduler.start({
+                        key: JSON.stringify([state.userId, state.shareRevision]),
+                        recordedAtMs: location.timestamp,
+                        nowMs: Date.now(),
+                        send: () => updateBackgroundLiveLocation(location, state, new Date().toISOString(), {
+                            userId: state.userId,
+                            revision: state.shareRevision,
+                            sharedOwners: [...state.liveShareOwnerValues],
+                        }),
+                    }),
+                });
+                console.log("[BG_LIVE_FAST]", { result, durationMs: Date.now() - nowMs });
+            } catch (fastError) {
+                console.warn("[BG_LIVE_FAST] failed", getErrorMessage(fastError));
+            }
+            return;
+        }
         const taskStartedAtMs = Date.now();
         const taskFiredAt = new Date(taskStartedAtMs).toISOString();
 
@@ -1177,6 +1234,9 @@ TaskManager.defineTask(
                 locations?: Location.LocationObject[];
             }
         )?.locations;
+
+        recordIOSReceipt(stageContext.eventId, taskStartedAtMs,
+            (receivedLocations ?? []).map(location => location.timestamp));
 
         let locationsLength = receivedLocations?.length ?? 0;
         let saveSuccessCount = 0;
@@ -1317,7 +1377,11 @@ TaskManager.defineTask(
                 return;
             }
 
-            const locations = receivedLocations;
+            const locations = receivedLocations?.filter(location => {
+                const captured = location as Location.LocationObject & { aclogOwner?: string; aclogSessionId?: string };
+                // Annotated Android job replay must never borrow a later user's/session's identity.
+                return matchesRecordingReceipt(captured, state);
+            });
 
             /*
              * 位置情報が0件の場合も、バッチ結果として1件だけ保存する。
@@ -1701,6 +1765,39 @@ TaskManager.defineTask(
 
             let currentState = state;
 
+            // Raw locations have already been mirrored to SQLite above.
+            // Start the fresh live update without awaiting historical cloud writes.
+            // On SQLite failure, keep the original save-first fallback.
+            const startLiveLocationUpdate = () => {
+                const latestLocation = sortedLocations[sortedLocations.length - 1];
+                if (!latestLocation || state.liveShareOwnerValues.length === 0) return null;
+                return backgroundLiveUpdateScheduler.start({
+                    key: JSON.stringify([callbackUserId, callbackShareRevision]),
+                    recordedAtMs: getLocationRecordedAtMs(latestLocation),
+                    nowMs: Date.now(),
+                    send: async () => {
+                        recordBackgroundTaskStage(stageContext, "LIVE_LOCATION_START");
+                        const result = await updateBackgroundLiveLocation(
+                            latestLocation, currentState, taskFiredAt,
+                            { userId: callbackUserId, revision: callbackShareRevision,
+                              sharedOwners: callbackSharedOwners },
+                        );
+                        recordBackgroundTaskStage(stageContext, "LIVE_LOCATION_END", {
+                            attempted: result.attempted, succeeded: result.succeeded,
+                            timedOut: result.timedOut, operation: result.operation,
+                        });
+                        return result;
+                    },
+                });
+            };
+            const canSendLiveBeforeHistoricalLogs =
+                !activeRecordingSessionId || sqliteMirrorSucceeded;
+            let pendingLiveLocationUpdate = canSendLiveBeforeHistoricalLogs
+                ? startLiveLocationUpdate() : null;
+            // Attach a rejection handler immediately; the save loop may take a while.
+            // updateBackgroundLiveLocation normally returns errors as a result.
+            pendingLiveLocationUpdate?.catch(() => undefined);
+
             /*
              * 最優先：
              * 今回OSから受信したLocationLogを先に保存する。
@@ -1849,78 +1946,28 @@ TaskManager.defineTask(
                 );
             }
 
-            /*
-             * LocationLog保存完了後にLiveLocationを更新する。
-             *
-             * 現在地共有の機能自体は変更せず、
-             * 実行順序だけLocationLogの後ろへ移動する。
-             */
-            const latestLocation = sortedLocations[sortedLocations.length - 1];
-
-            if (
-                latestLocation &&
-                currentState.liveShareOwnerValues.length > 0
-            ) {
-                const nowMs = Date.now();
-
-                const elapsedSinceLastLiveLocationUpdateMs =
-                    nowMs - lastBackgroundLiveLocationUpdateAtMs;
-
-                const shouldUpdateLiveLocation =
-                    lastBackgroundLiveLocationUpdateAtMs === 0 ||
-                    elapsedSinceLastLiveLocationUpdateMs >=
-                        BACKGROUND_LIVE_LOCATION_UPDATE_INTERVAL_MS;
-
-                if (shouldUpdateLiveLocation) {
-                    /*
-                     * update完了後ではなく、開始前に時刻を更新する。
-                     *
-                     * callbackが短時間に連続して入った場合でも、
-                     * 30秒以内に次のLiveLocation.updateを開始しにくくする。
-                     *
-                     * これはsingle-flightではない。
-                     * Promiseの完了状態は管理せず、単純な時間間隔制御のみ行う。
-                     */
-                    lastBackgroundLiveLocationUpdateAtMs = nowMs;
-
-                    recordBackgroundTaskStage(
-                        stageContext,
-                        "LIVE_LOCATION_START",
+            if (!canSendLiveBeforeHistoricalLogs) {
+                pendingLiveLocationUpdate = startLiveLocationUpdate();
+            }
+            if (pendingLiveLocationUpdate) {
+                const liveLocationResult = await pendingLiveLocationUpdate;
+                liveLocationUpdateAttempted = liveLocationResult.attempted;
+                liveLocationUpdateSucceeded = liveLocationResult.succeeded;
+                liveLocationUpdateTimedOut = liveLocationResult.timedOut;
+                liveLocationUpdateOperation = liveLocationResult.operation;
+                liveLocationUpdateErrorMessage = liveLocationResult.errorMessage ?? null;
+                liveLocationUpdatedId = liveLocationResult.liveLocationId ?? null;
+                if (liveLocationResult.succeeded && liveLocationUpdatedId) {
+                    // Persist metadata only after historical saves finish. A parallel
+                    // AsyncStorage read/modify/write could otherwise restore old counters.
+                    await updateBackgroundRecordingStateIfCurrent(
+                        state.userId, state.recordingSessionId ?? null,
+                        latest => ({ ...latest, liveLocationId: liveLocationUpdatedId }),
+                        callbackShareRevision,
                     );
-
-                    const liveLocationResult =
-                        await updateBackgroundLiveLocation(
-                            latestLocation,
-                            currentState,
-                            taskFiredAt,
-                            {
-                                userId: callbackUserId,
-                                revision: callbackShareRevision,
-                                sharedOwners: callbackSharedOwners,
-                            },
-                        );
-
-                    recordBackgroundTaskStage(
-                        stageContext,
-                        "LIVE_LOCATION_END",
-                        {
-                            attempted: liveLocationResult.attempted,
-                            succeeded: liveLocationResult.succeeded,
-                            timedOut: liveLocationResult.timedOut,
-                            operation: liveLocationResult.operation,
-                        },
-                    );
-
-                    currentState = liveLocationResult.nextState;
-                    liveLocationUpdateAttempted = liveLocationResult.attempted;
-                    liveLocationUpdateSucceeded = liveLocationResult.succeeded;
-                    liveLocationUpdateTimedOut = liveLocationResult.timedOut;
-                    liveLocationUpdateOperation = liveLocationResult.operation;
-                    liveLocationUpdateErrorMessage =
-                        liveLocationResult.errorMessage ?? null;
-                    liveLocationUpdatedId =
-                        liveLocationResult.liveLocationId ?? null;
                 }
+                // Do not replace currentState with an earlier live-update snapshot:
+                // the direct save loop may have advanced counters or stopped recording.
             }
 
             const nowMs = Date.now();
@@ -2795,18 +2842,10 @@ async function updateBackgroundLiveLocation(
             "Background LiveLocation.upsert",
         );
 
-        const updatedState = await updateBackgroundRecordingStateIfCurrent(
-            state.userId,
-            state.recordingSessionId ?? null,
-            (currentState) => ({
-                ...currentState,
-                liveLocationId: id,
-            }),
-            capturedShareRevision,
-        );
-
         return {
-            nextState: updatedState ?? latestState,
+            // The caller persists liveLocationId after the direct-save loop.
+            // Do not write an old recording snapshot while cloud saves run.
+            nextState: latestState,
             attempted: true,
             succeeded: true,
             operation: "update",
@@ -3031,9 +3070,12 @@ async function saveBackgroundLocation(
          * Background / Foregroundのうち、
          * recordedAtが新しい地点を保存判定の共通基準にする。
          */
+        let sharedAcceptedLocation: SavedLocation | null = null;
+        try { sharedAcceptedLocation = await acceptedLocationBaselines.read(latestState.userId, recordingSessionId); }
+        catch (error) { console.error("Read accepted baseline cache failed:", error); }
         const lastSavedLocation = getLatestSavedLocation(
-            latestState.lastSavedLocation ?? null,
-            foregroundLastSavedLocation,
+            getLatestSavedLocation(latestState.lastSavedLocation ?? null, foregroundLastSavedLocation),
+            selectAcceptedBaseline(recordedAtMs, sharedAcceptedLocation),
         );
 
         /*

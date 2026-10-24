@@ -1,0 +1,144 @@
+diff --git a/node_modules/expo-modules-core/android/src/main/java/expo/modules/adapters/react/apploader/RNHeadlessAppLoader.kt b/node_modules/expo-modules-core/android/src/main/java/expo/modules/adapters/react/apploader/RNHeadlessAppLoader.kt
+--- a/node_modules/expo-modules-core/android/src/main/java/expo/modules/adapters/react/apploader/RNHeadlessAppLoader.kt
++++ b/node_modules/expo-modules-core/android/src/main/java/expo/modules/adapters/react/apploader/RNHeadlessAppLoader.kt
+@@ -23,49 +23,58 @@
+       throw IllegalArgumentException("Params must be set with appScopeKey!")
+     }
+
+-    if (context.applicationContext is ReactApplication) {
+-      if (!appRecords.containsKey(params.appScopeKey)) {
+-        // In old arch reactHost will be null
+-        if (BuildConfig.IS_NEW_ARCHITECTURE_ENABLED) {
+-          // New architecture
+-          val reactHost = (context.applicationContext as ReactApplication).reactHost ?: throw IllegalStateException("Your application does not have a valid reactHost")
+-          reactHost.addReactInstanceEventListener(
+-            object : ReactInstanceEventListener {
+-              override fun onReactContextInitialized(context: ReactContext) {
+-                reactHost.removeReactInstanceEventListener(this)
+-                HeadlessAppLoaderNotifier.notifyAppLoaded(params.appScopeKey)
+-                appRecords[params.appScopeKey] = context
+-                callback?.apply(true)
+-              }
++    val application = context.applicationContext as? ReactApplication
++      ?: throw IllegalStateException("Your application must implement ReactApplication")
++    // Serialize context inspection, listener registration and startup with host teardown.
++    android.os.Handler(context.mainLooper).post {
++      val scope = params.appScopeKey
++      val recorded = appRecords[scope]
++      val completed = java.util.concurrent.atomic.AtomicBoolean(false)
++      fun ready(reactContext: ReactContext) {
++        if (!reactContext.hasActiveReactInstance() || !completed.compareAndSet(false, true)) return
++        appRecords[scope] = reactContext
++        HeadlessAppLoaderNotifier.notifyAppLoaded(scope)
++        if (recorded === reactContext) alreadyRunning?.run() else callback?.apply(true)
++      }
++      if (BuildConfig.IS_NEW_ARCHITECTURE_ENABLED) {
++        val host = application.reactHost
++          ?: throw IllegalStateException("Your application does not have a valid reactHost")
++        val current = host.currentReactContext
++        if (current != null && current.hasActiveReactInstance()) {
++          ready(current)
++        } else {
++          appRecords.remove(scope)
++          val listener = object : ReactInstanceEventListener {
++            override fun onReactContextInitialized(reactContext: ReactContext) {
++              host.removeReactInstanceEventListener(this)
++              ready(reactContext)
+             }
+-          )
+-          // Ensure that we're starting the react host on the main thread
+-          android.os.Handler(context.mainLooper).post {
+-            reactHost.start()
+           }
+-        } else {
+-          // Old architecture
+-          val reactInstanceManager = (context.applicationContext as ReactApplication).reactNativeHost.reactInstanceManager
+-          reactInstanceManager.addReactInstanceEventListener(
+-            object : ReactInstanceEventListener {
+-              override fun onReactContextInitialized(context: ReactContext) {
+-                HeadlessAppLoaderNotifier.notifyAppLoaded(params.appScopeKey)
+-                reactInstanceManager.removeReactInstanceEventListener(this)
+-                appRecords[params.appScopeKey] = context
+-                callback?.apply(true)
+-              }
+-            }
+-          )
+-          // Ensure that we're starting the react host on the main thread
+-          android.os.Handler(context.mainLooper).post {
+-            reactInstanceManager.createReactContextInBackground()
++          host.addReactInstanceEventListener(listener)
++          val initialized = host.currentReactContext
++          if (initialized != null && initialized.hasActiveReactInstance()) {
++            host.removeReactInstanceEventListener(listener)
++            ready(initialized)
++          } else {
++            host.start()
+           }
+         }
+       } else {
+-        alreadyRunning?.run()
++        val manager = application.reactNativeHost.reactInstanceManager
++        val current = manager.currentReactContext
++        if (current != null && current.hasActiveReactInstance()) {
++          ready(current)
++        } else {
++          appRecords.remove(scope)
++          manager.addReactInstanceEventListener(object : ReactInstanceEventListener {
++            override fun onReactContextInitialized(reactContext: ReactContext) {
++              manager.removeReactInstanceEventListener(this)
++              ready(reactContext)
++            }
++          })
++          manager.createReactContextInBackground()
++        }
+       }
+-    } else {
+-      throw IllegalStateException("Your application must implement ReactApplication")
+     }
+   }
+
+@@ -77,12 +86,12 @@
+         // New architecture
+         val reactHost = (reactContext.applicationContext as ReactApplication).reactHost ?: throw IllegalStateException("Your application does not have a valid reactHost")
+         android.os.Handler(reactContext.mainLooper).post {
++          if (appRecords[appScopeKey] !== reactContext) return@post
+           // Only destroy the `ReactInstanceManager` if it does not bind with an Activity.
+           // And The Activity would take over the ownership of `ReactInstanceManager`.
+           // This case happens when a user clicks a background task triggered notification immediately.
+-          if (reactHost.lifecycleState == LifecycleState.BEFORE_CREATE) {
+-            reactHost.destroy("Closing headless task app", null)
+-          }
++          if (reactHost.lifecycleState != LifecycleState.BEFORE_CREATE) return@post
++          reactHost.destroy("Closing headless task app", null)
+           HeadlessAppLoaderNotifier.notifyAppDestroyed(appScopeKey)
+           appRecords.remove(appScopeKey)
+         }
+@@ -92,12 +101,12 @@
+         if (reactNativeHost.hasInstance()) {
+           val reactInstanceManager: ReactInstanceManager = reactNativeHost.reactInstanceManager
+           android.os.Handler(reactContext.mainLooper).post {
++            if (appRecords[appScopeKey] !== reactContext) return@post
+             // Only destroy the `ReactInstanceManager` if it does not bind with an Activity.
+             // And The Activity would take over the ownership of `ReactInstanceManager`.
+             // This case happens when a user clicks a background task triggered notification immediately.
+-            if (reactInstanceManager.lifecycleState == LifecycleState.BEFORE_CREATE) {
+-              reactInstanceManager.destroy()
+-            }
++            if (reactInstanceManager.lifecycleState != LifecycleState.BEFORE_CREATE) return@post
++            reactInstanceManager.destroy()
+             HeadlessAppLoaderNotifier.notifyAppDestroyed(appScopeKey)
+             appRecords.remove(appScopeKey)
+           }
+@@ -112,9 +121,9 @@
+   override fun isRunning(appScopeKey: String?): Boolean {
+     val reactContext = appRecords[appScopeKey] ?: return false
+     if (BuildConfig.IS_NEW_ARCHITECTURE_ENABLED) {
+-      // New architecture - We can return true since the fact that we have a reactContext
+-      // means that we've already called start on the reactHost
+-      return true
++      // A cached context can outlive its ReactHost; validate the current instance.
++      val host = (reactContext.applicationContext as ReactApplication).reactHost
++      return host?.currentReactContext === reactContext && reactContext.hasActiveReactInstance()
+     } else {
+       // Old architecture
+       val reactNativeHost = (reactContext.applicationContext as ReactApplication).reactNativeHost

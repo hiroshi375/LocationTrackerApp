@@ -1,5 +1,6 @@
 import { accountDeletionStateKey } from "./accountDeletionState";
 import { deleteLocationQueueForAccount } from "./locationLocationQueueService";
+import { deleteNativeRecordingInboxForAccount } from "./nativeRecordingInboxService";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { deleteUser, getCurrentUser } from "aws-amplify/auth";
 import { remove } from "aws-amplify/storage";
@@ -155,6 +156,7 @@ export async function deleteCurrentAccount(
      */
     onProgress?.("deletingLocalData");
 
+    await deleteNativeRecordingInboxForAccount(userId);
     await deleteLocationQueueForAccount(userId);
     await removeLocationTrackerStorageKeys();
 

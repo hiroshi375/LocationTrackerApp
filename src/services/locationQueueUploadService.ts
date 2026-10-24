@@ -1,3 +1,5 @@
+import { acceptedLocationBaselines } from "./acceptedLocationBaselineService";
+import { selectAcceptedBaseline } from "./acceptedLocationBaselineCore";
 import { isAccountDeletionPending } from "./accountDeletionState";
 import { createLocationLog } from "./locationLogWriteService";
 import { fetchAuthSession } from "aws-amplify/auth";
@@ -24,6 +26,7 @@ import {
     markLocationQueueRowFailed,
     markLocationQueueRowSent,
     markLocationQueueRowSkipped,
+    isLocationQueueSessionDiscarded,
     type PendingLocationQueueRow,
 } from "./locationLocationQueueService";
 import {
@@ -448,18 +451,7 @@ async function drainLocationQueue(
         };
     }
 
-    const latestAccepted = await getLatestAcceptedLocationQueueRow({
-        userId: input.userId,
-        recordingSessionId: input.recordingSessionId,
-    });
-
-    let lastAcceptedLocation: AcceptedLocation | null = latestAccepted
-        ? {
-              latitude: latestAccepted.latitude,
-              longitude: latestAccepted.longitude,
-              recordedAt: latestAccepted.recorded_at_ms,
-          }
-        : null;
+    let lastAcceptedLocation: AcceptedLocation | null = null;
 
     for (const row of pendingRows) {
         if (Date.now() >= deadlineAtMs) {
@@ -468,17 +460,8 @@ async function drainLocationQueue(
         }
 
         processedCount += 1;
-
-        const skipReason = evaluateQueueLocationSkipReason(
-            row,
-            lastAcceptedLocation,
-            input.intervalMs,
-            input.distanceMeters,
-        );
-
-        if (skipReason) {
-            await markLocationQueueRowSkipped(row.location_log_id, skipReason);
-
+        if (await isLocationQueueSessionDiscarded(row.user_id, row.recording_session_id)) {
+            await markLocationQueueRowSkipped(row.location_log_id, "SESSION_DISCARDED");
             skippedCount += 1;
             continue;
         }
@@ -529,6 +512,22 @@ async function drainLocationQueue(
         let reservationReachedLimit = false;
 
         try {
+            // Re-read after acquiring the same lock used by foreground/background writes.
+            const previous = await getLatestAcceptedLocationQueueRow({
+                userId: row.user_id, recordingSessionId: row.recording_session_id,
+                atOrBeforeMs: row.recorded_at_ms,
+            });
+            let shared: AcceptedLocation | null = null;
+            try { shared = await acceptedLocationBaselines.read(row.user_id, row.recording_session_id); }
+            catch (error) { console.error("Read accepted baseline cache failed:", error); }
+            lastAcceptedLocation = selectAcceptedBaseline(row.recorded_at_ms,
+                lastAcceptedLocation, previous ? toAcceptedLocation(previous) : null, shared);
+            const skipReason = evaluateQueueLocationSkipReason(row, lastAcceptedLocation, input.intervalMs, input.distanceMeters);
+            if (skipReason) {
+                await markLocationQueueRowSkipped(row.location_log_id, skipReason);
+                skippedCount += 1;
+                continue;
+            }
             /*
              * LocationLog.createより先にポイント枠を確保する。
              *

@@ -4,7 +4,7 @@ import { cleanupLegacyBackgroundTaskStageDiagnosticsOnce } from "./src/tasks/bac
 import { Authenticator } from "@aws-amplify/ui-react-native";
 import { Amplify } from "aws-amplify";
 import { Hub, I18n } from "aws-amplify/utils";
-import { getCurrentUser, signOut } from "aws-amplify/auth";
+import { getCurrentUser, signIn, signOut } from "aws-amplify/auth";
 import { StatusBar } from "expo-status-bar";
 import {
     ActivityIndicator,
@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import {
     type ReactNode,
+    type ComponentProps,
     useCallback,
     useEffect,
     useRef,
@@ -50,6 +51,17 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SAMPLE_ACTIVITY_SESSION_ID } from "./src/data/sampleActivity";
 import { checkForOtaUpdate } from "./src/services/otaUpdateService";
+
+import { createDiagnosedSignIn, LOGIN_RECOVERY_HINT, needsLoginRecoveryHint } from "./src/utils/authFailureDiagnostic";
+
+const authenticatorServices = { handleSignIn: createDiagnosedSignIn(signIn) };
+function LoginRecoveryFooter() {
+    return <Text accessibilityRole="text" style={{ padding: 16 }}>{LOGIN_RECOVERY_HINT}</Text>;
+}
+function DiagnosedSignIn(props: ComponentProps<typeof Authenticator.SignIn>) {
+    return <Authenticator.SignIn {...props} Footer={needsLoginRecoveryHint(props.error) ? LoginRecoveryFooter : props.Footer} />;
+}
+const authenticatorComponents = { SignIn: DiagnosedSignIn };
 
 Amplify.configure(outputs);
 
@@ -766,7 +778,7 @@ export default function App() {
                     translucent={false}
                 />
 
-                <Authenticator>
+                <Authenticator services={authenticatorServices} components={authenticatorComponents}>
                     <AppContent />
                 </Authenticator>
             </Authenticator.Provider>

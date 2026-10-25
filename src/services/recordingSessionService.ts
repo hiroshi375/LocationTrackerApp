@@ -3,9 +3,9 @@ import { getCurrentUser } from "aws-amplify/auth";
 import { client } from "../lib/client";
 import {
     calculateRouteDistanceMeters,
-    getRoutePeriod,
     normalizeRouteLogs,
 } from "../lib/locationRoute";
+import { getRecordingPeriod } from "../lib/recordingPeriod";
 import {
     type ActivityType,
     classifyActivitySession,
@@ -243,7 +243,7 @@ export async function upsertRecordingSessionSummary(
         return;
     }
 
-    const { startAt, endAt } = getRoutePeriod(routeLogs);
+    const { startAt, endAt } = getRecordingPeriod(logs);
 
     if (!startAt || !endAt) {
         return;

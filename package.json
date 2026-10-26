@@ -7,6 +7,7 @@
       "android": {
         "buildFromSource": [
           "expo-task-manager",
+          "expo-location",
           "unimodules-app-loader"
         ]
       }
@@ -23,7 +24,8 @@
     "typecheck:backend": "tsc --noEmit -p amplify/tsconfig.json",
     "verify:backend:synth": "tsx scripts/verify-backend-synth.ts",
     "test:group-access": "tsx --test tests/groupAccess.local.test.ts tests/historicalShareGroups.test.ts",
-    "test:share-recovery": "tsx --test tests/shareRecovery.test.ts"
+    "test:share-recovery": "tsx --test tests/shareRecovery.test.ts",
+    "verify:release:client": "node scripts/verify-release-client.mjs"
   },
   "dependencies": {
     "@aws-amplify/core": "^6.16.4",

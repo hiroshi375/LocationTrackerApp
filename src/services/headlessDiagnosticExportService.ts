@@ -1,3 +1,4 @@
+import { IOS_DELAY_DIAGNOSTIC_KEY } from "./iosDelayDiagnosticCore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
@@ -28,6 +29,7 @@ export async function exportHeadlessDiagnosticLog(): Promise<void> {
      * JS側のHeadless task stage診断をAsyncStorageから取得する。
      */
     const stageEntries = await loadBackgroundTaskStageEntries();
+    const delayEvidence = await AsyncStorage.getItem(IOS_DELAY_DIAGNOSTIC_KEY);
 
     /*
      * Nativeログがなくても、
@@ -36,7 +38,8 @@ export async function exportHeadlessDiagnosticLog(): Promise<void> {
     if (
         !currentInfo.exists &&
         !previousInfo.exists &&
-        stageEntries.length === 0
+        stageEntries.length === 0 &&
+        !delayEvidence
     ) {
         throw new Error("Headless diagnostic log does not exist.");
     }
@@ -66,6 +69,8 @@ export async function exportHeadlessDiagnosticLog(): Promise<void> {
             ...stageEntries.map(({ key, value }) => `${key}\t${value}`),
         );
     }
+
+    if (delayEvidence) parts.push("===== IOS DELAY EVIDENCE =====", delayEvidence);
 
     const exportFileName = `HeadlessDiagnostic_${formatTimestamp(
         new Date(),

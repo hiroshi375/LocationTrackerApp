@@ -1,6 +1,7 @@
 // src/services/backgroundLocationService.ts
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { nativeRecordingDeliveryOptions, sealAndFlushNativeRecordingInbox, resumeNativeRecordingInbox } from "./nativeRecordingInboxService";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import { Alert, Linking, Platform } from "react-native";
@@ -14,6 +15,7 @@ import {
 import { saveBackgroundLocationDebugLog } from "./backgroundLocationDebugLogService";
 import {
     getLiveLocationSharingState,
+    finishLiveRecordingBeforeSharingStop,
     setLiveLocationSharingState,
     startLiveLocationRecording,
     stopLiveLocationRecording,
@@ -1159,6 +1161,7 @@ async function restorePreviousLocationTask(
 
     await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME, {
         ...options,
+        ...nativeRecordingDeliveryOptions(previousState),
         foregroundService: {
             ...options.foregroundService,
             notificationTitle: shouldRestoreRecording
@@ -1412,10 +1415,10 @@ async function startBackgroundLocationRecordingInternal({
      *
      * を維持する。
      */
-    const locationTaskOptions = createRecordingLocationTaskOptions(
-        intervalMs,
-        distanceMeters,
-    );
+    const locationTaskOptions = {
+        ...createRecordingLocationTaskOptions(intervalMs, distanceMeters),
+        ...nativeRecordingDeliveryOptions(nextState),
+    };
 
     /*
      * Cloudへの開始要求が送信されたかを保持する。
@@ -1692,7 +1695,22 @@ export async function stopBackgroundLocationRecording(
     return withBackgroundLifecycleLock(
         "stopBackgroundLocationRecording",
         async () => {
-            await stopBackgroundLocationRecordingInternal(options);
+            try {
+                await stopBackgroundLocationRecordingInternal(options);
+            } catch (error) {
+                // A failed stop keeps the recording usable; do not leave its journal sealed.
+                try {
+                    const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);
+                    if (raw) {
+                        const state = JSON.parse(raw) as BackgroundRecordingState;
+                        if (state.isRecording && state.recordingSessionId)
+                            await resumeNativeRecordingInbox(state.userId, state.recordingSessionId);
+                    }
+                } catch (resumeError) {
+                    console.warn("Native recording inbox resume failed; original jobs retained", resumeError);
+                }
+                throw error;
+            }
         },
     );
 }
@@ -1787,6 +1805,12 @@ async function stopBackgroundLocationRecordingInternal(
         recordingSessionId,
         eventName: "taskManagerSnapshotBeforeRecordingStop",
     });
+
+    if (userId && recordingSessionId) {
+        // Transfer all native receipts durably before clearing session state or saving a header.
+        // This step does no network I/O and fails the stop rather than discarding pending points.
+        await sealAndFlushNativeRecordingInbox(userId, recordingSessionId);
+    }
 
     if (continueLiveSharing && currentState) {
         let stateForUpdate = currentState;
@@ -2067,6 +2091,16 @@ async function stopBackgroundLocationRecordingInternal(
              * 失敗したケースでも、再試行できる。
              */
             if (sharingState.enabled) {
+                // Revoking sharing advances the revision. First finish only this
+                // recording, including a plan-limit stop whose local flag is already false.
+                // Sharing-only stops have no session and retain their existing behavior.
+                if (recordingSessionId) {
+                    await finishLiveRecordingBeforeSharingStop({
+                        userId,
+                        expectedRevision: sharingState.revision,
+                        recordingSessionId,
+                    });
+                }
                 await setLiveLocationSharingState({
                     userId,
                     legacyLiveLocationId: liveLocationId,

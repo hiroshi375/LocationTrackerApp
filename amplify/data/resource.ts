@@ -521,6 +521,11 @@ const schema = a
             .authorization((allow) => [allow.authenticated()])
             .handler(a.handler.function(shareGroupApi)),
 
+        discardRecordingSession: a.mutation()
+            .arguments({ recordingSessionId: a.string().required() })
+            .returns(a.boolean())
+            .authorization(allow => [allow.authenticated()])
+            .handler(a.handler.function(shareGroupApi)),
         ingestLocationLog: a.mutation()
             .arguments({ input: a.json().required() })
             .returns(a.ref("LocationLogWriteResult"))

@@ -1,4 +1,5 @@
-import { createLegacyLocationLog, createLegacyRecordingSession } from "../amplify/functions/share-group-api/legacyRecordingWrite";
+import { discardRecordingSessionBatch } from "../amplify/functions/share-group-api/discardRecordingSession";
+import { createLegacyLocationLog, createLegacyRecordingSession, deleteLegacyLocationLog, deleteLegacyRecordingSession } from "../amplify/functions/share-group-api/legacyRecordingWrite";
 import { indexedSessionLogPage, sessionLogKey } from "../amplify/functions/share-group-api/sessionLogIndex";
 import { prepareStoppedHistoricalRecovery } from "../amplify/functions/share-group-api/historicalRecoveryAdmission";
 import assert from "node:assert/strict";
@@ -772,4 +773,152 @@ test("released create mutations remain compatible while server controls sharing"
     assert.equal(session.owner, "A::a");
     await assert.rejects(createLegacyRecordingSession("A", "a", { id: "foreign-session", userId: "B" }));
     await assert.rejects(createLegacyRecordingSession("A", "a", { id: "released-session", userId: "A" }));
+});
+
+
+test("released delete API rejects shared readers and permits only the stored owner", async () => {
+    await setup(1);
+    await assert.rejects(deleteLegacyLocationLog("B", { id: "log0", userId: "A" }));
+    assert.ok(await getRow(tables.logs(), { id: "log0" }));
+    await assert.rejects(deleteLegacyLocationLog("A", { id: "log0" }, { userId: { eq: "B" } }));
+    assert.ok(await getRow(tables.logs(), { id: "log0" }));
+    const deleted = await deleteLegacyLocationLog("A", { id: "log0" });
+    assert.equal(deleted?.userId, "A");
+    assert.equal(await getRow(tables.logs(), { id: "log0" }), undefined);
+    assert.equal(await deleteLegacyLocationLog("A", { id: "log0" }), null);
+});
+
+test("released delete API fails closed on inconsistent ownership", async () => {
+    const { put } = await setup(0);
+    await put(tables.logs(), { id: "broken", userId: "A", owner: "B::b" });
+    await assert.rejects(deleteLegacyLocationLog("A", { id: "broken" }));
+    await assert.rejects(deleteLegacyLocationLog("B", { id: "broken" }));
+    assert.ok(await getRow(tables.logs(), { id: "broken" }));
+});
+
+
+test("released session deletion rejects shared readers and preserves owner-only access", async () => {
+    const { sid } = await setup(0);
+    await assert.rejects(deleteLegacyRecordingSession("B", { id: sid }));
+    assert.equal((await getRow(tables.sessions(), { id: sid }))?.userId, "A");
+    assert.equal((await deleteLegacyRecordingSession("A", { id: sid }))?.userId, "A");
+    assert.equal(await deleteLegacyRecordingSession("A", { id: sid }), null);
+});
+
+async function setupDiscardIndex(count: number) {
+    const fixture = await setup(count);
+    const name = `DiscardIndex${Date.now()}${sequence++}`;
+    await raw.send(new CreateTableCommand({ TableName: name, BillingMode: "PAY_PER_REQUEST",
+        KeySchema: [{ AttributeName: "sessionKey", KeyType: "HASH" }, { AttributeName: "logId", KeyType: "RANGE" }],
+        AttributeDefinitions: [{ AttributeName: "sessionKey", AttributeType: "S" }, { AttributeName: "logId", AttributeType: "S" }],
+    }));
+    process.env.SESSION_LOG_INDEX_TABLE_NAME = name;
+    await fixture.put(name, { sessionKey: "__CONTROL__", logId: "READY", version: 1, legacySharingVerified: true });
+    for (let i = 0; i < count; i++) await fixture.put(name, { sessionKey: sessionLogKey("A", "s1"), logId: `log${i}` });
+    return { ...fixture, indexName: name };
+}
+async function finishDiscard(userId = "A", sessionId = "s1") {
+    for (let i = 0; i < 100; i++) if (await discardRecordingSessionBatch(userId, sessionId)) return;
+    assert.fail("discard did not complete");
+}
+
+test("discard resumes bounded chunks, removes grants/index/header, and never resurrects late uploads", async () => {
+    const { put, sid, indexName } = await setupDiscardIndex(45);
+    try {
+        await put(indexName, { sessionKey: sessionLogKey("A", "s1"), logId: "already-deleted" });
+        await put(tables.logs(), { id: "unrelated", userId: "B", owner: "B::b", recordingSessionId: "other" });
+        assert.equal(await discardRecordingSessionBatch("A", "s1"), false);
+        // Simulate application interruption by making no further client-state assumptions.
+        await assert.rejects(ingestLocationLog("A", "a", { id: "late-upload", userId: "A", recordingSessionId: "s1",
+            latitude: 35, longitude: 139, recordedAt: "2026-10-21T00:00:00Z" }));
+        await finishDiscard();
+        assert.equal(await getRow(tables.sessions(), { id: sid }), undefined);
+        assert.equal((await indexedSessionLogPage("A", "s1")).Items.length, 0);
+        assert.equal((await scanRows(tables.logs(), row => row.recordingSessionId === "s1")).length, 0);
+        assert.ok(await getRow(tables.logs(), { id: "unrelated" }));
+        assert.equal((await scanRows(tables.grants(), row => row.recordingSessionRecordId === sid)).length, 0);
+        assert.equal(await discardRecordingSessionBatch("A", "s1"), true);
+        await assert.rejects(createLegacyRecordingSession("A", "a", { id: sid, userId: "A", recordingSessionId: "s1" }));
+        await assert.rejects(createLegacyRecordingSession("A", "a", { id: "new-alias", userId: "A", recordingSessionId: "s1" }));
+        // Even a preexisting legacy alias cannot bypass the permanent canonical fence.
+        await put(tables.sessions(), { id: "late-alias", userId: "A", owner: "A::a", recordingSessionId: "s1" });
+        await assert.rejects(ingestLocationLog("A", "a", { id: "alias-upload", userId: "A", recordingSessionId: "s1",
+            latitude: 35, longitude: 139, recordedAt: "2026-10-21T00:00:00Z" }));
+        await assert.rejects(createLegacyLocationLog("A", "a", { id: "old-late", userId: "A", recordingSessionId: "s1",
+            latitude: 35, longitude: 139, recordedAt: "2026-10-21T00:00:00Z" }));
+    } finally { delete process.env.SESSION_LOG_INDEX_TABLE_NAME; }
+});
+
+test("discard handles zero logs and missing cloud header without touching another owner's session", async () => {
+    const { sid } = await setupDiscardIndex(0);
+    try {
+        await finishDiscard("B");
+        assert.ok(await getRow(tables.sessions(), { id: sid }));
+        await finishDiscard();
+        assert.equal(await getRow(tables.sessions(), { id: sid }), undefined);
+        assert.equal(await discardRecordingSessionBatch("A", "s1"), true);
+    } finally { delete process.env.SESSION_LOG_INDEX_TABLE_NAME; }
+});
+
+test("discard refuses a busy sharing operation and foreign index data", async () => {
+    const { put, sid } = await setupDiscardIndex(1);
+    try {
+        await put(tables.operations(), { recordingSessionRecordId: sid, operationId: "busy", status: "APPLYING" });
+        await assert.rejects(discardRecordingSessionBatch("A", "s1"));
+        assert.ok(await getRow(tables.logs(), { id: "log0" }));
+        await put(tables.operations(), { recordingSessionRecordId: sid, operationId: "done", status: "COMPLETED" });
+        await put(tables.logs(), { id: "log0", userId: "B", owner: "B::b", recordingSessionId: "s1" });
+        await assert.rejects(discardRecordingSessionBatch("A", "s1"));
+        assert.equal((await getRow(tables.logs(), { id: "log0" }))?.userId, "B");
+    } finally { delete process.env.SESSION_LOG_INDEX_TABLE_NAME; }
+});
+
+test("discard fences an upload already waiting to commit its transaction", async () => {
+    await setupDiscardIndex(0);
+    const original = accessDb.send;
+    let release!: () => void;
+    let reached!: () => void;
+    const waiting = new Promise<void>(resolve => { reached = resolve; });
+    const resume = new Promise<void>(resolve => { release = resolve; });
+    accessDb.send = (async (command: any) => {
+        if (command instanceof TransactWriteCommand && command.input.TransactItems?.some((item: any) => item.Put?.Item?.id === "racing-upload")) {
+            reached(); await resume;
+        }
+        return local.send(command);
+    }) as typeof accessDb.send;
+    try {
+        const upload = ingestLocationLog("A", "a", { id: "racing-upload", userId: "A", recordingSessionId: "s1",
+            latitude: 35, longitude: 139, recordedAt: "2026-10-21T00:00:00Z" });
+        // Attach rejection handling before releasing the paused transaction.
+        const rejected = assert.rejects(upload);
+        await waiting;
+        await finishDiscard();
+        release(); await rejected;
+        assert.equal(await getRow(tables.logs(), { id: "racing-upload" }), undefined);
+    } finally { release(); accessDb.send = original; delete process.env.SESSION_LOG_INDEX_TABLE_NAME; }
+});
+
+
+test("group revocation completes a pending discard instead of restoring its sharing", async () => {
+    const { sid } = await setupDiscardIndex(45);
+    try {
+        assert.equal(await discardRecordingSessionBatch("A", "s1"), false);
+        const group = await requestGroupAccessChange("A", "G", "DELETE", undefined, "during-discard");
+        await finish("G", group.operationId);
+        assert.equal(await getRow(tables.sessions(), { id: sid }), undefined);
+        assert.equal((await scanRows(tables.logs(), row => row.recordingSessionId === "s1")).length, 0);
+        assert.equal((await getRow(tables.operations(), { recordingSessionRecordId: sid }))?.status, "DISCARDED");
+        assert.equal(await getRow(tables.groups(), { groupId: "G" }).then(row => row?.lifecycle), "DELETED");
+    } finally { delete process.env.SESSION_LOG_INDEX_TABLE_NAME; }
+});
+
+
+test("concurrent discard retries share one checkpoint and complete without duplicate intent", async () => {
+    await setupDiscardIndex(45);
+    try {
+        const results = await Promise.allSettled([discardRecordingSessionBatch("A", "s1"), discardRecordingSessionBatch("A", "s1")]);
+        assert.ok(results.every(result => result.status === "fulfilled"), JSON.stringify(results));
+        await finishDiscard();
+        assert.equal((await indexedSessionLogPage("A", "s1")).Items.length, 0);
+    } finally { delete process.env.SESSION_LOG_INDEX_TABLE_NAME; }
 });

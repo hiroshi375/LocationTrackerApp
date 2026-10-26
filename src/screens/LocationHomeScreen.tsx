@@ -1,3 +1,5 @@
+import { planStopReceipts } from "../services/recordingFinalizationService";
+import { requestDiscardStep } from "../services/discardRequest";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { signOut, getCurrentUser } from "aws-amplify/auth";
 import { Hub } from "aws-amplify/utils";
@@ -10,6 +12,7 @@ import {
     AppState,
     Image,
     KeyboardAvoidingView,
+    Keyboard,
     Modal,
     Platform,
     Pressable,
@@ -45,6 +48,10 @@ import {
     type BackgroundLocationHeartbeatStatus,
 } from "../services/backgroundLocationService";
 import {
+    discardLocationQueueSession,
+    requestLocationQueueSessionDiscard,
+    isLocationQueueSessionDiscarded,
+    listPendingLocationQueueDiscards,
     debugPrintLocationQueueRecoverySummary,
     debugPrintLocationQueueSkipReasons,
     debugPrintSaveConditionNotMetDetails,
@@ -59,6 +66,7 @@ import {
     type RecordingSessionBackfillProgress,
     backfillRecordingSessionsFromLocationLogs,
     recalculateCurrentUserSubscriptionUsage,
+    recalculateCurrentUserActivityAggregates,
     reclassifyCurrentUserAutoActivitySessions,
     upsertRecordingSessionSummary,
 } from "../services/recordingSessionService";
@@ -514,6 +522,32 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
     const [pendingRecordingDistanceMeters, setPendingRecordingDistanceMeters] =
         useState<number | null>(null);
     const [savingSessionName, setSavingSessionName] = useState(false);
+    const sessionNameMutationRef = useRef(false);
+    const [discardRequested, setDiscardRequested] = useState(false);
+    const [pendingDiscardSessionId, setPendingDiscardSessionId] = useState<string | null>(null);
+    useEffect(() => {
+        let cancelled = false;
+        setDiscardRequested(false);
+        if (pendingSessionId) {
+            void getCurrentUser().then(user => isLocationQueueSessionDiscarded(user.userId, pendingSessionId))
+                .then(value => { if (!cancelled) setDiscardRequested(value); })
+                .catch(error => console.error("Discard intent load failed:", error));
+        }
+        return () => { cancelled = true; };
+    }, [pendingSessionId]);
+    useFocusEffect(useCallback(() => {
+        let cancelled = false;
+        if (!isRecording && !pendingSessionId) {
+            void (async () => {
+                const user = await getCurrentUser();
+                const pending = await listPendingLocationQueueDiscards(user.userId);
+                const currentUserId = (await getCurrentUser()).userId;
+                if (cancelled || signingOutRef.current || currentUserId !== user.userId) return;
+                setPendingDiscardSessionId(pending[0]?.recordingSessionId ?? null);
+            })().catch(error => console.error("Pending discard recovery failed:", error));
+        }
+        return () => { cancelled = true; };
+    }, [isRecording, pendingSessionId]));
     const [currentMonthActivityCount, setCurrentMonthActivityCount] = useState<
         number | null
     >(null);
@@ -1737,7 +1771,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
 
     // セッションIDを生成する関数
     const saveSessionName = async (name: string) => {
-        if (!pendingSessionId) {
+        if (!pendingSessionId || sessionNameMutationRef.current) {
             return;
         }
 
@@ -1747,12 +1781,18 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             `自動記録 ${formatDateTime(new Date().toISOString())}`;
 
         try {
+            sessionNameMutationRef.current = true;
             setSavingSessionName(true);
 
             // 保存対象のセッションIDと認証ユーザーを確定する。
             const targetSessionId = pendingSessionId;
             const currentUser = await getCurrentUser();
             const expectedUserId = currentUser.userId;
+            if (await isLocationQueueSessionDiscarded(expectedUserId, targetSessionId)) {
+                setDiscardRequested(true);
+                Alert.alert("破棄処理中", "この記録は破棄を開始しています。「破棄を再開」を押してください。");
+                return;
+            }
 
             const sessionLogs =
                 await listLocationLogsBySessionId(targetSessionId);
@@ -1833,6 +1873,8 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                     ? continuationState
                     : null;
 
+            const pendingPlanStop = await planStopReceipts.read(expectedUserId);
+            const matchingPlanStop = pendingPlanStop?.recordingSessionId === targetSessionId ? pendingPlanStop : null;
             const savedSummary = await upsertRecordingSessionSummary(
                 pendingSessionId,
                 sessionName,
@@ -1848,11 +1890,11 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                         undefined,
 
                     autoStoppedAt:
-                        matchingContinuationState?.autoStoppedAt ?? undefined,
+                        matchingPlanStop?.stoppedAt ?? matchingContinuationState?.autoStoppedAt ?? undefined,
 
-                    autoStopReason: matchingContinuationState?.autoStoppedAt
+                    autoStopReason: matchingPlanStop?.reason ?? (matchingContinuationState?.autoStoppedAt
                         ? "CONTINUATION_TIMEOUT"
-                        : undefined,
+                        : undefined),
                 },
             );
 
@@ -1872,6 +1914,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
 
             await clearRecordingContinuationState(pendingSessionId);
 
+            await planStopReceipts.acknowledge(expectedUserId, pendingSessionId!);
             setSessionNameModalVisible(false);
             setSessionNameInput("");
             setPendingSessionId(null);
@@ -1884,136 +1927,55 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             console.error("Save session name error:", error);
             Alert.alert("保存エラー", "アクティビティ名の保存に失敗しました。");
         } finally {
+            sessionNameMutationRef.current = false;
             setSavingSessionName(false);
         }
     };
 
     const handleDiscardSession = async () => {
-        if (!pendingSessionId || savingSessionName) {
+        if (!pendingSessionId || savingSessionName || sessionNameMutationRef.current) {
             return;
         }
 
+        Keyboard.dismiss();
         // 削除操作開始時のセッションIDを固定する。
         const targetSessionId = pendingSessionId;
 
         try {
+            sessionNameMutationRef.current = true;
             setSavingSessionName(true);
 
             // 現在のCognitoユーザーを取得する。
             const currentUser = await getCurrentUser();
             const expectedUserId = currentUser.userId;
+            await requestLocationQueueSessionDiscard(expectedUserId, targetSessionId);
+            setDiscardRequested(true);
+            setPendingDiscardSessionId(targetSessionId);
 
-            const sessionLogs =
-                await listLocationLogsBySessionId(targetSessionId);
-
-            /*
-             * 削除対象を厳格に検証する。
-             *
-             * 他ユーザーのログや別セッションのログが
-             * 1件でも含まれる場合、削除処理全体を中止する。
-             */
-            const invalidLogs = sessionLogs.filter(
-                (log) =>
-                    log.userId !== expectedUserId ||
-                    log.recordingSessionId !== targetSessionId ||
-                    !log.id,
-            );
-
-            if (invalidLogs.length > 0) {
-                console.error(
-                    "[RecordingSecurity] Discard blocked: owner or session mismatch",
-                    {
-                        targetSessionId,
-                        invalidCount: invalidLogs.length,
-                    },
-                );
-
-                throw new Error(
-                    "[RecordingSecurity] 削除対象に所有者またはセッションIDが一致しない記録があります。",
-                );
-            }
-
-            /*
-             * 対象ログが存在しない場合は、
-             * 未保存状態を勝手に解除しない。
-             */
-            if (sessionLogs.length === 0) {
-                throw new Error(
-                    "[RecordingSecurity] 削除対象のLocationLogがありません。",
-                );
-            }
-
-            const locationLogModel = client.models.LocationLog as any;
-
-            /*
-             * 一度に大量の削除を実行せず、
-             * 25件単位で処理する。
-             */
-            for (let index = 0; index < sessionLogs.length; index += 25) {
-                const batch = sessionLogs.slice(index, index + 25);
-
-                // 各バッチの削除前に認証状態を再確認する。
-                const userBeforeDelete = await getCurrentUser();
-
-                if (userBeforeDelete.userId !== expectedUserId) {
-                    throw new Error(
-                        "[RecordingSecurity] 認証ユーザーが変更されたため削除を中止しました。",
-                    );
-                }
-
-                /*
-                 * 削除直前にサーバー上の所有者を再検証する。
-                 * 取得できないレコードも安全のため削除しない。
-                 */
-                for (const log of batch) {
-                    const getResult = await locationLogModel.get({
-                        id: log.id,
-                    });
-
-                    if (
-                        getResult.errors?.length ||
-                        !getResult.data ||
-                        getResult.data.userId !== expectedUserId ||
-                        getResult.data.recordingSessionId !== targetSessionId
-                    ) {
-                        throw new Error(
-                            "[RecordingSecurity] 削除直前のLocationLog所有者確認に失敗しました。",
-                        );
-                    }
-                }
-
-                const deleteResults = await Promise.all(
-                    batch.map((log) =>
-                        locationLogModel.delete({
-                            id: log.id,
-                        }),
-                    ),
-                );
-
-                if (deleteResults.some((result) => result.errors)) {
-                    console.error(
-                        "[RecordingSecurity] LocationLog delete errors:",
-                        deleteResults,
-                    );
-
-                    throw new Error("位置情報ログの削除に失敗しました。");
-                }
-            }
-
-            /*
-             * すべてのLocationLog削除が成功した場合だけ、
-             * セッション継続確認stateを解除する。
-             */
-            const userBeforeCleanup = await getCurrentUser();
-
-            if (userBeforeCleanup.userId !== expectedUserId) {
-                throw new Error(
-                    "[RecordingSecurity] 認証ユーザーが変更されたため後処理を中止しました。",
-                );
-            }
+            // The server fences late uploads before deleting bounded chunks. Retrying
+            // resumes the same operation, including zero-point/partially deleted sessions.
+            const deadline = Date.now() + 90_000;
+            let completed = false;
+            do {
+                if ((await getCurrentUser()).userId !== expectedUserId)
+                    throw new Error("認証ユーザーが変更されたため破棄を中止しました。");
+                completed = await requestDiscardStep(() => (client.mutations.discardRecordingSession as (
+                    input: { recordingSessionId: string },
+                ) => Promise<{ data?: boolean | null; errors?: { message: string }[] }>)(
+                    { recordingSessionId: targetSessionId },
+                ));
+                if (!completed && Date.now() >= deadline)
+                    throw new Error("破棄処理は途中まで完了しています。「破棄を再開」を押すと続きから再開できます。");
+            } while (!completed);
+            if ((await getCurrentUser()).userId !== expectedUserId)
+                throw new Error("認証ユーザーが変更されたため後処理を中止しました。");
+            await discardLocationQueueSession(expectedUserId, targetSessionId);
+            await planStopReceipts.acknowledge(expectedUserId, targetSessionId);
 
             await clearRecordingContinuationState(targetSessionId);
 
+            setDiscardRequested(false);
+            setPendingDiscardSessionId(null);
             setSessionNameModalVisible(false);
             setSessionNameInput("");
             setPendingSessionId(null);
@@ -2021,10 +1983,14 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             setPendingRecordingIntervalMs(null);
             setPendingRecordingDistanceMeters(null);
 
+            void Promise.all([
+                recalculateCurrentUserSubscriptionUsage(),
+                recalculateCurrentUserActivityAggregates(),
+            ]).catch(error => console.error("Discard aggregate refresh failed:", error));
             console.log(
                 "[RecordingSecurity] Recording session discarded successfully:",
                 {
-                    deletedCount: sessionLogs.length,
+                    recordingSessionId: targetSessionId,
                 },
             );
         } catch (error) {
@@ -2032,9 +1998,10 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
 
             Alert.alert(
                 "削除エラー",
-                "アクティビティの削除に失敗しました。\n記録の所有者または通信状態を確認してください。",
+                error instanceof Error ? error.message : "アクティビティの破棄に失敗しました。通信状態を確認して再試行してください。",
             );
         } finally {
+            sessionNameMutationRef.current = false;
             setSavingSessionName(false);
         }
     };
@@ -2326,10 +2293,10 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             setSessionNameInput("");
             setSessionNameModalVisible(true);
 
+            // Recipient selection is not proof that sharing is currently enabled.
+            // Keep this historical notice about recording only.
             setLiveShareStatusMessage(
-                selectedLiveShareUsers.length > 0
-                    ? "継続確認がなかったため自動記録を停止しました。現在地共有は継続中です。"
-                    : "継続確認がなかったため自動記録を停止しました。",
+                "継続確認がなかったため自動記録を停止しました。",
             );
 
             Alert.alert(
@@ -2349,111 +2316,45 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
         selectedLiveShareUsers,
     ]);
 
+    const showPendingPlanStop = useCallback(async () => {
+        if (AppState.currentState !== "active" || sessionNameMutationRef.current || sessionNameModalVisible) return;
+        const owner = await getCurrentUser();
+        let receipt = await planStopReceipts.read(owner.userId);
+        if (!receipt) return;
+        const status = await getBackgroundRecordingStatus();
+        // A failed stop or a different live recording must never be finalized here.
+        if (status.state?.isRecording) return;
+        if (status.state?.userId && status.state.userId !== owner.userId) return;
+        if ((await getCurrentUser()).userId !== owner.userId) return;
+        if (receipt.phase === "stopping")
+            receipt = await planStopReceipts.ready(owner.userId, receipt.recordingSessionId);
+        if (!receipt || AppState.currentState !== "active" || (await getCurrentUser()).userId !== owner.userId) return;
+        const key = `${receipt.userId}:${receipt.recordingSessionId}`;
+        if (handledPlanLimitAutoStopKeyRef.current === key) return;
+        handledPlanLimitAutoStopKeyRef.current = key;
+        setPendingSessionId(receipt.recordingSessionId);
+        setPendingSessionShareOwnerValues(receipt.sharedOwners);
+        setPendingRecordingIntervalMs(receipt.intervalMs);
+        setPendingRecordingDistanceMeters(receipt.distanceMeters);
+        setSessionNameInput("");
+        setSessionNameModalVisible(true);
+        setPlanLimitStatusMessage(receipt.reason === "FREE_PLAN_DURATION_LIMIT"
+            ? "無料プランの1アクティビティあたり2時間の上限に達したため、自動記録を停止しました。"
+            : "無料プランの1アクティビティあたり1,000ポイントの上限に達したため、自動記録を停止しました。");
+        // The durable receipt remains until name-save or discard has actually succeeded.
+        await clearPlanLimitAutoStop();
+    }, [sessionNameModalVisible, clearPlanLimitAutoStop]);
+
+    useFocusEffect(useCallback(() => {
+        void showPendingPlanStop().catch(error => console.error("Restore plan-stop receipt error:", error));
+    }, [showPendingPlanStop]));
+
     useEffect(() => {
-        if (!planLimitAutoStop) {
-            handledPlanLimitAutoStopKeyRef.current = null;
-            return;
-        }
-
-        const autoStopKey = `${planLimitAutoStop.recordingSessionId}:${planLimitAutoStop.reason}`;
-
-        /*
-         * Reactの再レンダー等で同じ通知を
-         * 複数回処理しない。
-         */
-        if (handledPlanLimitAutoStopKeyRef.current === autoStopKey) {
-            return;
-        }
-
-        handledPlanLimitAutoStopKeyRef.current = autoStopKey;
-
-        const finalizePlanLimitAutoStoppedSession = async (): Promise<void> => {
-            const { recordingSessionId, reason } = planLimitAutoStop;
-
-            const stoppedShareOwnerValues = selectedLiveShareUsers
-                .map((user) => user.ownerValue)
-                .filter((ownerValue): ownerValue is string => !!ownerValue);
-
-            const autoStoppedAt = new Date().toISOString();
-
-            /*
-             * RecordingSessionへ
-             * Plan上限による停止理由を保存する。
-             */
-            try {
-                await upsertRecordingSessionSummary(
-                    recordingSessionId,
-                    null,
-                    stoppedShareOwnerValues,
-                    recordIntervalMs,
-                    recordDistanceMeters,
-                    {
-                        autoStoppedAt,
-                        autoStopReason: reason,
-                    },
-                );
-            } catch (error) {
-                console.error(
-                    "[SubscriptionPlanLimit] Finalize plan-limit auto-stopped RecordingSession error:",
-                    error,
-                );
-
-                /*
-                 * DB更新に失敗しても、
-                 * セッション名入力と停止通知は行う。
-                 */
-            }
-
-            /*
-             * 通常停止や継続確認タイムアウトと同じように、
-             * 停止したアクティビティの名称を入力できるようにする。
-             */
-            setPendingSessionId(recordingSessionId);
-            setPendingSessionShareOwnerValues(stoppedShareOwnerValues);
-            setPendingRecordingIntervalMs(recordIntervalMs);
-            setPendingRecordingDistanceMeters(recordDistanceMeters);
-            setSessionNameInput("");
-            setSessionNameModalVisible(true);
-
-            const isSharing = selectedLiveShareUsers.length > 0;
-
-            if (reason === "FREE_PLAN_DURATION_LIMIT") {
-                setPlanLimitStatusMessage(
-                    "無料プランの1アクティビティあたり2時間の上限に達したため、自動記録を停止しました。",
-                );
-
-                if (isSharing) {
-                    setLiveShareStatusMessage(
-                        "自動記録は停止しました。現在地共有は継続中です。",
-                    );
-                }
-            } else {
-                setPlanLimitStatusMessage(
-                    "無料プランの1アクティビティあたり1,000ポイントの上限に達したため、自動記録を停止しました。",
-                );
-
-                if (isSharing) {
-                    setLiveShareStatusMessage(
-                        "自動記録は停止しました。現在地共有は継続中です。",
-                    );
-                }
-            }
-
-            /*
-             * Home側で通知処理済みなので、
-             * Hook側の一時通知stateを解除する。
-             */
-            await clearPlanLimitAutoStop();
-        };
-
-        void finalizePlanLimitAutoStoppedSession();
-    }, [
-        planLimitAutoStop,
-        clearPlanLimitAutoStop,
-        recordDistanceMeters,
-        recordIntervalMs,
-        selectedLiveShareUsers,
-    ]);
+        const restore = () => void showPendingPlanStop().catch(error => console.error("Restore plan-stop receipt error:", error));
+        if (planLimitAutoStop) restore();
+        const subscription = AppState.addEventListener("change", state => { if (state === "active") restore(); });
+        return () => subscription.remove();
+    }, [planLimitAutoStop, showPendingPlanStop]);
 
     const backgroundHeartbeatDisplay = useMemo(() => {
         if (!backgroundHeartbeatStatus) {
@@ -2840,6 +2741,17 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                         )}
                     </Pressable>
                 </View>
+
+                {pendingDiscardSessionId && !isRecording && !sessionNameModalVisible && (
+                    <View style={styles.pendingDiscardBox}>
+                        <Text style={styles.modalDescription}>未完了のアクティビティ破棄があります。</Text>
+                        <AppButton title="破棄を再開" onPress={() => {
+                            setPendingSessionId(pendingDiscardSessionId);
+                            setDiscardRequested(true);
+                            setSessionNameModalVisible(true);
+                        }} />
+                    </View>
+                )}
 
                 {appVersionCheckResult?.updateAvailable &&
                     !updateCardDismissed && (
@@ -3888,18 +3800,22 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                     animationType="fade"
                     onRequestClose={() => {
                         if (!savingSessionName) {
-                            void saveSessionName("");
+                            if (discardRequested) {
+                                setSessionNameModalVisible(false);
+                                setPendingSessionId(null);
+                                setSessionNameInput("");
+                            } else void saveSessionName("");
                         }
                     }}
                 >
                     <View style={styles.modalOverlay}>
                         <View style={styles.modalContent}>
                             <Text style={styles.modalTitle}>
-                                アクティビティ名を入力
+                                {discardRequested ? "アクティビティの破棄" : "アクティビティ名を入力"}
                             </Text>
 
                             <Text style={styles.modalDescription}>
-                                この自動記録アクティビティの名前を入力してください。
+                                {discardRequested ? "未完了の破棄処理を再開できます。" : "この自動記録アクティビティの名前を入力してください。"}
                             </Text>
 
                             <TextInput
@@ -3907,7 +3823,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                                 value={sessionNameInput}
                                 onChangeText={setSessionNameInput}
                                 placeholder="例：朝の散歩"
-                                editable={!savingSessionName}
+                                editable={!savingSessionName && !discardRequested}
                                 autoFocus
                             />
 
@@ -3918,7 +3834,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                                         savingSessionName &&
                                             styles.appButtonDisabled,
                                     ]}
-                                    disabled={savingSessionName}
+                                    disabled={savingSessionName || discardRequested}
                                     onPress={() => saveSessionName("")}
                                 >
                                     <Text
@@ -3940,7 +3856,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                                     <Text
                                         style={styles.modalSecondaryButtonText}
                                     >
-                                        保存しない
+                                        {discardRequested ? (savingSessionName ? "破棄中..." : "破棄を再開") : "保存しない"}
                                     </Text>
                                 </Pressable>
 
@@ -3950,7 +3866,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                                         savingSessionName &&
                                             styles.appButtonDisabled,
                                     ]}
-                                    disabled={savingSessionName}
+                                    disabled={savingSessionName || discardRequested}
                                     onPress={() => {
                                         void saveSessionName(sessionNameInput);
                                     }}
@@ -3962,6 +3878,15 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                                     </Text>
                                 </Pressable>
                             </View>
+                            {discardRequested && !savingSessionName && (
+                                <Pressable style={styles.modalSecondaryButton} onPress={() => {
+                                    setSessionNameModalVisible(false);
+                                    setPendingSessionId(null);
+                                    setSessionNameInput("");
+                                }}>
+                                    <Text style={styles.modalSecondaryButtonText}>閉じて後で再開</Text>
+                                </Pressable>
+                            )}
                         </View>
                     </View>
                 </Modal>
@@ -4243,6 +4168,14 @@ const styles = StyleSheet.create({
         paddingBottom: 40,
         gap: 14,
         backgroundColor: "#f3f6f8",
+    },
+
+    pendingDiscardBox: {
+        marginHorizontal: 16,
+        padding: 16,
+        gap: 12,
+        borderRadius: 12,
+        backgroundColor: "#fff3d6",
     },
 
     homeHeader: {

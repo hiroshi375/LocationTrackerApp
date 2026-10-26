@@ -1,3 +1,4 @@
+import { watchLiveLocations } from "../services/liveLocationReadService";
 import { useIsFocused } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import {
@@ -49,6 +50,7 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
     const [mapReady, setMapReady] = useState(false);
     const [liveLocations, setLiveLocations] = useState<LiveLocationItem[]>([]);
     const [loading, setLoading] = useState(true);
+    const [liveLocationLoadFailed, setLiveLocationLoadFailed] = useState(false);
     const [liveLocationScreenPoints, setLiveLocationScreenPoints] = useState<
         Record<string, { x: number; y: number }>
     >({});
@@ -100,18 +102,16 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
 
         setLoading(true);
 
-        const liveLocationModel = client.models.LiveLocation as any;
+        if (!isFocused) return;
 
-        const subscription = liveLocationModel
-            .observeQuery({
+        const subscription = watchLiveLocations({
                 filter: {
                     isActive: {
                         eq: true,
                     },
                 },
-            })
-            .subscribe({
-                next: ({ items }: { items: any[] }) => {
+                onItems: (items: any[]) => {
+                    setLiveLocationLoadFailed(false);
                     const normalizedItems: LiveLocationItem[] = items
                         .map((item) => ({
                             id: item.id,
@@ -129,7 +129,7 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
                             updatedAt:
                                 item.updatedAt ??
                                 item.recordedAt ??
-                                new Date().toISOString(),
+                                "",
                             recordedAt: item.recordedAt ?? null,
                             isActive: Boolean(item.isActive),
                             sharedOwners: Array.isArray(item.sharedOwners)
@@ -158,8 +158,8 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
                         })
                         .sort((a, b) => {
                             return (
-                                new Date(b.updatedAt).getTime() -
-                                new Date(a.updatedAt).getTime()
+                                (Date.parse(b.updatedAt) || 0) -
+                                (Date.parse(a.updatedAt) || 0)
                             );
                         });
 
@@ -188,8 +188,10 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
                     setLiveLocations(uniqueLiveLocations);
                     setLoading(false);
                 },
-                error: (error: unknown) => {
-                    console.error("LiveLocation observe error:", error);
+                onError: (error: unknown) => {
+                    setLiveLocationLoadFailed(true);
+                    setLiveLocations([]);
+                    console.error("LiveLocation refresh error:", error);
                     setLoading(false);
                 },
             });
@@ -197,7 +199,7 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
         return () => {
             subscription.unsubscribe();
         };
-    }, [currentOwnerValue]);
+    }, [currentOwnerValue, isFocused]);
 
     useEffect(() => {
         if (liveLocations.length === 0) {
@@ -396,12 +398,11 @@ export default function LiveLocationMapScreen({ navigation }: Props) {
                 </View>
 
                 <Text style={styles.emptyTitle}>
-                    共有中の現在地はありません
+                    {liveLocationLoadFailed ? "現在地を取得できませんでした" : "共有中の現在地はありません"}
                 </Text>
 
                 <Text style={styles.emptyDescription}>
-                    グループメンバーが現在地の共有を開始すると、
-                    ここに表示されます。
+                    {liveLocationLoadFailed ? "通信状態を確認してください。接続が戻ると再取得します。" : "グループメンバーが現在地の共有を開始すると、ここに表示されます。"}
                 </Text>
             </View>
         );
@@ -618,6 +619,7 @@ function formatDateTime(value: string) {
 
 function formatTime(value: string) {
     const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "時刻不明";
 
     const hh = String(date.getHours()).padStart(2, "0");
     const mi = String(date.getMinutes()).padStart(2, "0");

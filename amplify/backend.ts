@@ -185,9 +185,18 @@ shareGroupLambda.addEnvironment(
 
 // Historical sharing: Lambda alone may update sharedOwners in DynamoDB.
 // The client-facing GraphQL field denies direct owner updates.
-const historicalLocationLogTable = backend.data.resources.tables["LocationLog"];
-const historicalRecordingSessionTable =
-    backend.data.resources.tables["RecordingSession"];
+// Model tables and their generated resolvers share a nested stack. Referencing
+// that stack from this Lambda would cycle back through the compatibility resolver.
+// Import the SAME physical tables using the API's generated naming contract; the
+// synthesized-template test verifies that contract against both model resources.
+const historicalLocationLogTable = Table.fromTableAttributes(Stack.of(accessLambda), "HistoricalLogWriteTarget", {
+    tableName: `LocationLog-${backend.data.resources.graphqlApi.apiId}-NONE`,
+    grantIndexPermissions: true,
+});
+const historicalRecordingSessionTable = Table.fromTableAttributes(Stack.of(accessLambda), "HistoricalSessionWriteTarget", {
+    tableName: `RecordingSession-${backend.data.resources.graphqlApi.apiId}-NONE`,
+    grantIndexPermissions: true,
+});
 historicalLocationLogTable.grantReadWriteData(
     backend.shareGroupApi.resources.lambda,
 );
@@ -209,18 +218,24 @@ historicalShareLambda.addEnvironment(
 
 // Backward compatibility: released apps still call generated create mutations.
 // Keep their GraphQL names/input/return types while enforcing sharing in Lambda.
-for (const field of ["createLocationLog", "createRecordingSession"]) {
+const ingestDataSource = Object.values(backend.data.resources.cfnResources.cfnDataSources)
+    .find(item => item.name === "FnIngestLocationLogLambdaDataSource");
+if (!ingestDataSource) throw new Error("Missing recording compatibility data source");
+for (const field of ["createLocationLog", "createRecordingSession", "deleteLocationLog", "deleteRecordingSession"]) {
     const resolver = Object.values(backend.data.resources.cfnResources.cfnResolvers)
         .find(item => item.typeName === "Mutation" && item.fieldName === field);
     if (!resolver) throw new Error(`Missing generated resolver: ${field}`);
-    const compat = new CfnFunctionConfiguration(Stack.of(resolver), `${field}CompatibilityFunction`, {
-        apiId: resolver.apiId,
-        name: `${field}Compatibility`,
-        dataSourceName: "FnIngestLocationLogLambdaDataSource",
+    const compat = new CfnFunctionConfiguration(Stack.of(ingestDataSource), `${field}OwnerCompatibilityFunction`, {
+        apiId: ingestDataSource.apiId,
+        name: `${field}OwnerCompatibility`,
+        dataSourceName: ingestDataSource.name,
         functionVersion: "2018-05-29",
         requestMappingTemplate: `$util.toJson({"version":"2018-05-29","operation":"Invoke","payload":{"fieldName":"${field}","arguments":$ctx.args,"identity":$ctx.identity}})`,
         responseMappingTemplate: '#if($ctx.error) $util.error($ctx.error.message, $ctx.error.type) #end $util.toJson($ctx.result)',
     });
+    // A plain data-source name creates no CloudFormation ordering by itself.
+    // Keep the function beside its source and make the dependency explicit.
+    compat.addDependency(ingestDataSource);
     resolver.pipelineConfig = { functions: [compat.attrFunctionId] };
 }
 

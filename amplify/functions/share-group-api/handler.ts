@@ -1,6 +1,7 @@
 import { advanceAccountDeletion } from "./accountDeletion";
+import { discardRecordingSessionBatch } from "./discardRecordingSession";
 import { assertAccountNotDeleting } from "./accountDeletionGuard";
-import { createLegacyLocationLog, createLegacyRecordingSession } from "./legacyRecordingWrite";
+import { createLegacyLocationLog, createLegacyRecordingSession, deleteLegacyLocationLog, deleteLegacyRecordingSession } from "./legacyRecordingWrite";
 import { prepareStoppedHistoricalRecovery } from "./historicalRecoveryAdmission";
 import { readSessionLogs, withSessionLogInventory, resetSessionLogInventory } from "./sessionLogReader";
 import { getRow, scanRows, tables, gate, withGroupLocks, historicalWriteGroups, fencedWrite } from "./groupAccessStore";
@@ -1103,6 +1104,7 @@ async function runHistoricalWrite(event: any, bulk: boolean, write: () => Promis
     return withGroupLocks(await historicalWriteGroups(userId, groupId, recordingSessionId), () =>
         withSessionLogInventory(async () => {
             const previous = await getHistoricalShareOperation(session.id);
+            if (previous?.discardOperation) throw new Error("破棄を開始した記録は共有できません。");
             if (previous && previous.status !== "COMPLETED") {
                 await prepareStoppedHistoricalRecovery(previous, userId, event.arguments);
                 await recoverFailedHistoricalShareProjection(userId, recordingSessionId, previous.operationId);
@@ -1195,6 +1197,14 @@ export const handler = async (event: any) => {
             return await resumeGroupJob(event.arguments.groupId, event.arguments.operationId, getCaller(event).userId);
         case "cancelShareGroupAccessOperation":
             return await cancelGroupJob(event.arguments.groupId, event.arguments.operationId, getCaller(event).userId);
+        case "discardRecordingSession":
+            return discardRecordingSessionBatch(getCaller(event).userId, event.arguments.recordingSessionId);
+        case "deleteLocationLog": {
+            return deleteLegacyLocationLog(getCaller(event).userId, event.arguments.input, event.arguments.condition);
+        }
+        case "deleteRecordingSession": {
+            return deleteLegacyRecordingSession(getCaller(event).userId, event.arguments.input, event.arguments.condition);
+        }
         case "createLocationLog": {
             const caller = getCaller(event);
             return createLegacyLocationLog(caller.userId, caller.username, event.arguments.input);
@@ -1215,6 +1225,7 @@ export const handler = async (event: any) => {
             const caller = getCaller(event).userId;
             const session = await getOwnedRecordingSession(caller, event.arguments.recordingSessionId);
             const previous = await getHistoricalShareOperation(session.id);
+            if (previous?.discardOperation) return discardRecordingSessionBatch(caller, event.arguments.recordingSessionId);
             if (!previous || previous.status === "COMPLETED") return true;
             const retry = { ...event, arguments: { recordingSessionId: session.recordingSessionId,
                 groupId: previous.groupId, recipientUserId: previous.recipientUserId, enabled: previous.requestedEnabled } };

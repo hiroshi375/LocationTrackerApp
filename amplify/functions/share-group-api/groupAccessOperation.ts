@@ -1,4 +1,7 @@
+import { assertRecordOwner } from "./recordOwnership";
+export { assertRecordOwner } from "./recordOwnership";
 import { randomUUID } from "node:crypto";
+import { discardRecordingSessionBatch } from "./discardRecordingSession";
 import { indexedSessionLogPage, sessionIndexReady } from "./sessionLogIndex";
 import {
     UpdateCommand,
@@ -29,15 +32,6 @@ const now = () => new Date().toISOString();
 const fail = (message: string): never => {
     throw new Error(message);
 };
-export function assertRecordOwner(row: Row, userId: string) {
-    if (
-        row.userId !== userId ||
-        typeof row.owner !== "string" ||
-        !(row.owner === userId || row.owner.startsWith(`${userId}::`))
-    ) {
-        fail("NEEDS_REPAIR: 記録の所有者属性が一致しません。");
-    }
-}
 export function groupJobView(job: Row) {
     return {
         success: job.status === "COMPLETED",
@@ -465,12 +459,23 @@ async function step(job: Row) {
         const work = await queryWork(groupId, operationId);
         if (!work)
             return checkpoint(job, { phase: "MEMBERS", cursor: undefined });
+        const previous = await getRow(tables.operations(), { recordingSessionRecordId: work.sessionId });
+        if (previous?.discardOperation === true) {
+            if (previous.status !== "DISCARDED") {
+                // Finish the owner-authorized deletion before completing group
+                // revocation; never leave shared logs behind or revive a tombstone.
+                await discardRecordingSessionBatch(previous.ownerUserId, previous.recordingSessionId);
+                return checkpoint(job, { phase: "NEXT" });
+            }
+            return checkpoint(job, { phase: "NEXT" }, [{ Update: {
+                TableName: tables.jobs(), Key: { groupId, entryKey: work.entryKey },
+                UpdateExpression: "SET #status = :done", ExpressionAttributeNames: { "#status": "status" },
+                ExpressionAttributeValues: { ":done": "COMPLETED" },
+            } }]);
+        }
         const session = await getRow(tables.sessions(), { id: work.sessionId });
         if (!session) fail("NEEDS_REPAIR: 対象履歴が存在しません。");
         assertRecordOwner(session!, session!.userId);
-        const previous = await getRow(tables.operations(), {
-            recordingSessionRecordId: session!.id,
-        });
         if (previous?.grantManaged !== true || previous.status !== "COMPLETED")
             fail(
                 "WAITING_REPAIR: 対象履歴が未移行または別の共有操作の復旧待ちです。",

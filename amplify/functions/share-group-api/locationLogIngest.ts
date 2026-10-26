@@ -8,7 +8,7 @@ import {
     type Row,
 } from "./groupAccessStore";
 import { TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
-import { assertRecordOwner } from "./groupAccessOperation";
+import { assertRecordOwner } from "./recordOwnership";
 import { logIndexWrite } from "./sessionLogIndex";
 
 const optionalText = z.string().nullable().optional();
@@ -80,6 +80,10 @@ export async function ingestLocationLog(
     const operation = await getRow(tables.operations(), {
         recordingSessionRecordId: sessionRecordId,
     });
+    const canonicalSessionRecordId = `recording-session:${userId}:${parsed.recordingSessionId ?? "__unassigned__"}`;
+    const canonicalOperation = sessionRecordId === canonicalSessionRecordId ? operation
+        : await getRow(tables.operations(), { recordingSessionRecordId: canonicalSessionRecordId });
+    if (canonicalOperation?.discardOperation === true) throw new Error("SESSION_DISCARDED: この記録は破棄されています。");
     if (operation && operation.status !== "COMPLETED")
         throw new Error(
             "共有権限の更新中です。位置情報を保存してから再送してください。",
@@ -97,6 +101,10 @@ export async function ingestLocationLog(
         new TransactWriteCommand({
             TransactItems: [
                 ...[logIndexWrite(parsed)].filter((write): write is NonNullable<typeof write> => !!write),
+                ...(sessionRecordId !== canonicalSessionRecordId ? [{ ConditionCheck: {
+                    TableName: tables.operations(), Key: { recordingSessionRecordId: canonicalSessionRecordId },
+                    ConditionExpression: "attribute_not_exists(discardOperation)",
+                } }] : []),
                 {
                     ConditionCheck: {
                         TableName: tables.operations(),

@@ -1,11 +1,12 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
-function harness({apiError=false,queueError=false,emptyCount=0}={}){
+function harness({apiError=false,queueError=false,nativeError=false,emptyCount=0}={}){
  const calls=[],store=new Map(),exports={};let first=true;
  const profile={id:'profile-B',userId:'B',iconImagePath:'profile-icons/B/photo.jpg'};
  const model={list:async()=>({data:[profile],errors:[]}),delete:async()=>{calls.push('profile');return{data:profile,errors:[]};}};
  const deps={
   './accountDeletionState':{accountDeletionStateKey:u=>'aclog-account-deletion:'+u},
   './locationLocationQueueService':{deleteLocationQueueForAccount:async u=>{calls.push('queue:'+u);if(queueError)throw Error('queue failure');return 4;}},
+  './nativeRecordingInboxService':{deleteNativeRecordingInboxForAccount:async u=>{calls.push('native:'+u);if(nativeError)throw Error('native inbox failure');}},
   '@react-native-async-storage/async-storage':{__esModule:true,default:{getItem:async k=>store.get(k),setItem:async(k,v)=>store.set(k,v),removeItem:async k=>store.delete(k),getAllKeys:async()=>[...store.keys()],multiRemove:async keys=>keys.forEach(k=>store.delete(k))}},
   'aws-amplify/auth':{getCurrentUser:async()=>({userId:'B'}),deleteUser:async()=>calls.push('cognito')},
   'aws-amplify/storage':{remove:async()=>calls.push('image')},
@@ -18,7 +19,7 @@ function harness({apiError=false,queueError=false,emptyCount=0}={}){
  return{run:()=>exports.deleteCurrentAccount(),calls,store};
 }
 test('server cleanup finishes before image/profile/own queue/auth deletion',async()=>{
- const h=harness();await h.run();assert.deepEqual(h.calls,['stop','server','server','image','profile','queue:B','cognito']);assert.equal(h.store.size,0);
+ const h=harness();await h.run();assert.deepEqual(h.calls,['stop','server','server','image','profile','native:B','queue:B','cognito']);assert.equal(h.store.size,0);
 });
 test('cloud failure preserves login and local queue for resumption',async()=>{
  const h=harness({apiError:true});await assert.rejects(h.run());assert.deepEqual(h.calls,['stop','server']);assert.equal(h.store.has('aclog-account-deletion:B'),true);
@@ -32,4 +33,8 @@ test('transient empty response retries without assuming completion',async()=>{
 });
 test('repeated empty responses retain login and queue',async()=>{
  const h=harness({emptyCount:8});await assert.rejects(h.run());assert.equal(h.calls.includes('cognito'),false);assert.equal(h.calls.includes('queue:B'),false);
+});
+
+test('native inbox cleanup failure retains authentication and durable deletion state',async()=>{
+ const h=harness({nativeError:true});await assert.rejects(h.run());assert.equal(h.calls.includes('cognito'),false);assert.equal(h.calls.includes('queue:B'),false);assert.equal(h.store.has('aclog-account-deletion:B'),true);
 });

@@ -1,4 +1,5 @@
 import { client } from "../lib/client";
+import { stopMatchingLiveRecording } from "./liveRecordingStopGuard";
 import { getLiveLocationId } from "./liveLocationIdentityService";
 
 /**
@@ -329,4 +330,55 @@ export async function stopLiveLocationRecording({
     if (data !== true) {
         throw new Error("LIVE_LOCATION_RECORDING_STOP_NOT_CONFIRMED");
     }
+}
+
+/** Complete this recording before a full sharing stop advances its revision. */
+export async function finishLiveRecordingBeforeSharingStop({
+    userId,
+    expectedRevision,
+    recordingSessionId,
+}: {
+    userId: string;
+    expectedRevision: number;
+    recordingSessionId: string;
+}): Promise<void> {
+    await stopMatchingLiveRecording({
+        userId,
+        expectedRevision,
+        expectedRecordingSessionId: recordingSessionId,
+        read: async () => {
+            const liveModel = client.models.LiveLocation as unknown as {
+                get: (identifier: { id: string }, options: { selectionSet: string[] }) =>
+                    Promise<{ data: unknown; errors?: readonly unknown[] }>;
+            };
+            const result = await liveModel.get(
+                { id: getLiveLocationId(userId) },
+                { selectionSet: ["userId", "shareRevision", "isRecording", "recordingSessionId"] },
+            );
+            assertGraphQLResult(result.errors, "readLiveRecordingBeforeSharingStop");
+            if (result.data == null) return null;
+            if (typeof result.data !== "object" || Array.isArray(result.data)) {
+                throw new Error("INVALID_LIVE_RECORDING_STOP_STATE");
+            }
+            const item = result.data as Record<string, unknown>;
+            if (typeof item.userId !== "string" ||
+                typeof item.shareRevision !== "number" || !Number.isSafeInteger(item.shareRevision) ||
+                typeof item.isRecording !== "boolean" ||
+                (item.recordingSessionId != null && typeof item.recordingSessionId !== "string")) {
+                throw new Error("INVALID_LIVE_RECORDING_STOP_STATE");
+            }
+            return {
+                userId: item.userId,
+                shareRevision: item.shareRevision,
+                isRecording: item.isRecording,
+                recordingSessionId: item.recordingSessionId ?? null,
+            };
+        },
+        stop: async (revision, sessionId) => {
+            await stopLiveLocationRecording({
+                expectedRevision: revision,
+                expectedRecordingSessionId: sessionId,
+            });
+        },
+    });
 }

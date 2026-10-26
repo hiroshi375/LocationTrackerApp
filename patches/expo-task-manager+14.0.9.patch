@@ -1,9 +1,8 @@
 diff --git a/node_modules/expo-task-manager/android/build.gradle b/node_modules/expo-task-manager/android/build.gradle
-index 856c83d..8b0d25d 100644
 --- a/node_modules/expo-task-manager/android/build.gradle
 +++ b/node_modules/expo-task-manager/android/build.gradle
-@@ -16,5 +16,10 @@ android {
- 
+@@ -16,5 +16,10 @@
+
  dependencies {
    implementation project(':unimodules-app-loader')
 +
@@ -13,25 +12,260 @@ index 856c83d..8b0d25d 100644
 +
    api "androidx.core:core:1.0.0"
  }
+diff --git a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/LocationJobDeadline.java b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/LocationJobDeadline.java
+new file mode 100644
+--- /dev/null
++++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/LocationJobDeadline.java
+@@ -0,0 +1,17 @@
++package expo.modules.taskManager;
++
++/** Preserve the original location job deadline when merging new GPS samples. */
++final class LocationJobDeadline {
++  static final String ENQUEUED_AT = "aclog.location.enqueuedElapsedMs";
++  static final String TASK_NAME = "location-tracker-background-location-task";
++
++  static long age(long now, long enqueuedAt) {
++    // elapsedRealtime can reset after reboot. Do not fabricate a huge age.
++    return enqueuedAt < 0 || enqueuedAt > now ? -1L : now - enqueuedAt;
++  }
++
++  static long remaining(long now, long enqueuedAt, long deadlineMs) {
++    long age = age(now, enqueuedAt);
++    return age < 0 ? deadlineMs : Math.max(0L, deadlineMs - age);
++  }
++}
+diff --git a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskEventRegistry.java b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskEventRegistry.java
+new file mode 100644
+--- /dev/null
++++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskEventRegistry.java
+@@ -0,0 +1,38 @@
++package expo.modules.taskManager;
++
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.Map;
++import java.util.Set;
++
++/** Atomic membership: finishing one event must not detach the next event's collection. */
++final class TaskEventRegistry {
++  private final Map<String, Set<String>> events = new HashMap<>();
++
++  synchronized boolean add(String scope, String eventId) {
++    Set<String> pending = events.get(scope);
++    boolean first = pending == null;
++    if (first) {
++      pending = new HashSet<>();
++      events.put(scope, pending);
++    }
++    pending.add(eventId);
++    return first;
++  }
++
++  synchronized boolean finish(String scope, String eventId) {
++    Set<String> pending = events.get(scope);
++    if (pending == null || !pending.remove(eventId)) return false;
++    if (!pending.isEmpty()) return false;
++    events.remove(scope);
++    return true;
++  }
++
++  synchronized boolean hasEvents(String scope) {
++    return events.containsKey(scope);
++  }
++
++  synchronized void removeScope(String scope) {
++    events.remove(scope);
++  }
++}
+diff --git a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskManagerInternalModule.java b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskManagerInternalModule.java
+--- a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskManagerInternalModule.java
++++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskManagerInternalModule.java
+@@ -61,7 +61,11 @@
+   @Override
+   public void onDestroy() {
+     mUIManager.unregisterLifecycleEventListener(this);
+-    mTaskService.setTaskManager(null, getAppScopeKey(), getAppUrl());
++    if (mTaskService instanceof TaskService) {
++      ((TaskService) mTaskService).removeTaskManager(this, getAppScopeKey());
++    } else {
++      mTaskService.setTaskManager(null, getAppScopeKey(), getAppUrl());
++    }
+   }
+
+   //endregion
+@@ -81,9 +85,11 @@
+
+   @Override
+   public synchronized void executeTaskWithBody(Bundle body) {
++    recordDelivery("MANAGER_RECEIVED", body, mEventsQueue == null ? 0 : mEventsQueue.size());
+     if (mEventsQueue != null) {
+       // `startObserving` on TaskManagerModule wasn't called yet - add event body to the queue.
+       mEventsQueue.add(body);
++      recordDelivery("MANAGER_QUEUED", body, mEventsQueue.size());
+     } else {
+       // Manager is already being observed by JS app, so we can execute the event immediately.
+       emitEvent(body);
+@@ -100,6 +106,7 @@
+
+   @Override
+   public synchronized void flushQueuedEvents() {
++    recordDelivery("MANAGER_FLUSH", null, mEventsQueue == null ? 0 : mEventsQueue.size());
+     // Execute any events that came before this call.
+     if (mEventsQueue != null) {
+       for (Bundle body : mEventsQueue) {
+@@ -187,12 +194,27 @@
+   }
+
+   private void emitEvent(Bundle body) {
++    recordDelivery("NATIVE_EMIT_START", body, 0);
+     if (mEmitEventWrapper != null) {
+       mEmitEventWrapper.emit(TaskManagerInterface.EVENT_NAME, body);
++      recordDelivery("NATIVE_EMIT_RETURN", body, 0);
+     } else {
++      recordDelivery("NATIVE_EMIT_WRAPPER_MISSING", body, 0);
+       Log.e("ExpoTaskManager", "EmitEventWrapper is not set. Failed to emit the TaskManager Event.");
+     }
+   }
+
++  // Diagnostics only: a returned native emit is not proof of JS receipt.
++  private void recordDelivery(String stage, Bundle body, int queuedCount) {
++    if (!(mTaskService instanceof TaskService)) return;
++    Bundle info = body == null ? null : body.getBundle("executionInfo");
++    ((TaskService) mTaskService).writeHeadlessDiagnostic(stage,
++      "appScopeKey=" + getAppScopeKey() +
++      "\tmanagerId=" + System.identityHashCode(this) +
++      "\teventId=" + (info == null ? "none" : info.getString("eventId")) +
++      "\tqueuedCount=" + queuedCount +
++      "\temitWrapperAvailable=" + (mEmitEventWrapper != null));
++  }
++
+   //endregion
+ }
+diff --git a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskManagerRegistration.java b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskManagerRegistration.java
+new file mode 100644
+--- /dev/null
++++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskManagerRegistration.java
+@@ -0,0 +1,18 @@
++package expo.modules.taskManager;
++
++import java.lang.ref.WeakReference;
++import java.util.Map;
++
++/** An older ReactContext must never unregister the replacement context's manager. */
++final class TaskManagerRegistration {
++  static <T> boolean removeIfSame(Map<String, WeakReference<T>> managers, String scope, T destroyed) {
++    synchronized (managers) {
++      WeakReference<T> reference = managers.get(scope);
++      if (reference != null && reference.get() == destroyed) {
++        managers.remove(scope);
++        return true;
++      }
++      return false;
++    }
++  }
++}
+diff --git a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskManagerUtils.java b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskManagerUtils.java
+--- a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskManagerUtils.java
++++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskManagerUtils.java
+@@ -12,6 +12,7 @@
+ import android.os.Bundle;
+ import android.os.Parcelable;
+ import android.os.PersistableBundle;
++import android.os.SystemClock;
+ import android.util.Log;
+
+ import java.util.ArrayList;
+@@ -63,6 +64,21 @@
+     if (task == null) {
+       Log.e(TAG, "Trying to schedule job for null task!");
+     } else {
++      if (LocationJobDeadline.TASK_NAME.equals(task.getName())) {
++        double oldest = Double.POSITIVE_INFINITY;
++        double newest = Double.NEGATIVE_INFINITY;
++        if (data != null) for (PersistableBundle location : data) {
++          double timestamp = location.getDouble("timestamp", Double.NaN);
++          if (!Double.isNaN(timestamp) && !Double.isInfinite(timestamp)) {
++            oldest = Math.min(oldest, timestamp);
++            newest = Math.max(newest, timestamp);
++          }
++        }
++        TaskService.writeDeliveryDiagnostic(context, "LOCATION_JOB_ENQUEUE",
++          "newCount=" + (data == null ? 0 : data.size()) +
++          "\toldestLocationAgeMs=" + (Double.isInfinite(oldest) ? -1L : System.currentTimeMillis() - (long) oldest) +
++          "\tlatestLocationAgeMs=" + (Double.isInfinite(newest) ? -1L : System.currentTimeMillis() - (long) newest));
++      }
+       updateOrScheduleJob(context, task, data);
+     }
+   }
+@@ -175,6 +191,10 @@
+
+   private JobInfo createJobInfoByAddingData(JobInfo jobInfo, List<PersistableBundle> data) {
+     PersistableBundle mergedExtras = jobInfo.getExtras();
++    if (LocationJobDeadline.TASK_NAME.equals(mergedExtras.getString("taskName")) &&
++        !mergedExtras.containsKey(LocationJobDeadline.ENQUEUED_AT)) {
++      mergedExtras.putLong(LocationJobDeadline.ENQUEUED_AT, SystemClock.elapsedRealtime());
++    }
+     int dataSize = mergedExtras.getInt("dataSize", 0);
+
+     if (data != null) {
+@@ -215,10 +235,15 @@
+   }
+
+   private JobInfo createJobInfo(int jobId, ComponentName jobService, PersistableBundle extras) {
++    long deadline = DEFAULT_OVERRIDE_DEADLINE;
++    if (LocationJobDeadline.TASK_NAME.equals(extras.getString("taskName"))) {
++      deadline = LocationJobDeadline.remaining(SystemClock.elapsedRealtime(),
++        extras.getLong(LocationJobDeadline.ENQUEUED_AT, -1L), DEFAULT_OVERRIDE_DEADLINE);
++    }
+     return new JobInfo.Builder(jobId, jobService)
+       .setExtras(extras)
+       .setMinimumLatency(0)
+-      .setOverrideDeadline(DEFAULT_OVERRIDE_DEADLINE)
++      .setOverrideDeadline(deadline)
+       .build();
+   }
+
+@@ -233,6 +258,9 @@
+     extras.putInt(EXTRAS_REQUIRED_KEY, 1);
+     extras.putString("appId", task.getAppScopeKey());
+     extras.putString("taskName", task.getName());
++    if (LocationJobDeadline.TASK_NAME.equals(task.getName())) {
++      extras.putLong(LocationJobDeadline.ENQUEUED_AT, SystemClock.elapsedRealtime());
++    }
+
+     if (data != null) {
+       extras.putInt("dataSize", data.size());
 diff --git a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
-index 2b6c2fa..0c4c1e5 100644
 --- a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
 +++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
-@@ -1,31 +1,44 @@
+@@ -1,20 +1,8 @@
  package expo.modules.taskManager;
- 
+
+-import android.app.job.JobParameters;
+-import android.app.job.JobService;
+-import android.content.Context;
+-import android.content.Intent;
+-import android.content.SharedPreferences;
+-import android.net.Uri;
+-import android.os.Bundle;
+-import android.os.Handler;
+-import android.os.PersistableBundle;
+-import android.util.Log;
+-
+-import org.json.JSONObject;
+-import expo.modules.apploader.AppLoaderProvider;
+-import expo.modules.apploader.HeadlessAppLoader;
+-import expo.modules.core.interfaces.SingletonModule;
 +import static expo.modules.taskManager.Utils.getConsumerVersion;
 +import static expo.modules.taskManager.Utils.jsonToMap;
 +import static expo.modules.taskManager.Utils.unversionedClassForClass;
-+
-+import java.lang.ref.WeakReference;
-+import java.lang.reflect.Constructor;
-+import java.util.ArrayList;
-+import java.util.HashMap;
-+import java.util.List;
-+import java.util.Map;
-+import java.util.UUID;
-+
+
+ import java.lang.ref.WeakReference;
+ import java.lang.reflect.Constructor;
+@@ -24,8 +12,33 @@
+ import java.util.Map;
+ import java.util.UUID;
+
 +import org.json.JSONObject;
 +
 +import com.facebook.react.ReactApplication;
@@ -43,43 +277,30 @@ index 2b6c2fa..0c4c1e5 100644
 +import com.facebook.react.jstasks.HeadlessJsTaskContext;
 +import com.facebook.react.ReactInstanceEventListener;
 +
- import android.app.job.JobParameters;
- import android.app.job.JobService;
--import android.content.Context;
- import android.content.Intent;
- import android.content.SharedPreferences;
- import android.net.Uri;
- import android.os.Bundle;
--import android.os.Handler;
- import android.os.PersistableBundle;
- import android.util.Log;
++import android.app.job.JobParameters;
++import android.app.job.JobService;
++import android.content.Intent;
++import android.content.SharedPreferences;
++import android.net.Uri;
++import android.os.Bundle;
++import android.os.PersistableBundle;
++import android.util.Log;
 +import android.content.Context;
 +import android.os.Handler;
- 
--import org.json.JSONObject;
++
 +import androidx.annotation.NonNull;
-+import androidx.annotation.Nullable;
- import expo.modules.apploader.AppLoaderProvider;
- import expo.modules.apploader.HeadlessAppLoader;
- import expo.modules.core.interfaces.SingletonModule;
+ import androidx.annotation.Nullable;
 -
--import java.lang.ref.WeakReference;
--import java.lang.reflect.Constructor;
--import java.util.ArrayList;
--import java.util.HashMap;
--import java.util.List;
--import java.util.Map;
--import java.util.UUID;
--
--import androidx.annotation.Nullable;
--
++import expo.modules.apploader.AppLoaderProvider;
++import expo.modules.apploader.HeadlessAppLoader;
++import expo.modules.core.interfaces.SingletonModule;
  import expo.modules.interfaces.taskManager.TaskConsumerInterface;
  import expo.modules.interfaces.taskManager.TaskExecutionCallback;
  import expo.modules.interfaces.taskManager.TaskInterface;
-@@ -37,9 +50,12 @@ import expo.modules.taskManager.exceptions.TaskNotFoundException;
+@@ -37,9 +50,12 @@
  import expo.modules.taskManager.exceptions.TaskRegisteringFailedException;
  import expo.modules.taskManager.repository.TasksAndEventsRepository;
- 
+
 -import static expo.modules.taskManager.Utils.getConsumerVersion;
 -import static expo.modules.taskManager.Utils.jsonToMap;
 -import static expo.modules.taskManager.Utils.unversionedClassForClass;
@@ -89,38 +310,49 @@ index 2b6c2fa..0c4c1e5 100644
 +import java.io.IOException;
 +import java.util.concurrent.ExecutorService;
 +import java.util.concurrent.Executors;
- 
+
  // @tsapeta: TaskService is a funny kind of singleton module... because it's actually not a singleton :D
  // Since it would make too much troubles in order to get the singleton instance (from ModuleRegistryProvider)
-@@ -47,13 +63,11 @@ import static expo.modules.taskManager.Utils.unversionedClassForClass;
+@@ -47,37 +63,108 @@
  // Thanks to that, we can instantiate new TaskService in those classes, that has just its own context and all other resources are shared.
- 
+
  public class TaskService implements SingletonModule, TaskServiceInterface {
 +
    private static final String TAG = "TaskService";
    private static final String SHARED_PREFERENCES_NAME = "TaskManagerModule";
--  private static final int MAX_TASK_EXECUTION_TIME_MS = 15000; // 15 seconds
++
+   private static final int MAX_TASK_EXECUTION_TIME_MS = 15000; // 15 seconds
 -
 -  private WeakReference<Context> mContextRef;
 -  private TaskManagerUtilsInterface mTaskManagerUtils;
- 
-+  private static final int MAX_TASK_EXECUTION_TIME_MS = 15000; // 15 seconds
-   // Map with task managers of running (foregrounded) apps. { "<appScopeKey>": WeakReference(TaskManagerInterface) }
-   private static final Map<String, WeakReference<TaskManagerInterface>> sTaskManagers = new HashMap<>();
- 
-@@ -63,21 +77,94 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
-   // { "<appScopeKey>": List(eventIds...) }
-   private static final Map<String, List<String>> sEvents = new HashMap<>();
- 
--  private TasksAndEventsRepository mTasksAndEventsRepository;
 -
+   // Map with task managers of running (foregrounded) apps. { "<appScopeKey>": WeakReference(TaskManagerInterface) }
+-  private static final Map<String, WeakReference<TaskManagerInterface>> sTaskManagers = new HashMap<>();
++  private static final Map<String, WeakReference<TaskManagerInterface>> sTaskManagers = java.util.Collections.synchronizedMap(new HashMap<>());
+
+   // Same as above but for headless (backgrounded) apps.
+-  private static final Map<String, WeakReference<TaskManagerInterface>> sHeadlessTaskManagers = new HashMap<>();
++  private static final Map<String, WeakReference<TaskManagerInterface>> sHeadlessTaskManagers = java.util.Collections.synchronizedMap(new HashMap<>());
+
+   // { "<appScopeKey>": List(eventIds...) }
+-  private static final Map<String, List<String>> sEvents = new HashMap<>();
+-
+-  private TasksAndEventsRepository mTasksAndEventsRepository;
++  private static final TaskEventRegistry sEvents = new TaskEventRegistry();
+
    // Map of callbacks for task execution events. Schema: { "<eventId>": TaskExecutionCallback }
    private static final Map<String, TaskExecutionCallback> sTaskCallbacks = new HashMap<>();
- 
+
 -  public TaskService(Context context) {
 -    super();
 -    mContextRef = new WeakReference<>(context);
 -    mTasksAndEventsRepository = TasksAndEventsRepository.create(context);
+-
+-    if (!mTasksAndEventsRepository.tasksExist()) {
+-      mTasksAndEventsRepository.createTasks();
+-      restoreTasks();
+-    }
+-  }
 +  // Background task実行中にJS timerを維持するために開始した
 +  // React Native Headless JS task IDをappScopeKeyごとに保持する。
 +  private static final Map<String, Integer> sHeadlessTaskIds = new HashMap<>();
@@ -138,11 +370,7 @@ index 2b6c2fa..0c4c1e5 100644
 +   */
 +  private static final String HEADLESS_DIAGNOSTIC_FILE_NAME =
 +    "headless-native-diagnostic.log";
- 
--    if (!mTasksAndEventsRepository.tasksExist()) {
--      mTasksAndEventsRepository.createTasks();
--      restoreTasks();
--    }
++
 +  private static final String HEADLESS_DIAGNOSTIC_PREVIOUS_FILE_NAME =
 +    "headless-native-diagnostic.previous.log";
 +
@@ -208,15 +436,50 @@ index 2b6c2fa..0c4c1e5 100644
 +  if (!mTasksAndEventsRepository.tasksExist()) {
 +    mTasksAndEventsRepository.createTasks();
 +    restoreTasks();
-   }
++  }
 +}
- 
+
    public String getName() {
      return "TaskService";
-@@ -200,12 +287,23 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
- 
+@@ -127,6 +214,7 @@
+
+     task.getConsumer().didUnregister();
+     mTasksAndEventsRepository.persistTasksForAppScopeKey(getSharedPreferences(), appScopeKey);
++    scheduleAppCleanup(appScopeKey);
+   }
+
+   @Override
+@@ -195,32 +283,30 @@
+
+   @Override
+   public void notifyTaskFinished(String taskName, final String appScopeKey, Map<String, Object> response) {
++    if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
++      Map<String, Object> completion = new HashMap<>(response);
++      new Handler(android.os.Looper.getMainLooper()).post(() -> notifyTaskFinished(taskName, appScopeKey, completion));
++      return;
++    }
+     String eventId = (String) response.get("eventId");
+-    List<String> appEvents = sEvents.get(appScopeKey);
+
      Log.i(TAG, "Finished task '" + taskName + "' with eventId '" + eventId + "'.");
- 
+
+-    if (appEvents != null) {
+-      appEvents.remove(eventId);
+-
+-      if (appEvents.size() == 0) {
+-        sEvents.remove(appScopeKey);
+-
+-        // Invalidate app record but after 2 seconds delay so we can still take batched events.
+-        Handler handler = new Handler();
+-        handler.postDelayed(new Runnable() {
+-          @Override
+-          public void run() {
+-            if (!sEvents.containsKey(appScopeKey)) {
+-              invalidateAppRecord(appScopeKey);
+-            }
+-          }
+-        }, 2000);
+-      }
 +    writeHeadlessDiagnostic(
 +      "TASK_FINISHED",
 +      "appScopeKey=" + appScopeKey +
@@ -224,51 +487,88 @@ index 2b6c2fa..0c4c1e5 100644
 +        "\ttaskName=" + taskName
 +    );
 +
-     if (appEvents != null) {
-       appEvents.remove(eventId);
- 
--      if (appEvents.size() == 0) {
-+      if (appEvents.isEmpty()) {
-         sEvents.remove(appScopeKey);
- 
-+        // すべてのBackground eventが終了したので、
-+        // JS timer維持用Headless taskも終了する。
-+        maybeFinishHeadlessTask(appScopeKey);
-+
-         // Invalidate app record but after 2 seconds delay so we can still take batched events.
-         Handler handler = new Handler();
-         handler.postDelayed(new Runnable() {
-@@ -220,7 +318,7 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
++    if (sEvents.finish(appScopeKey, eventId)) {
++      // Completion and next dispatch share the main thread, including headless lifecycle.
++      maybeFinishHeadlessTask(appScopeKey);
++      scheduleAppCleanup(appScopeKey);
      }
- 
+
      // Invoke task callback
 -    TaskExecutionCallback taskCallback = sTaskCallbacks.get(eventId);
 +    TaskExecutionCallback taskCallback = sTaskCallbacks.remove(eventId);
- 
+
      if (taskCallback != null) {
        taskCallback.onFinished(response);
-@@ -232,6 +330,7 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -232,6 +318,7 @@
      // It may be called with null when the host activity is destroyed.
      if (taskManager == null) {
        sTaskManagers.remove(appScopeKey);
 +      sHeadlessTaskManagers.remove(appScopeKey);
        return;
      }
- 
-@@ -307,7 +406,7 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+
+@@ -262,6 +349,14 @@
+     }
+   }
+
++  public void removeTaskManager(TaskManagerInterface destroyed, String appScopeKey) {
++    boolean foreground = TaskManagerRegistration.removeIfSame(sTaskManagers, appScopeKey, destroyed);
++    boolean headless = TaskManagerRegistration.removeIfSame(sHeadlessTaskManagers, appScopeKey, destroyed);
++    writeHeadlessDiagnostic("MANAGER_DESTROYED", "appScopeKey=" + appScopeKey +
++      "\tmanagerId=" + System.identityHashCode(destroyed) +
++      "\tremovedForeground=" + foreground + "\tremovedHeadless=" + headless);
++  }
++
+   @Override
+   public boolean isStartedByHeadlessLoader(String appScopeKey) {
+     HeadlessAppLoader appLoader = getAppLoader();
+@@ -307,10 +402,12 @@
        Log.w(TAG, "Task or consumer not found.");
- 
+
        // Cancel pending intent.
 -      getTaskManagerUtils().cancelTaskIntent(mContextRef.get(), appScopeKey, taskName);
 +      getTaskManagerUtils().cancelTaskIntent(getContextOrApplicationContext(), appScopeKey, taskName);
        return;
      }
- 
-@@ -386,16 +485,89 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+
++    // Observe delivery before JobScheduler; never log Intent payload/coordinates.
++    writeDeliveryDiagnostic(getContextOrApplicationContext(), "LOCATION_BROADCAST", "taskName=" + taskName);
+     // executes task
+     consumer.didReceiveBroadcast(intent);
+   }
+@@ -330,6 +427,10 @@
+
+     Log.i(TAG, "Handling job with task name '" + taskName + "' for app with scoping identifier '" + appScopeKey + "'.");
+
++    writeDeliveryDiagnostic(jobService, "LOCATION_JOB_START",
++      "taskName=" + taskName + "\tqueuedCount=" + extras.getInt("dataSize", 0) +
++      "\tqueueAgeMs=" + LocationJobDeadline.age(android.os.SystemClock.elapsedRealtime(),
++        extras.getLong(LocationJobDeadline.ENQUEUED_AT, -1L)));
+     // executes task
+     boolean isAsyncJob = consumer.didExecuteJob(jobService, params);
+
+@@ -370,6 +471,11 @@
+   }
+
+   public void executeTask(TaskInterface task, Bundle data, Error error, TaskExecutionCallback callback) {
++    if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
++      Bundle pendingData = data == null ? null : new Bundle(data);
++      new Handler(android.os.Looper.getMainLooper()).post(() -> executeTask(task, pendingData, error, callback));
++      return;
++    }
+     TaskManagerInterface taskManager = getTaskManager(task.getAppScopeKey());
+     Bundle body = createExecutionEventBody(task, data, error);
+     Bundle executionInfo = body.getBundle("executionInfo");
+@@ -386,15 +492,80 @@
        sTaskCallbacks.put(eventId, callback);
      }
- 
-+    boolean isFirstEvent = sEvents.get(appScopeKey) == null;
+
+-    final List<String> appEvents;
+-    if (sEvents.get(appScopeKey) == null) {
+-      appEvents = new ArrayList<>();
+-      appEvents.add(eventId);
+-      sEvents.put(appScopeKey, appEvents);
++    boolean isFirstEvent = sEvents.add(appScopeKey, eventId);
 +
 +    Integer diagnosticHeadlessTaskId =
 +      sHeadlessTaskIds.get(appScopeKey);
@@ -293,6 +593,7 @@ index 2b6c2fa..0c4c1e5 100644
 +        ", eventId=" + eventId +
 +        ", taskName=" + task.getName() +
 +        ", isFirstEvent=" + isFirstEvent +
++        ", taskManagerAvailable=" + (taskManager != null) +
 +        ", headlessTaskId=" + diagnosticHeadlessTaskId +
 +        ", headlessTaskStartedAtMs=" +
 +          diagnosticHeadlessTaskStartedAtMs +
@@ -303,6 +604,7 @@ index 2b6c2fa..0c4c1e5 100644
 +    writeHeadlessDiagnostic(
 +      "HEADLESS_EVENT",
 +      "appScopeKey=" + appScopeKey +
++        "\ttaskManagerAvailable=" + (taskManager != null) +
 +        "\teventId=" + eventId +
 +        "\ttaskName=" + task.getName() +
 +        "\tisFirstEvent=" + isFirstEvent +
@@ -314,18 +616,6 @@ index 2b6c2fa..0c4c1e5 100644
 +          diagnosticHeadlessTaskAgeMs
 +    );
 +
-     final List<String> appEvents;
--    if (sEvents.get(appScopeKey) == null) {
-+    if (isFirstEvent) {
-       appEvents = new ArrayList<>();
-       appEvents.add(eventId);
-       sEvents.put(appScopeKey, appEvents);
-     } else {
--      appEvents = new ArrayList<>();
-+      appEvents = sEvents.get(appScopeKey);
-       appEvents.add(eventId);
-     }
- 
 +    // Background task が存在する間、React Native に Headless JS task が
 +    // 実行中であることを通知する。
 +    // これにより Activity が pause されても JavaTimerManager が
@@ -335,7 +625,10 @@ index 2b6c2fa..0c4c1e5 100644
 +        TAG,
 +        "[HEADLESS_TIMER] first event detected, appScopeKey=" + appScopeKey
 +      );
-+    } else {
+     } else {
+-      appEvents = new ArrayList<>();
+-      appEvents.add(eventId);
+-    }
 +      Log.i(
 +        TAG,
 +        "[HEADLESS_TIMER] additional event, appScopeKey=" + appScopeKey
@@ -352,23 +645,35 @@ index 2b6c2fa..0c4c1e5 100644
 +     * するため、正常時に重複起動しない。
 +     */
 +    maybeStartHeadlessTask(appScopeKey);
-+
+
      if (taskManager != null) {
        taskManager.executeTaskWithBody(body);
-       return;
-@@ -409,7 +581,7 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -409,10 +580,10 @@
      mTasksAndEventsRepository.putEventForAppScopeKey(appScopeKey, body);
- 
+
      try {
 -      getAppLoader().loadApp(mContextRef.get(), new HeadlessAppLoader.Params(appScopeKey, task.getAppUrl()), () -> {
 +      getAppLoader().loadApp(getContextOrApplicationContext(), new HeadlessAppLoader.Params(appScopeKey, task.getAppUrl()), () -> {
        }, success -> {
          if (!success) {
-           sEvents.remove(appScopeKey);
-@@ -434,21 +606,150 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+-          sEvents.remove(appScopeKey);
++          sEvents.removeScope(appScopeKey);
+           mTasksAndEventsRepository.removeEvents(appScopeKey);
+
+           // Host unreachable? Unregister all tasks for that app.
+@@ -426,7 +597,7 @@
+         Log.e(TAG, "Error occurred while unregistering invalid task.", e);
+       }
+
+-      appEvents.remove(eventId);
++      sEvents.finish(appScopeKey, eventId);
+       mTasksAndEventsRepository.removeEvents(appScopeKey);
+     }
+   }
+@@ -434,21 +605,169 @@
    //endregion
    //region helpers
- 
+
 +  /*
 +   * TaskServiceで使用するContextを安全に取得する。
 +   *
@@ -390,12 +695,31 @@ index 2b6c2fa..0c4c1e5 100644
 +    return mApplicationContext;
 +  }
 +
-+  private void writeHeadlessDiagnostic(
++  void writeHeadlessDiagnostic(
 +      String eventName,
 +      String details
 +  ) {
 +      final Context context =
 +          getContextOrApplicationContext();
++
++      writeHeadlessDiagnostic(context, eventName, details);
++  }
++
++  static void writeDeliveryDiagnostic(Context context, String eventName, String details) {
++      if (context == null) return;
++      try {
++      android.os.PowerManager power = (android.os.PowerManager) context.getSystemService(Context.POWER_SERVICE);
++      writeHeadlessDiagnostic(context, eventName, details +
++        "\tdeviceIdle=" + (power != null && power.isDeviceIdleMode()) +
++        "\tpowerSave=" + (power != null && power.isPowerSaveMode()) +
++        "\tinteractive=" + (power != null && power.isInteractive()) +
++        "\tignoringBatteryOptimizations=" + (power != null && power.isIgnoringBatteryOptimizations(context.getPackageName())));
++      } catch (Exception error) {
++        Log.w(TAG, "Location delivery diagnostic unavailable", error);
++      }
++  }
++
++  private static void writeHeadlessDiagnostic(Context context, String eventName, String details) {
 +
 +      if (context == null) {
 +          return;
@@ -487,6 +811,7 @@ index 2b6c2fa..0c4c1e5 100644
 -      return AppLoaderProvider.getLoader("react-native-headless", mContextRef.get());
 -    } else {
 -      return null;
+-    }
 +    Context context = getContextOrApplicationContext();
 +
 +    if (context != null) {
@@ -494,17 +819,17 @@ index 2b6c2fa..0c4c1e5 100644
 +        "react-native-headless",
 +        context
 +      );
-     }
++    }
 +
 +    return null;
    }
- 
+
    private void internalRegisterTask(String taskName, String appScopeKey, String appUrl, Class<TaskConsumerInterface> consumerClass, Map<String, Object> options) throws TaskRegisteringFailedException {
      Constructor<?> consumerConstructor;
      TaskConsumerInterface consumer;
 -    Context context = mContextRef.get();
 +    Context context = getContextOrApplicationContext();
- 
+
      if (context == null) {
 -      return;
 +      /*
@@ -520,11 +845,11 @@ index 2b6c2fa..0c4c1e5 100644
 +        )
 +      );
      }
- 
+
      try {
-@@ -515,8 +816,21 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -515,8 +834,21 @@
    }
- 
+
    private SharedPreferences getSharedPreferences() {
 -    Context context = mContextRef.get();
 -    return context != null ? context.getSharedPreferences(SHARED_PREFERENCES_NAME, Context.MODE_PRIVATE) : null;
@@ -544,12 +869,42 @@ index 2b6c2fa..0c4c1e5 100644
 +      Context.MODE_PRIVATE
 +    );
    }
- 
+
    private void maybeUpdateAppUrlForAppScopeKey(String appUrl, String appScopeKey) {
-@@ -619,4 +933,427 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+@@ -600,12 +932,26 @@
+     return weakRef == null ? null : weakRef.get();
+   }
+
++  private void scheduleAppCleanup(String appScopeKey) {
++    new Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
++      if (!sEvents.hasEvents(appScopeKey)) invalidateAppRecord(appScopeKey);
++    }, 2000);
++  }
++
+   private void invalidateAppRecord(String appScopeKey) {
++    // Continuous location already owns a foreground service. Retain its React runtime
++    // between samples; the per-event headless task/wake lock still finishes normally.
++    // Stopping location unregisters the task, so ordinary idle cleanup remains enabled.
++    TaskInterface locationTask = getTask(LocationJobDeadline.TASK_NAME, appScopeKey);
++    if (locationTask != null && locationTask.getOptions().containsKey("foregroundService")) {
++      writeHeadlessDiagnostic("RUNTIME_RETAINED_FOR_LOCATION", "appScopeKey=" + appScopeKey);
++      return;
++    }
+     HeadlessAppLoader appLoader = getAppLoader();
+     if (appLoader != null) {
+-      if (getAppLoader().invalidateApp(appScopeKey)) {
+-        sHeadlessTaskManagers.remove(appScopeKey);
+-      }
++      // invalidateApp only schedules cleanup; a foreground ReactContext can survive it.
++      // Detach a manager only in that manager's onDestroy, with identity protection.
++      appLoader.invalidateApp(appScopeKey);
+     }
+   }
+
+@@ -619,4 +965,427 @@
      }, timeout);
    }
- 
+
 +  /**
 +   * React Native の HeadlessJsTaskContext に task を登録し、
 +   * Background中も JS timer が停止しない状態を維持する。
@@ -750,7 +1105,7 @@ index 2b6c2fa..0c4c1e5 100644
 +      );
 +    }
 +  });
-+}
+ }
 +
 +private void waitForReactContextAndStartTask(
 +  Context context,
@@ -973,14 +1328,13 @@ index 2b6c2fa..0c4c1e5 100644
 +    : null;
 +}
 +
- }
++}
 diff --git a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/repository/TasksPersistence.java b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/repository/TasksPersistence.java
-index a872533..51f5ae6 100644
 --- a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/repository/TasksPersistence.java
 +++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/repository/TasksPersistence.java
-@@ -16,19 +16,38 @@ import expo.modules.interfaces.taskManager.TaskInterface;
+@@ -16,19 +16,38 @@
  public class TasksPersistence {
- 
+
    public void clearTaskPersistence(SharedPreferences preferences, String but) {
 +    /*
 +     * TaskService#getSharedPreferences() は、
@@ -1005,14 +1359,14 @@ index a872533..51f5ae6 100644
        }
      }
    }
- 
+
 -  public void persistTasksForAppScopeKey(SharedPreferences preferences, String appScopeKey, Map<String, TaskInterface> appRow) {
 +  public void persistTasksForAppScopeKey(
 +      SharedPreferences preferences,
 +      String appScopeKey,
 +      Map<String, TaskInterface> appRow
 +  ) {
- 
+
      if (preferences == null) {
        return;
      }
@@ -1020,9 +1374,9 @@ index a872533..51f5ae6 100644
      if (appRow == null || appRow.size() == 0) {
        preferences.edit().remove(appScopeKey).apply();
        return;
-@@ -48,35 +67,63 @@ public class TasksPersistence {
+@@ -48,35 +67,63 @@
      appConfig.put("tasks", tasks);
- 
+
      preferences
 -          .edit()
 -          .putString(appScopeKey, new JSONObject(appConfig).toString())
@@ -1031,13 +1385,13 @@ index a872533..51f5ae6 100644
 +        .putString(appScopeKey, new JSONObject(appConfig).toString())
 +        .apply();
    }
- 
+
 -  public Map<String, TasksAndEventsRepository.AppConfig> readPersistedTasks(SharedPreferences preferences) {
 +  public Map<String, TasksAndEventsRepository.AppConfig> readPersistedTasks(
 +      SharedPreferences preferences
 +  ) {
      Map<String, TasksAndEventsRepository.AppConfig> result = new HashMap<>();
- 
++
 +    /*
 +     * clearTaskPersistence() と同様、
 +     * SharedPreferences が取得できない場合に
@@ -1049,9 +1403,9 @@ index a872533..51f5ae6 100644
 +    if (preferences == null) {
 +      return result;
 +    }
-+
+
      Map<String, ?> appScopeKeyToAppConfigsMap = preferences.getAll();
- 
+
 -    for (Map.Entry<String, ?> appScopeKeyToConfig : appScopeKeyToAppConfigsMap.entrySet()) {
 -      Map<String, Object> appConfig = jsonToMap(appScopeKeyToConfig.getValue().toString());
 +    for (
@@ -1063,7 +1417,7 @@ index a872533..51f5ae6 100644
 +
        String appUrl = (String) appConfig.get("appUrl");
 -      Map<String, Object> tasksConfig = (HashMap<String, Object>) appConfig.get("tasks");
- 
+
 -      if (appUrl != null && tasksConfig != null && tasksConfig.size() > 0) {
 +      Map<String, Object> tasksConfig =
 +          (HashMap<String, Object>) appConfig.get("tasks");
@@ -1089,14 +1443,13 @@ index a872533..51f5ae6 100644
          result.put(appScopeKeyToConfig.getKey(), app);
        }
      }
- 
+
      return result;
 -
    }
 -
  }
 diff --git a/node_modules/expo-task-manager/build/TaskManager.js b/node_modules/expo-task-manager/build/TaskManager.js
-index 63f2fb6..eef80ff 100644
 --- a/node_modules/expo-task-manager/build/TaskManager.js
 +++ b/node_modules/expo-task-manager/build/TaskManager.js
 @@ -1,5 +1,18 @@
@@ -1113,34 +1466,32 @@ index 63f2fb6..eef80ff 100644
 +if (Platform.OS === 'android') {
 +  AppRegistry.registerHeadlessTask(
 +    'expo-task-manager',
-+    () => async () => {},
++    () => () => new Promise(() => {}),
 +  );
 +}
  const tasks = new Map();
  function _validate(taskName) {
      if (!taskName || typeof taskName !== 'string') {
 diff --git a/node_modules/expo-task-manager/src/TaskManager.ts b/node_modules/expo-task-manager/src/TaskManager.ts
-index 88aa2d9..9e32ffa 100644
 --- a/node_modules/expo-task-manager/src/TaskManager.ts
 +++ b/node_modules/expo-task-manager/src/TaskManager.ts
-@@ -1,7 +1,19 @@
+@@ -1,6 +1,18 @@
 -import { LegacyEventEmitter, UnavailabilityError } from 'expo-modules-core';
 +import { LegacyEventEmitter, Platform, UnavailabilityError } from 'expo-modules-core';
 +import { AppRegistry } from 'react-native';
- 
+
  import ExpoTaskManager from './ExpoTaskManager';
- 
++
 +if (Platform.OS === 'android') {
 +
 +  /**
-+   * Native HeadlessJsTaskContext.startTask() から起動される。
++   * 終了はNative側finishTaskに任せ、JSから即時完了させない。
 +   */
 +  AppRegistry.registerHeadlessTask(
 +    'expo-task-manager',
-+    () => async () => {},
++    () => () => new Promise(() => {}),
 +  );
 +}
-+
+
  // @needsAudit @docsMissing
  /**
-  * Error object that can be received through [`TaskManagerTaskBody`](#taskmanagertaskbody) when the

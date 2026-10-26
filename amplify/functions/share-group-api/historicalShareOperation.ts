@@ -34,7 +34,9 @@ export type HistoricalShareOperationStatus =
     | "PENDING"
     | "APPLYING"
     | "COMPLETED"
-    | "FAILED";
+    | "FAILED"
+    | "DISCARDING"
+    | "DISCARDED";
 
 export type HistoricalShareOperationPhase =
     | "INTENT_RECORDED"
@@ -48,6 +50,8 @@ export type HistoricalShareOperation = {
     status: HistoricalShareOperationStatus;
 
     grantManaged?: boolean;
+    discardOperation?: boolean;
+    recordingSessionId?: string;
 
     requestedAt: string;
     updatedAt: string;

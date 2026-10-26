@@ -2784,6 +2784,20 @@
               "isRequired": true
             }
           }
+        },
+        "discardRecordingSession": {
+          "name": "discardRecordingSession",
+          "isArray": false,
+          "type": "Boolean",
+          "isRequired": false,
+          "arguments": {
+            "recordingSessionId": {
+              "name": "recordingSessionId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true
+            }
+          }
         }
       }
     }

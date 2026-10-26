@@ -61,6 +61,8 @@ const NORMAL_EVENT_NAMES = new Set([
     // 権限・ネイティブタスク状態
     "backgroundLocationPermissionStatus",
     "backgroundLocationUpdatesStatus",
+    "startBackgroundLocationRecordingCalled",
+    "startBackgroundLocationRecordingCompleted",
 ]);
 
 const ERROR_EVENT_NAMES = new Set([
@@ -79,6 +81,10 @@ const ERROR_EVENT_NAMES = new Set([
     "foregroundLiveLocationUnexpectedError",
     // 通常起きるべきではない状態
     "foregroundLocationLogSkippedNoUserId",
+    "backgroundLocationContinuousHealthIssueDetected",
+    "backgroundLocationContinuousHealthPermissionNotGranted",
+    "backgroundLiveLocationUnexpectedError",
+    "backgroundLiveLocationTimedOut",
 ]);
 
 function shouldSaveBackgroundLocationDebugLog(eventName: string): boolean {

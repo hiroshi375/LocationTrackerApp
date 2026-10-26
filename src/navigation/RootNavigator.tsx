@@ -17,6 +17,7 @@ import {
 import ActivityCalendarScreen from "../screens/ActivityCalendarScreen";
 import ActivityRankingScreen from "../screens/ActivityRankingScreen";
 import AdminLocationLogImportScreen from "../screens/AdminLocationLogImportScreen";
+import AdminUserAppVersionsScreen from "../screens/AdminUserAppVersionsScreen";
 import AppInfoScreen from "../screens/AppInfoScreen";
 import ContactScreen from "../screens/ContactScreen";
 import LiveLocationMapScreen from "../screens/LiveLocationMapScreen";
@@ -46,6 +47,7 @@ export type RootStackParamList = {
           }
         | undefined;
     AdminLocationLogImport: undefined;
+    AdminUserAppVersions: undefined;
     ActivityCalendar: undefined;
     LocationMap: {
         recordingSessionId?: string | null;
@@ -342,6 +344,11 @@ export default function RootNavigator() {
                             name="AdminLocationLogImport"
                             component={AdminLocationLogImportScreen}
                             options={{ title: "LocationLog CSVインポート" }}
+                        />
+                        <Stack.Screen
+                            name="AdminUserAppVersions"
+                            component={AdminUserAppVersionsScreen}
+                            options={{ title: "ユーザー別インストールバージョン一覧" }}
                         />
                         <Stack.Screen
                             name="ActivityCalendar"

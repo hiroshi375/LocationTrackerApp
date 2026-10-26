@@ -3557,6 +3557,11 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                 {isAdmin && (
                     <View style={styles.buttonSpace}>
                         <AppButton
+                            title="ユーザー別インストールバージョン一覧"
+                            onPress={() => navigation.navigate("AdminUserAppVersions")}
+                            backgroundColor="#27445c"
+                        />
+                        <AppButton
                             title="LocationLog CSVインポート"
                             onPress={() =>
                                 navigation.navigate("AdminLocationLogImport")

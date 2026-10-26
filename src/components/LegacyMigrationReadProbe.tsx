@@ -2,7 +2,10 @@ import { useRef, useState } from "react";
 import { Button, Text, View } from "react-native";
 import { getCurrentUser } from "aws-amplify/auth";
 import { client } from "../lib/client";
-import targets from "./legacyMigrationProbeTargets.json";
+// Keep real diagnostic targets out of production bundles, not just hidden UI.
+const targets: typeof import("./legacyMigrationProbeTargets.json") = __DEV__
+    ? require("./legacyMigrationProbeTargets.json")
+    : [];
 
 // Development-only, read-only checks using the real signed-in Cognito user.
 // Never print log IDs (which can contain coordinates), credentials, or tokens.

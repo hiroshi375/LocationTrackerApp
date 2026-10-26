@@ -7,16 +7,10 @@
         "message": "自動記録・記録の保存と破棄・現在地共有の不具合を改善した1.0.5へ更新してください。"
     },
     "ios": {
-        "latestVersion": "1.0.1",
-        "latestBuild": 6,
-        "minimumSupportedBuild": 3,
+        "latestVersion": "1.0.5",
+        "latestBuild": 12,
+        "minimumSupportedBuild": 12,
         "storeUrl": "https://apps.apple.com/app/id6818737493",
-        "message": "AcLog Fitの新しいバージョンをご利用いただけます。",
-        "pendingRelease": {
-            "version": "1.0.4",
-            "build": 10,
-            "status": "preparing",
-            "message": "SDKの情報取扱いに関する利用規約・プライバシーポリシーの追記と再同意に対応した更新です。"
-        }
+        "message": "自動記録・記録の保存と破棄・現在地共有の不具合を改善した1.0.5（12）へ更新してください。記録・共有を停止してからApp Storeで更新してください。"
     }
 }

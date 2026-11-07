@@ -1,3 +1,4 @@
+import { discardSessionFence, sessionLifecycleKey } from "./sessionLifecycleFence";
 import { randomUUID } from "node:crypto";
 import { QueryCommand, TransactWriteCommand, type TransactWriteCommandInput } from "@aws-sdk/lib-dynamodb";
 import { accessDb, getRow, scanRows, tables, type Row } from "./groupAccessStore";
@@ -41,8 +42,10 @@ async function discardOnce(userId: string, sessionId: string): Promise<boolean> 
     if (session) {
         assertRecordOwner(session, userId);
         if (session.recordingSessionId !== sessionId) throw new Error("セッションIDが一致しません。");
+        // Legacy summaries can be saved records or backfilled history. Never guess that either is disposable.
+        throw new Error("SAVED_SESSION_PROTECTED: 保存済み、または確認が必要な記録は『保存しない』で破棄できません。");
     }
-    const ids = [...new Set([canonicalId, session?.id].filter(Boolean))] as string[];
+    const ids = [canonicalId];
     const previous = await Promise.all(ids.map(id => getRow(tables.operations(), { recordingSessionRecordId: id })));
     for (const operation of previous) {
         if (operation?.discardOperation === true) {
@@ -57,7 +60,7 @@ async function discardOnce(userId: string, sessionId: string): Promise<boolean> 
     if (previous.some(operation => operation?.discardOperation === true && operation.operationId !== operationId))
         throw new Error("破棄処理の世代が一致しません。");
     const timestamp = new Date().toISOString();
-    const admission: Writes = [];
+    const admission: Writes = [discardSessionFence(userId,sessionId)];
     ids.forEach((id, i) => {
         const old = previous[i];
         if (old?.discardOperation === true) return;
@@ -71,12 +74,15 @@ async function discardOnce(userId: string, sessionId: string): Promise<boolean> 
         } });
     });
     if (admission.length) await accessDb.send(new TransactWriteCommand({ TransactItems: admission }));
-    const fence = (): Writes => ids.map(id => ({ ConditionCheck: {
+    const fence = (): Writes => [...ids.map(id => ({ ConditionCheck: {
         TableName: tables.operations(), Key: { recordingSessionRecordId: id },
         ConditionExpression: "operationId = :id AND #status = :discarding",
         ExpressionAttributeNames: { "#status": "status" },
         ExpressionAttributeValues: { ":id": operationId, ":discarding": discarding },
-    } }));
+    } })), { ConditionCheck: { TableName: tables.operations(),
+        Key: { recordingSessionRecordId: sessionLifecycleKey(userId,sessionId) },
+        ConditionExpression: "sessionLifecycleState = :discarding", ExpressionAttributeValues: { ":discarding": discarding },
+    } }];
     const indexName = indexTable()!;
     const page = await accessDb.send(new QueryCommand({ TableName: indexName,
         KeyConditionExpression: "sessionKey = :key", ExpressionAttributeValues: { ":key": sessionLogKey(userId, sessionId) },
@@ -116,10 +122,9 @@ async function discardOnce(userId: string, sessionId: string): Promise<boolean> 
         ConditionExpression: "operationId = :id AND #status = :discarding",
         ExpressionAttributeNames: { "#status": "status" },
         ExpressionAttributeValues: { ":id": operationId, ":discarding": discarding, ":done": discarded, ":now": timestamp } } }));
-    if (session) finish.push({ Delete: { TableName: tables.sessions(), Key: { id: session.id },
-        ConditionExpression: "#owner = :owner AND userId = :userId AND recordingSessionId = :session",
-        ExpressionAttributeNames: { "#owner": "owner" },
-        ExpressionAttributeValues: { ":owner": session.owner, ":userId": userId, ":session": sessionId } } });
+    finish.push({ Update: { TableName: tables.operations(), Key: { recordingSessionRecordId: sessionLifecycleKey(userId,sessionId) },
+        UpdateExpression: "SET sessionLifecycleState = :done", ConditionExpression: "sessionLifecycleState = :discarding",
+        ExpressionAttributeValues: { ":done": discarded, ":discarding": discarding } } });
     await accessDb.send(new TransactWriteCommand({ TransactItems: finish }));
     return true;
 }

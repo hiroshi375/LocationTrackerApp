@@ -1,4 +1,7 @@
+import * as Application from "expo-application";
+import { clearLegacyDiagnosticLogs, compactDecisionDiagnostic } from "./diagnosticLogCleanupCore";
 import { IOS_DELAY_DIAGNOSTIC_KEY } from "./iosDelayDiagnosticCore";
+import { readLocationDecisionDiagnostics } from "./locationDecisionDiagnosticService";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
@@ -15,6 +18,13 @@ export async function exportHeadlessDiagnosticLog(): Promise<void> {
 
     if (!documentDirectory) {
         throw new Error("FileSystem.documentDirectory is unavailable.");
+    }
+
+    const decisionEvidence = await readLocationDecisionDiagnostics();
+    const compact = compactDecisionDiagnostic(decisionEvidence);
+    if (compact) {
+        await shareDiagnosticText(compact + await readTestLocationRequests());
+        return;
     }
 
     const currentPath = `${documentDirectory}${CURRENT_FILE_NAME}`;
@@ -39,7 +49,7 @@ export async function exportHeadlessDiagnosticLog(): Promise<void> {
         !currentInfo.exists &&
         !previousInfo.exists &&
         stageEntries.length === 0 &&
-        !delayEvidence
+        !delayEvidence && !decisionEvidence
     ) {
         throw new Error("Headless diagnostic log does not exist.");
     }
@@ -71,14 +81,39 @@ export async function exportHeadlessDiagnosticLog(): Promise<void> {
     }
 
     if (delayEvidence) parts.push("===== IOS DELAY EVIDENCE =====", delayEvidence);
+    if (decisionEvidence) parts.push("===== LOCATION DECISION EVIDENCE =====", decisionEvidence);
 
+    await shareDiagnosticText(parts.join("\n") + await readTestLocationRequests());
+}
+
+/** Local validation only; caller must confirm stopped state immediately before this action. */
+export async function clearTestLegacyDiagnosticLogs(state: { recording: boolean; sharing: boolean }): Promise<void> {
+    const directory = FileSystem.documentDirectory;
+    if (!directory) throw new Error("DIAGNOSTIC_DIRECTORY_UNAVAILABLE");
+    await clearLegacyDiagnosticLogs({ applicationId: Application.applicationId, ...state,
+        deleteFile: name => FileSystem.deleteAsync(`${directory}${name}`, { idempotent: true }) });
+}
+
+/** Separate bounded Native lifecycle evidence, including final removal after the last fix. */
+async function readTestLocationRequests(): Promise<string> {
+    if (Application.applicationId !== "com.hiroshisato.locationtrackerapp.incident104" || !FileSystem.documentDirectory) return "";
+    const path = `${FileSystem.documentDirectory}aclog-location-requests.jsonl`;
+    try {
+        const info = await FileSystem.getInfoAsync(path);
+        if (!info.exists) return "\n===== NATIVE LOCATION REQUESTS =====\nmissing";
+        if (info.size > 524288) return "\n===== NATIVE LOCATION REQUESTS =====\noversized-not-read";
+        return "\n===== NATIVE LOCATION REQUESTS (LAST 256; MAY BE TRUNCATED) =====\n" + await FileSystem.readAsStringAsync(path);
+    } catch { return "\n===== NATIVE LOCATION REQUESTS =====\nread-error"; }
+}
+
+async function shareDiagnosticText(text: string): Promise<void> {
     const exportFileName = `HeadlessDiagnostic_${formatTimestamp(
         new Date(),
     )}.txt`;
 
     const exportPath = `${FileSystem.cacheDirectory}${exportFileName}`;
 
-    await FileSystem.writeAsStringAsync(exportPath, parts.join("\n"));
+    await FileSystem.writeAsStringAsync(exportPath, text);
 
     const sharingAvailable = await Sharing.isAvailableAsync();
 

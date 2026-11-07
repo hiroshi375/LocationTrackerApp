@@ -417,6 +417,7 @@ export async function upsertRecordingSessionSummary(
                 ...payload,
             });
 
+            saveResult = retryResult;
             if (retryResult.errors) {
                 throw new Error(
                     `RecordingSession save failed: ${JSON.stringify(
@@ -432,6 +433,8 @@ export async function upsertRecordingSessionSummary(
             );
         }
     }
+
+    if (!saveResult.data?.id) throw new Error("RecordingSessionの保存結果を確認できません。記録を保持して再試行してください。");
 
     /*
      * 同じユーザー・同じrecordingSessionIdで複数存在する
@@ -496,7 +499,7 @@ export async function upsertRecordingSessionSummary(
         await recalculateUserActivityAggregates(currentUser.userId);
     }
 
-    return { currentMonthRecordedActivityCount };
+    return { id: savedRecordId, currentMonthRecordedActivityCount };
 }
 
 export async function updateRecordingSessionActivityType(

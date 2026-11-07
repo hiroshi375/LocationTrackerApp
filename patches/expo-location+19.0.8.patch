@@ -1,10 +1,15 @@
 diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/location/LocationModule.kt b/node_modules/expo-location/android/src/main/java/expo/modules/location/LocationModule.kt
 --- a/node_modules/expo-location/android/src/main/java/expo/modules/location/LocationModule.kt
 +++ b/node_modules/expo-location/android/src/main/java/expo/modules/location/LocationModule.kt
-@@ -87,6 +87,22 @@
+@@ -87,8 +87,30 @@
    override fun definition() = ModuleDefinition {
      Name("ExpoLocation")
-
+ 
++    AsyncFunction("readAcLogLatestRecordingLocationAsync") {
++      expo.modules.location.records.AcLogSimplifiedLocation.read(mContext)
++    }
++
++
 +    AsyncFunction("discardAcLogMotionEvidenceAsync") { owner: String, session: String ->
 +      expo.modules.location.taskConsumers.RecordingInbox.get(mContext).discardMotion(owner,session)
 +    }
@@ -23,26 +28,226 @@ diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/locat
 +
      OnCreate {
        mContext = appContext.reactContext ?: throw Exceptions.ReactContextLost()
++      expo.modules.location.records.AcLogNativeLocationEvidence.configure(mContext)
        mUIManager = appContext.legacyModule<UIManager>() ?: throw MissingUIManagerException()
+       mLocationProvider = LocationServices.getFusedLocationProviderClient(mContext)
+       mSensorManager = mContext.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+@@ -425,6 +447,7 @@
+ 
+   fun requestLocationUpdates(locationRequest: LocationRequest, requestId: Int?, callbacks: LocationRequestCallbacks) {
+     val locationProvider: FusedLocationProviderClient = mLocationProvider
++    val diagnosticId = if (requestId != null) "foreground-watch:$requestId" else "foreground-once:" + System.identityHashCode(callbacks)
+ 
+     val locationCallback: LocationCallback = object : LocationCallback() {
+       var isLocationAvailable = false
+@@ -432,6 +455,7 @@
+       override fun onLocationResult(locationResult: LocationResult) {
+         val location = locationResult.lastLocation
+         if (location != null) {
++          expo.modules.location.records.AcLogNativeLocationEvidence.received(location, "foreground-result", diagnosticId)
+           callbacks.onLocationChanged(location)
+         } else if (!isLocationAvailable) {
+           callbacks.onLocationError(LocationUnavailableException())
+@@ -452,7 +476,10 @@
+     }
+ 
+     try {
+-      locationProvider.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
++      expo.modules.location.records.AcLogNativeLocationEvidence.requestEvent(diagnosticId, "register-call", locationRequest.toString())
++      locationProvider.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper()).addOnCompleteListener { result ->
++        expo.modules.location.records.AcLogNativeLocationEvidence.requestEvent(diagnosticId, if (result.isSuccessful) "register-success" else "register-failure")
++      }
+       callbacks.onRequestSuccess()
+     } catch (e: SecurityException) {
+       callbacks.onRequestFailed(LocationRequestRejectedException(e))
+@@ -643,7 +670,10 @@
+   private fun pauseLocationUpdatesForRequest(requestId: Int) {
+     val locationCallback = mLocationCallbacks[requestId]
+     if (locationCallback != null) {
+-      mLocationProvider.removeLocationUpdates(locationCallback)
++      expo.modules.location.records.AcLogNativeLocationEvidence.requestEvent("foreground-watch:$requestId", "remove-call")
++      mLocationProvider.removeLocationUpdates(locationCallback).addOnCompleteListener { result ->
++        expo.modules.location.records.AcLogNativeLocationEvidence.requestEvent("foreground-watch:$requestId", if (result.isSuccessful) "remove-success" else "remove-failure")
++      }
+     }
+   }
+ 
+@@ -658,7 +688,10 @@
+       val locationCallback = mLocationCallbacks[requestId] ?: return
+       val locationRequest = mLocationRequests[requestId] ?: return
+       try {
+-        mLocationProvider.requestLocationUpdates(locationRequest, locationCallback, Looper.myLooper())
++        expo.modules.location.records.AcLogNativeLocationEvidence.requestEvent("foreground-watch:$requestId", "resume-call", locationRequest.toString())
++        mLocationProvider.requestLocationUpdates(locationRequest, locationCallback, Looper.myLooper()).addOnCompleteListener { result ->
++          expo.modules.location.records.AcLogNativeLocationEvidence.requestEvent("foreground-watch:$requestId", if (result.isSuccessful) "resume-success" else "resume-failure")
++        }
+       } catch (e: SecurityException) {
+         Log.e(TAG, "Error occurred while resuming location updates: $e")
+       }
+diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/location/records/AcLogNativeLocationEvidence.kt b/node_modules/expo-location/android/src/main/java/expo/modules/location/records/AcLogNativeLocationEvidence.kt
+new file mode 100644
+--- /dev/null
++++ b/node_modules/expo-location/android/src/main/java/expo/modules/location/records/AcLogNativeLocationEvidence.kt
+@@ -0,0 +1,110 @@
++package expo.modules.location.records
++
++import android.content.Context
++import android.location.Location
++import android.os.Build
++import android.os.SystemClock
++import android.provider.Settings
++import org.json.JSONObject
++import java.util.WeakHashMap
++import java.io.File
++import java.util.UUID
++import java.util.concurrent.Executors
++import java.util.concurrent.atomic.AtomicLong
++
++/** Diagnostic-only payload. Production package never enables it. No location decisions or I/O per fix. */
++internal object AcLogNativeLocationEvidence {
++  @Volatile private var enabled = false
++  @Volatile private var bootCount: Int? = null
++  private data class Receipt(val elapsed: Long, val wall: Long, val snapshot: String, val source: String, val requestId: String)
++  private val receipts = WeakHashMap<Location, Receipt>()
++  private val processId = UUID.randomUUID().toString()
++  private val eventSequence = AtomicLong()
++  private val receiptSequence = AtomicLong()
++  private var eventFile: File? = null
++  private val writer = Executors.newSingleThreadExecutor()
++
++  // Registration events only: bounded file, no per-fix disk writes or recording-path waits.
++  fun requestEvent(requestId: String, stage: String, request: String? = null) {
++    if (!enabled) return
++    try {
++      val row = JSONObject().put("processId", processId).put("sequence", eventSequence.incrementAndGet())
++        .put("requestId", requestId).put("stage", stage).put("wallTimeMs", System.currentTimeMillis())
++        .put("elapsedRealtimeNanos", SystemClock.elapsedRealtimeNanos().toString())
++        .put("request", request?.take(1024) ?: JSONObject.NULL).toString()
++      writer.execute {
++        try {
++          eventFile?.let { file ->
++            val previous = if (file.exists() && file.length() <= 524288) file.readLines().takeLast(255) else emptyList()
++            val temp = File(file.path + ".tmp")
++            temp.writeText((previous + row).joinToString("\n", postfix = "\n"))
++            if (!temp.renameTo(file)) temp.delete()
++          }
++        } catch (_: Exception) { /* Diagnostic I/O must not affect location delivery. */ }
++      }
++    } catch (_: Exception) { }
++  }
++
++  private fun snapshot(location: Location): String = JSONObject().apply {
++    put("latitude", location.latitude); put("longitude", location.longitude); put("fixTimeMs", location.time)
++    put("fixElapsedRealtimeNanos", location.elapsedRealtimeNanos.toString())
++    put("hasAccuracy", location.hasAccuracy()); put("accuracyMeters", if (location.hasAccuracy()) location.accuracy else JSONObject.NULL)
++    put("hasSpeed", location.hasSpeed()); put("speedMetersPerSecond", if (location.hasSpeed()) location.speed else JSONObject.NULL)
++    val speedAccuracy = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && location.hasSpeedAccuracy()
++    put("hasSpeedAccuracy", speedAccuracy); put("speedAccuracyMetersPerSecond", if (speedAccuracy) location.speedAccuracyMetersPerSecond else JSONObject.NULL)
++    put("provider", location.provider ?: JSONObject.NULL); put("mocked", location.isFromMockProvider)
++    put("receiptId", processId + ":" + receiptSequence.incrementAndGet())
++  }.toString()
++
++  fun received(location: Location, source: String = "foreground", requestId: String = "unknown") {
++    if (!enabled) return
++    try {
++      synchronized(receipts) {
++        if (receipts.size >= 128) receipts.clear()
++        receipts[location] = Receipt(SystemClock.elapsedRealtimeNanos(), System.currentTimeMillis(), snapshot(location), source, requestId)
++      }
++    } catch (_: Exception) { }
++  }
++
++  fun configure(context: Context) {
++    enabled = context.packageName in setOf("com.hiroshisato.locationtrackerapp.incident104", "com.hiroshisato.locationtrackerapp.locationprobe")
++    if (enabled) eventFile = File(context.filesDir, "aclog-location-requests.jsonl")
++    if (enabled && bootCount == null) {
++      bootCount = try { Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT) } catch (_: Exception) { null }
++    }
++  }
++
++  fun capture(location: Location): String? {
++    if (!enabled) return null
++    return try {
++      val capturedElapsed = SystemClock.elapsedRealtimeNanos()
++      val receipt = synchronized(receipts) { receipts[location] }
++      val hasSpeedAccuracy = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && location.hasSpeedAccuracy()
++      JSONObject().apply {
++        put("receiptSnapshot", receipt?.let { JSONObject(it.snapshot) } ?: JSONObject.NULL)
++        put("receiptSource", receipt?.source ?: JSONObject.NULL)
++        put("requestId", receipt?.requestId ?: JSONObject.NULL)
++        put("schema", 1)
++        put("captureStage", "native-location-serialization")
++        put("fixTimeMs", location.time)
++        put("latitude", location.latitude)
++        put("longitude", location.longitude)
++        // Strings preserve nanosecond precision through JS/JSON.
++        put("fixElapsedRealtimeNanos", location.elapsedRealtimeNanos.toString())
++        put("capturedElapsedRealtimeNanos", capturedElapsed.toString())
++        put("capturedWallTimeMs", System.currentTimeMillis())
++        put("receivedElapsedRealtimeNanos", receipt?.elapsed?.toString() ?: JSONObject.NULL)
++        put("receivedWallTimeMs", receipt?.wall ?: JSONObject.NULL)
++        put("bootCount", bootCount ?: JSONObject.NULL)
++        put("hasAccuracy", location.hasAccuracy())
++        put("accuracyMeters", if (location.hasAccuracy()) location.accuracy else JSONObject.NULL)
++        put("hasSpeed", location.hasSpeed())
++        put("speedMetersPerSecond", if (location.hasSpeed()) location.speed else JSONObject.NULL)
++        put("hasSpeedAccuracy", hasSpeedAccuracy)
++        put("speedAccuracyMetersPerSecond", if (hasSpeedAccuracy) location.speedAccuracyMetersPerSecond else JSONObject.NULL)
++        put("provider", location.provider ?: JSONObject.NULL)
++        put("mocked", location.isFromMockProvider)
++      }.toString()
++    } catch (_: Exception) { null }
++  }
++}
 diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/location/records/LocationArguments.kt b/node_modules/expo-location/android/src/main/java/expo/modules/location/records/LocationArguments.kt
 --- a/node_modules/expo-location/android/src/main/java/expo/modules/location/records/LocationArguments.kt
 +++ b/node_modules/expo-location/android/src/main/java/expo/modules/location/records/LocationArguments.kt
-@@ -40,6 +40,7 @@
+@@ -40,6 +40,8 @@
  ) : Record, Serializable
-
+ 
  internal class LocationTaskOptions(
 +  @Field var aclogRecordingContext: String? = null,
++  @Field var aclogSimplifiedLocation: Boolean = false,
    @Field var deferredUpdatesDistance: Float? = 0f,
    @Field var deferredUpdatesInterval: Float? = 0f,
    @Field var deferredUpdatesTimeout: Float? = null,
-@@ -54,6 +55,7 @@
+@@ -54,6 +56,8 @@
      "deferredUpdatesInterval" to deferredUpdatesInterval,
      "deferredUpdatesTimeout" to deferredUpdatesTimeout
    ).apply {
 +    aclogRecordingContext?.let { this["aclogRecordingContext"] = it }
++    if (aclogSimplifiedLocation) this["aclogSimplifiedLocation"] = true
      foregroundService?.let {
        this["foregroundService"] = it.toMutableMap()
      }
+diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/location/records/LocationResults.kt b/node_modules/expo-location/android/src/main/java/expo/modules/location/records/LocationResults.kt
+--- a/node_modules/expo-location/android/src/main/java/expo/modules/location/records/LocationResults.kt
++++ b/node_modules/expo-location/android/src/main/java/expo/modules/location/records/LocationResults.kt
+@@ -76,12 +76,14 @@
+ internal class LocationResponse(
+   @Field var coords: LocationObjectCoords? = null,
+   @Field var timestamp: Double? = null,
+-  @Field var mocked: Boolean? = null
++  @Field var mocked: Boolean? = null,
++  @Field var aclogNativeEvidence: String? = null
+ ) : Record, Serializable {
+   constructor(location: Location) : this(
+     coords = LocationObjectCoords(location),
+     timestamp = location.time.toDouble(),
+-    mocked = location.isFromMockProvider
++    mocked = location.isFromMockProvider,
++    aclogNativeEvidence = AcLogNativeLocationEvidence.capture(location)
+   )
+ 
+   internal fun <BundleType : BaseBundle> toBundle(bundleTypeClass: Class<BundleType>): BundleType {
+@@ -94,6 +96,7 @@
+     return bundle.apply {
+       timestamp?.let { putDouble("timestamp", it) }
+       mocked?.let { putBoolean("mocked", it) }
++      aclogNativeEvidence?.let { putString("aclogNativeEvidence", it) }
+       if (bundle is PersistableBundle) {
+         (this as PersistableBundle).putPersistableBundle("coords", coords?.toBundle(PersistableBundle::class.java))
+       } else if (bundle is Bundle) {
 diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/location/services/LocationTaskService.kt b/node_modules/expo-location/android/src/main/java/expo/modules/location/services/LocationTaskService.kt
 --- a/node_modules/expo-location/android/src/main/java/expo/modules/location/services/LocationTaskService.kt
 +++ b/node_modules/expo-location/android/src/main/java/expo/modules/location/services/LocationTaskService.kt
@@ -52,12 +257,12 @@ diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/locat
    private val mBinder: IBinder = ServiceBinder()
 +  @Volatile var isForegroundActive = false
 +    private set
-
+ 
    inner class ServiceBinder : Binder() {
      val service: LocationTaskService
 @@ -47,6 +49,7 @@
    }
-
+ 
    fun stop() {
 +    isForegroundActive = false
      stopForeground(true)
@@ -74,7 +279,7 @@ diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/locat
 +    isForegroundActive = false
 +    super.onDestroy()
    }
-
+ 
    //region private
 diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/location/taskConsumers/LiveLocationDispatchGate.java b/node_modules/expo-location/android/src/main/java/expo/modules/location/taskConsumers/LiveLocationDispatchGate.java
 new file mode 100644
@@ -114,7 +319,17 @@ diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/locat
  import com.google.android.gms.location.FusedLocationProviderClient
  import com.google.android.gms.location.LocationRequest
  import com.google.android.gms.location.LocationResult
-@@ -44,6 +46,8 @@
+@@ -36,7 +38,9 @@
+ import kotlin.math.abs
+ 
+ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsInterface?) : TaskConsumer(context, taskManagerUtils), TaskConsumerInterface, LifecycleEventListener {
++  init { expo.modules.location.records.AcLogNativeLocationEvidence.configure(context) }
+   private var mTask: TaskInterface? = null
++  private var diagnosticRequestId = "unregistered"
+   private var mPendingIntent: PendingIntent? = null
+   private var mService: LocationTaskService? = null
+   private var mLocationRequest: LocationRequest? = null
+@@ -44,6 +48,8 @@
    private var mDeferredDistance = 0.0
    private val mDeferredLocations: MutableList<Location> = ArrayList()
    private var mIsHostPaused = true
@@ -123,7 +338,69 @@ diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/locat
    private val mLocationClient: FusedLocationProviderClient by lazy {
      LocationServices.getFusedLocationProviderClient(context)
    }
-@@ -252,11 +256,26 @@
+@@ -83,13 +89,19 @@
+     val result = LocationResult.extractResult(intent)
+     if (result != null) {
+       val locations = result.locations
+-      deferLocations(locations)
++      deferLocations(locations, "background-result")
+       maybeReportDeferredLocations()
+     } else {
++      if (expo.modules.location.records.AcLogSimplifiedLocation.enabled(context, mTask?.options)) {
++        val availability = com.google.android.gms.location.LocationAvailability.hasLocationAvailability(intent)
++        expo.modules.location.records.AcLogNativeLocationEvidence.requestEvent(diagnosticRequestId,
++          if (availability) "availability-only-no-cache" else "unknown-intent-no-cache")
++        return // State notification is not a fresh position; never poll lastLocation here.
++      }
+       try {
+         mLocationClient.lastLocation.addOnCompleteListener { task ->
+           task.result?.let {
+-            deferLocations(listOf(it))
++            deferLocations(listOf(it), "background-last-location-fallback")
+             maybeReportDeferredLocations()
+           }
+         }
+@@ -147,7 +159,15 @@
+     }
+ 
+     try {
+-      mLocationClient.requestLocationUpdates(locationRequest, intent)
++      diagnosticRequestId = java.util.UUID.randomUUID().toString()
++      if (expo.modules.location.records.AcLogSimplifiedLocation.enabled(context, mTask?.options)) {
++        expo.modules.location.records.AcLogNativeLocationEvidence.requestEvent(diagnosticRequestId, "simplified-mode-enabled")
++      }
++      expo.modules.location.records.AcLogNativeLocationEvidence.requestEvent(diagnosticRequestId, "register-call", locationRequest.toString())
++      val id = diagnosticRequestId
++      mLocationClient.requestLocationUpdates(locationRequest, intent).addOnCompleteListener { result ->
++        expo.modules.location.records.AcLogNativeLocationEvidence.requestEvent(id, if (result.isSuccessful) "register-success" else "register-failure")
++      }
+     } catch (e: SecurityException) {
+       Log.w(TAG, "Location request has been rejected.", e)
+     }
+@@ -155,7 +175,11 @@
+ 
+   private fun stopLocationUpdates() {
+     mPendingIntent?.let {
+-      mLocationClient.removeLocationUpdates(it)
++      val id = diagnosticRequestId
++      expo.modules.location.records.AcLogNativeLocationEvidence.requestEvent(id, "remove-call")
++      mLocationClient.removeLocationUpdates(it).addOnCompleteListener { result ->
++        expo.modules.location.records.AcLogNativeLocationEvidence.requestEvent(id, if (result.isSuccessful) "remove-success" else "remove-failure")
++      }
+       it.cancel()
+     }
+   }
+@@ -227,7 +251,8 @@
+     mService?.stop()
+   }
+ 
+-  private fun deferLocations(locations: List<Location>) {
++  private fun deferLocations(locations: List<Location>, source: String) {
++    for (location in locations) expo.modules.location.records.AcLogNativeLocationEvidence.received(location, source, diagnosticRequestId)
+     val size = mDeferredLocations.size
+     var lastLocation = if (size > 0) mDeferredLocations[size - 1] else mLastReportedLocation
+     for (location in locations) {
+@@ -252,11 +277,31 @@
        // so only one location at the specific timestamp can schedule a job.
        if (timestamp > sLastTimestamp) {
          val bundle = LocationResponse(location).toBundle(PersistableBundle::class.java)
@@ -138,6 +415,11 @@ diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/locat
 +        val captured = mTask?.options?.get("aclogRecordingContext") as? String
 +        if (captured != null) {
 +          val c = JSONObject(captured)
++          if (expo.modules.location.records.AcLogSimplifiedLocation.enabled(context, mTask?.options)) {
++            mDeferredLocations.maxByOrNull { it.time }?.let {
++              expo.modules.location.records.AcLogSimplifiedLocation.publish(it, captured)
++            }
++          }
 +          for (point in data) {
 +            point.putString("aclogOwner", c.getString("userId"))
 +            point.putString("aclogSessionId", c.getString("recordingSessionId"))
@@ -150,8 +432,8 @@ diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/locat
        // Save last reported location, reset the distance and clear a list of locations.
        mLastReportedLocation = mDeferredLocations[mDeferredLocations.size - 1]
        mDeferredDistance = 0.0
-@@ -264,6 +283,61 @@
-
+@@ -264,6 +309,61 @@
+ 
        // Schedule new job.
        taskManagerUtils.scheduleJob(context, mTask, data)
 +      maybeDispatchRecordingInbox()
@@ -211,7 +493,7 @@ diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/locat
 +      Log.w(TAG, "ACLOG_LIVE_FAST dispatch failed; recording job retained", exception)
      }
    }
-
+ 
 diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/location/taskConsumers/RecordingInbox.kt b/node_modules/expo-location/android/src/main/java/expo/modules/location/taskConsumers/RecordingInbox.kt
 new file mode 100644
 --- /dev/null
@@ -314,4 +596,37 @@ new file mode 100644
 +      return result
 +    }
 +  }
++}
+diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/location/records/AcLogSimplifiedLocation.kt b/node_modules/expo-location/android/src/main/java/expo/modules/location/records/AcLogSimplifiedLocation.kt
+new file mode 100644
+--- /dev/null
++++ b/node_modules/expo-location/android/src/main/java/expo/modules/location/records/AcLogSimplifiedLocation.kt
+@@ -0,0 +1,28 @@
++package expo.modules.location.records
++
++import android.content.Context
++import android.location.Location
++import org.json.JSONObject
++
++/** Local validation only. Does not read/delete inbox rows or request another position. */
++internal object AcLogSimplifiedLocation {
++  @Volatile private var latest: String? = null
++  fun enabled(context: Context?, options: Map<String, Any>?): Boolean =
++    context?.packageName == "com.hiroshisato.locationtrackerapp.incident104" && options?.get("aclogSimplifiedLocation") == true
++
++  fun publish(location: Location, capturedContext: String) {
++    try {
++      val scope = JSONObject(capturedContext)
++      val coords = JSONObject().put("latitude", location.latitude).put("longitude", location.longitude)
++        .put("accuracy", if (location.hasAccuracy()) location.accuracy else JSONObject.NULL)
++        .put("altitude", if (location.hasAltitude()) location.altitude else JSONObject.NULL)
++        .put("altitudeAccuracy", JSONObject.NULL).put("heading", if (location.hasBearing()) location.bearing else JSONObject.NULL)
++        .put("speed", if (location.hasSpeed()) location.speed else JSONObject.NULL)
++      val point = JSONObject().put("timestamp", location.time).put("coords", coords)
++        .put("aclogNativeEvidence", AcLogNativeLocationEvidence.capture(location) ?: JSONObject.NULL)
++      latest = JSONObject().put("userId", scope.getString("userId"))
++        .put("sessionId", scope.getString("recordingSessionId")).put("location", point).toString()
++    } catch (_: Exception) { }
++  }
++  fun read(context: Context): String? = if (context.packageName == "com.hiroshisato.locationtrackerapp.incident104") latest else null
 +}

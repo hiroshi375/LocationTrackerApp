@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const ts = require('typescript');
 
-function fixture(existing = null, foreign = false) {
+function fixture(existing = null, foreign = false, missingReceipt = false) {
     const writes = [], logWrites = [];
     const input = [
         { id: 'first', userId: 'A', recordingSessionId: 's', latitude: 35, longitude: 139,
@@ -22,7 +22,7 @@ function fixture(existing = null, foreign = false) {
     }
     const route = load('src/lib/locationRoute.ts', () => { throw Error('unexpected import'); });
     const period = load('src/lib/recordingPeriod.ts', () => { throw Error('unexpected import'); });
-    const write = async value => { writes.push(value); return { data: value }; };
+    const write = async value => { writes.push(value); return missingReceipt ? { data: null } : { data: value }; };
     const client = { models: {
         LocationLog: { listLocationLogsBySessionAndRecordedAt: async () => ({ data: input }),
             update: async value => { logWrites.push(value); return { data: value }; } },
@@ -68,4 +68,8 @@ test('saving an existing manual summary preserves identity and excludes another 
     assert.equal(f.writes[0].endedAt, f.input[1].recordedAt);
     assert.equal(f.writes[0].pointCount, 2);
     assert.equal(f.logWrites.length, 0);
+});
+
+test('missing summary receipt is not reported as successful save',async()=>{
+ const f=fixture(null,false,true);await assert.rejects(f.save(),/保存結果を確認できません/);
 });

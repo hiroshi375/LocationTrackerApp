@@ -1,3 +1,6 @@
+import { recordingLifecycle } from "../services/recordingLifecycleService";
+import type { RecordingLifecycleReceipt } from "../services/recordingLifecycleCore";
+import { ensureSessionStopped, hasSessionSummary, retryRecordingStop } from "../services/recordingLifecycleRecoveryService";
 import { planStopReceipts } from "../services/recordingFinalizationService";
 import { requestDiscardStep } from "../services/discardRequest";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -522,9 +525,22 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
     const [pendingRecordingDistanceMeters, setPendingRecordingDistanceMeters] =
         useState<number | null>(null);
     const [savingSessionName, setSavingSessionName] = useState(false);
+    const [saveRequested, setSaveRequested] = useState(false);
+    const [pendingLifecycleStop, setPendingLifecycleStop] = useState<RecordingLifecycleReceipt | null>(null);
+    const [retryingLifecycleStop, setRetryingLifecycleStop] = useState(false);
+
     const sessionNameMutationRef = useRef(false);
     const [discardRequested, setDiscardRequested] = useState(false);
     const [pendingDiscardSessionId, setPendingDiscardSessionId] = useState<string | null>(null);
+    useEffect(() => {
+        let cancelled=false;
+        setSaveRequested(false);
+        if(pendingSessionId) void getCurrentUser().then(user=>recordingLifecycle.read(user.userId,pendingSessionId))
+            .then(receipt=>{if(!cancelled) setSaveRequested(receipt?.state==="SAVE_REQUESTED" || receipt?.state==="SAVED");})
+            .catch(error=>{if(!cancelled) setSaveRequested(true);console.error("Read save state failed; discard disabled:",error);});
+        return ()=>{cancelled=true;};
+    },[pendingSessionId]);
+
     useEffect(() => {
         let cancelled = false;
         setDiscardRequested(false);
@@ -1788,11 +1804,21 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             const targetSessionId = pendingSessionId;
             const currentUser = await getCurrentUser();
             const expectedUserId = currentUser.userId;
+            await ensureSessionStopped(expectedUserId,targetSessionId,{
+                intervalMs:pendingRecordingIntervalMs ?? recordIntervalMs,
+                distanceMeters:pendingRecordingDistanceMeters ?? recordDistanceMeters,
+                sharedOwners:pendingSessionShareOwnerValues,
+            });
             if (await isLocationQueueSessionDiscarded(expectedUserId, targetSessionId)) {
                 setDiscardRequested(true);
                 Alert.alert("破棄処理中", "この記録は破棄を開始しています。「破棄を再開」を押してください。");
                 return;
             }
+
+            const saveIntent=await recordingLifecycle.prepareSave(expectedUserId,targetSessionId,sessionName);
+            setSaveRequested(true);
+            const confirmedSessionName=saveIntent.saveName ?? sessionName;
+
 
             const sessionLogs =
                 await listLocationLogsBySessionId(targetSessionId);
@@ -1842,7 +1868,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                     batch.map((log) =>
                         locationLogModel.update({
                             id: log.id,
-                            recordingSessionName: sessionName,
+                            recordingSessionName: confirmedSessionName,
                         }),
                     ),
                 );
@@ -1877,7 +1903,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             const matchingPlanStop = pendingPlanStop?.recordingSessionId === targetSessionId ? pendingPlanStop : null;
             const savedSummary = await upsertRecordingSessionSummary(
                 pendingSessionId,
-                sessionName,
+                confirmedSessionName,
                 pendingSessionShareOwnerValues,
                 pendingRecordingIntervalMs,
                 pendingRecordingDistanceMeters,
@@ -1912,6 +1938,15 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                 await loadCurrentMonthActivityUsage();
             }
 
+            if (!savedSummary) {
+                // upsert returned before any summary write (no valid points). This is not an unknown network result.
+                await recordingLifecycle.releaseUnsentSave(expectedUserId,targetSessionId);
+                setSaveRequested(false);
+                Alert.alert("保存できません", "保存できる地点がありません。破棄する場合は『保存しない』を選んでください。");
+                return;
+            }
+            if (!savedSummary.id) throw new Error("保存結果を確認できません。記録を保持して再試行してください。");
+            await recordingLifecycle.saved(expectedUserId,targetSessionId);
             await clearRecordingContinuationState(pendingSessionId);
 
             await planStopReceipts.acknowledge(expectedUserId, pendingSessionId!);
@@ -1948,6 +1983,27 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             // 現在のCognitoユーザーを取得する。
             const currentUser = await getCurrentUser();
             const expectedUserId = currentUser.userId;
+            await ensureSessionStopped(expectedUserId,targetSessionId,{
+                intervalMs:pendingRecordingIntervalMs ?? recordIntervalMs,
+                distanceMeters:pendingRecordingDistanceMeters ?? recordDistanceMeters,
+                sharedOwners:pendingSessionShareOwnerValues,
+            });
+            if (await hasSessionSummary(expectedUserId,targetSessionId)) {
+                if (await isLocationQueueSessionDiscarded(expectedUserId,targetSessionId)) {
+                    // A legacy partial discard may already have a server fence. Keep all queued payloads held.
+                    const current=await recordingLifecycle.read(expectedUserId,targetSessionId);
+                    if(current?.state==="STOPPED") await recordingLifecycle.prepareDiscard(expectedUserId,targetSessionId);
+                    throw new Error("保存済み記録と未完了の破棄が競合しています。追加削除・送信を行わず、データを保持しました。");
+                }
+                await recordingLifecycle.confirmExistingSaved(expectedUserId,targetSessionId);
+                await planStopReceipts.acknowledge(expectedUserId,targetSessionId);
+                setSessionNameModalVisible(false);
+                setPendingSessionId(null);
+                Alert.alert("記録を保護しました", "履歴にある記録のため破棄しません。アクティビティ履歴を確認してください。");
+                return;
+            }
+            await recordingLifecycle.prepareDiscard(expectedUserId,targetSessionId);
+
             await requestLocationQueueSessionDiscard(expectedUserId, targetSessionId);
             setDiscardRequested(true);
             setPendingDiscardSessionId(targetSessionId);
@@ -1970,6 +2026,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
             if ((await getCurrentUser()).userId !== expectedUserId)
                 throw new Error("認証ユーザーが変更されたため後処理を中止しました。");
             await discardLocationQueueSession(expectedUserId, targetSessionId);
+            await recordingLifecycle.discarded(expectedUserId,targetSessionId);
             await planStopReceipts.acknowledge(expectedUserId, targetSessionId);
 
             await clearRecordingContinuationState(targetSessionId);
@@ -2316,11 +2373,47 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
         selectedLiveShareUsers,
     ]);
 
+    const showPendingLifecycle = useCallback(async () => {
+        if (AppState.currentState!=="active" || isRecording || sessionNameMutationRef.current || sessionNameModalVisible) return;
+        const owner=await getCurrentUser();
+        const [receipt]=await recordingLifecycle.pending(owner.userId);
+        if ((await getCurrentUser()).userId!==owner.userId || !receipt) { setPendingLifecycleStop(null); return; }
+        if (receipt.state==="STOP_REQUESTED") { setPendingLifecycleStop(receipt); return; }
+        const status=await getBackgroundRecordingStatus();
+        if (status.state?.isRecording) return;
+        if (status.state?.userId && status.state.userId!==owner.userId) return;
+        if ((await getCurrentUser()).userId!==owner.userId || AppState.currentState!=="active") return;
+        setPendingLifecycleStop(null);
+        setPendingSessionId(receipt.sessionId);
+        setPendingSessionShareOwnerValues(receipt.sharedOwners);
+        setPendingRecordingIntervalMs(receipt.intervalMs);
+        setPendingRecordingDistanceMeters(receipt.distanceMeters);
+        setDiscardRequested(receipt.state==="DISCARD_REQUESTED");
+        setSaveRequested(receipt.state==="SAVE_REQUESTED");
+        setSessionNameInput(receipt.saveName ?? "");
+        setSessionNameModalVisible(true);
+    },[isRecording,sessionNameModalVisible]);
+
+    useFocusEffect(useCallback(()=>{
+        void showPendingLifecycle().catch(error=>console.error("Restore recording stop receipt error:",error));
+    },[showPendingLifecycle]));
+    useEffect(()=>{
+        const sub=AppState.addEventListener("change",state=>{
+            if(state==="active") void showPendingLifecycle().catch(error=>console.error("Restore recording lifecycle error:",error));
+        });
+        return ()=>sub.remove();
+    },[showPendingLifecycle]);
+
     const showPendingPlanStop = useCallback(async () => {
         if (AppState.currentState !== "active" || sessionNameMutationRef.current || sessionNameModalVisible) return;
         const owner = await getCurrentUser();
         let receipt = await planStopReceipts.read(owner.userId);
         if (!receipt) return;
+        const lifecycle=await recordingLifecycle.read(owner.userId,receipt.recordingSessionId);
+        if (lifecycle?.state==="SAVED" || lifecycle?.state==="DISCARDED") {
+            await planStopReceipts.acknowledge(owner.userId,receipt.recordingSessionId);
+            return;
+        }
         const status = await getBackgroundRecordingStatus();
         // A failed stop or a different live recording must never be finalized here.
         if (status.state?.isRecording) return;
@@ -2741,6 +2834,23 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                         )}
                     </Pressable>
                 </View>
+
+                {pendingLifecycleStop && !sessionNameModalVisible && (
+                    <View style={styles.pendingDiscardBox}>
+                        <Text style={styles.modalDescription}>記録の停止処理が未完了です。データは保持されています。</Text>
+                        <AppButton title={retryingLifecycleStop ? "停止確認中..." : "停止処理を再開"} disabled={retryingLifecycleStop} onPress={() => {
+                            if (retryingLifecycleStop) return;
+                            setRetryingLifecycleStop(true);
+                            void (async()=>{
+                                const user=await getCurrentUser();
+                                if(user.userId!==pendingLifecycleStop.userId) throw new Error("記録の所有者が変わりました。");
+                                await retryRecordingStop(pendingLifecycleStop);
+                                await showPendingLifecycle();
+                            })().catch(error=>Alert.alert("停止エラー",error instanceof Error ? error.message : "データを保持して停止処理を中断しました。"))
+                                .finally(()=>setRetryingLifecycleStop(false));
+                        }} />
+                    </View>
+                )}
 
                 {pendingDiscardSessionId && !isRecording && !sessionNameModalVisible && (
                     <View style={styles.pendingDiscardBox}>
@@ -3855,7 +3965,7 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                                         savingSessionName &&
                                             styles.appButtonDisabled,
                                     ]}
-                                    disabled={savingSessionName}
+                                    disabled={savingSessionName || saveRequested}
                                     onPress={handleDiscardSession}
                                 >
                                     <Text
@@ -3883,6 +3993,9 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                                     </Text>
                                 </Pressable>
                             </View>
+                            {saveRequested && !savingSessionName && (
+                                <Text style={styles.modalDescription}>保存結果の確認が必要です。「保存」を再試行してください。破棄は行いません。</Text>
+                            )}
                             {discardRequested && !savingSessionName && (
                                 <Pressable style={styles.modalSecondaryButton} onPress={() => {
                                     setSessionNameModalVisible(false);

@@ -641,6 +641,7 @@ export async function getPendingLocationQueueRows(input: {
     recordingSessionId: string;
     olderThanMs: number;
     limit: number;
+    after?: { recordedAtMs: number; locationLogId: string };
 }): Promise<PendingLocationQueueRow[]> {
     const db = await getDatabase();
 
@@ -674,7 +675,8 @@ export async function getPendingLocationQueueRows(input: {
             AND user_id = $userId
             AND recording_session_id = $recordingSessionId
             AND recorded_at_ms <= $olderThanMs
-        ORDER BY recorded_at_ms ASC
+            ${input.after ? "AND (recorded_at_ms > $afterMs OR (recorded_at_ms = $afterMs AND location_log_id > $afterId))" : ""}
+        ORDER BY recorded_at_ms ASC${input.after ? ", location_log_id ASC" : ""}
         LIMIT $limit
         `,
         {
@@ -682,6 +684,7 @@ export async function getPendingLocationQueueRows(input: {
             $recordingSessionId: input.recordingSessionId,
             $olderThanMs: olderThanMs,
             $limit: safeLimit,
+            ...(input.after ? { $afterMs: input.after.recordedAtMs, $afterId: input.after.locationLogId } : {}),
         },
     );
 }

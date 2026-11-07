@@ -1,4 +1,9 @@
+import { isBeforeRecordingStart } from "../services/recordingStartBoundary";
+import { recordingLifecycle } from "../services/recordingLifecycleService";
+import { simplifiedLocationValidationEnabled, readSimplifiedRecordingLocation } from "../services/simplifiedLocationValidationService";
 import { acceptedLocationBaselines } from "../services/acceptedLocationBaselineService";
+import { observeLocationDecision } from "../services/locationDecisionDiagnosticService";
+import { nativeLocationEvidence } from "../services/locationDecisionDiagnosticCore";
 import { selectAcceptedBaseline } from "../services/acceptedLocationBaselineCore";
 import { planStopReceipts } from "../services/recordingFinalizationService";
 import type { PlanStopReceipt } from "../services/recordingFinalizationCore";
@@ -105,6 +110,7 @@ export function useForegroundLocationRecorder({
     const savingLocationKeyRef = useRef<string | null>(null);
     const foregroundSaveRunningRef = useRef(false);
     const recordingSessionIdRef = useRef<string | null>(null);
+    const recordingStartBoundaryRef = useRef<string | null>(null);
     const recordingUserIdRef = useRef<string | null>(null);
     const liveLocationIdRef = useRef<string | null>(null);
     const foregroundQueueDrainRunningRef = useRef(false);
@@ -357,7 +363,27 @@ export function useForegroundLocationRecorder({
                     ? location.timestamp
                     : Date.now();
 
+            if (isBeforeRecordingStart(recordedAtMs, recordingStartBoundaryRef.current)) {
+                observeLocationDecision(() => ({ path: "foreground", stage: "decision",
+                    userId: recordingUserIdRef.current ?? "", sessionId: recordingSessionId,
+                    point: { latitude, longitude, recordedAtMs }, reason: "beforeRecordingStart" }));
+                return;
+            }
             const recordedAt = new Date(recordedAtMs).toISOString();
+
+            observeLocationDecision(() => ({
+                path: "foreground", stage: "receipt", userId: recordingUserIdRef.current ?? "", sessionId: recordingSessionId,
+                receivedAtMs: Date.now(), forceSave,
+                nativeEvidence: nativeLocationEvidence(location),
+                point: { latitude, longitude, recordedAtMs, accuracy: location.coords.accuracy, speed: location.coords.speed },
+                reason: forceSave ? "force-save-request" : "normal-save-request",
+            }));
+            const noteForegroundDecision = (reason: string, baseline: SavedLocation | null) => observeLocationDecision(() => ({
+                path: "foreground", stage: "decision", userId: recordingUserIdRef.current ?? "", sessionId: recordingSessionId,
+                point: { latitude, longitude, recordedAtMs, accuracy: location.coords.accuracy, speed: location.coords.speed },
+                baseline: baseline ? { ...baseline, recordedAtMs: baseline.recordedAt } : null,
+                reason, forceSave, ...getActiveRecordingSettings(),
+            }));
 
             updateDistanceFromStart(location);
 
@@ -375,6 +401,7 @@ export function useForegroundLocationRecorder({
              * 次の地点が保存判定へ入らないようにする。
              */
             if (foregroundSaveRunningRef.current) {
+                noteForegroundDecision("foreground-save-busy", lastSavedLocationRef.current);
                 console.log(
                     "Skip foreground location while previous save is running:",
                     {
@@ -388,6 +415,7 @@ export function useForegroundLocationRecorder({
             }
 
             if (savingLocationKeyRef.current === duplicateKey) {
+                noteForegroundDecision("same-pending-key", lastSavedLocationRef.current);
                 return;
             }
 
@@ -405,6 +433,7 @@ export function useForegroundLocationRecorder({
                     recordedAtMs,
                 )
             ) {
+                noteForegroundDecision("duplicate-before-lock", lastSavedLocationRef.current);
                 console.log("Skip duplicate foreground location:", {
                     latitude,
                     longitude,
@@ -446,6 +475,7 @@ export function useForegroundLocationRecorder({
                             recordedAtMs,
                         )
                     ) {
+                        noteForegroundDecision("duplicate-shared-state-before-lock", baselineLocation);
                         console.log(
                             "Skip duplicate foreground location by latest saved state:",
                             {
@@ -483,6 +513,7 @@ export function useForegroundLocationRecorder({
                     baselineLocation,
                 )
             ) {
+                noteForegroundDecision("saveConditionNotMet-before-lock", baselineLocation);
                 console.log("Skip foreground location by save condition:", {
                     latitude,
                     longitude,
@@ -588,9 +619,21 @@ export function useForegroundLocationRecorder({
                         try { shared = await acceptedLocationBaselines.read(currentUser.userId, recordingSessionId); }
                         catch (error) { console.error("Read accepted baseline cache failed:", error); }
                         const lockedBaseline = selectAcceptedBaseline(recordedAtMs, baselineLocation, shared);
-                        if (isExactDuplicateLocation(lockedBaseline, latitude, longitude, recordedAtMs) ||
+                        const shouldSkipLockedLocation = isExactDuplicateLocation(lockedBaseline, latitude, longitude, recordedAtMs) ||
                             isNearDuplicateLocation(lockedBaseline, latitude, longitude, recordedAtMs) ||
-                            !shouldSaveLocation(latitude, longitude, recordedAtMs, lockedBaseline)) return;
+                            !shouldSaveLocation(latitude, longitude, recordedAtMs, lockedBaseline);
+                        observeLocationDecision(() => ({
+                            path: "foreground", stage: "decision", userId: currentUser.userId, sessionId: recordingSessionId,
+                            pointId: locationLogId, point: { latitude, longitude, recordedAtMs, accuracy, speed: location.coords.speed },
+                            baseline: lockedBaseline ? { ...lockedBaseline, recordedAtMs: lockedBaseline.recordedAt } : null,
+                            baselineCandidates: [
+                                { name: "merged-foreground-background", point: baselineLocation ? { ...baselineLocation, recordedAtMs: baselineLocation.recordedAt } : null },
+                                { name: "shared", point: shared ? { ...shared, recordedAtMs: shared.recordedAt } : null },
+                            ],
+                            reason: shouldSkipLockedLocation ? "duplicate-or-save-condition" : "eligible-before-plan-reservation",
+                            ...getActiveRecordingSettings(),
+                        }));
+                        if (shouldSkipLockedLocation) return;
                     }
                     const reservation = await reserveRecordingPlanPoint(
                         recordingSessionId,
@@ -854,6 +897,18 @@ export function useForegroundLocationRecorder({
                 return false;
             }
 
+            const owner = recordingUserIdRef.current;
+            if (owner && await recordingLifecycle.read(owner,targetRecordingSessionId)) return false;
+
+            if (simplifiedLocationValidationEnabled) {
+                recordingWatcherGenerationRef.current += 1;
+                recordingSubscriptionRef.current?.remove();
+                recordingSubscriptionRef.current = null;
+                liveSharingSubscriptionRef.current?.remove();
+                liveSharingSubscriptionRef.current = null;
+                return true; // Native background request is the sole recording subscription.
+            }
+
             if (forceRestart) {
                 /*
                  * 現在進行中の非同期watcher登録も無効化する。
@@ -1067,6 +1122,17 @@ export function useForegroundLocationRecorder({
                 return;
             }
 
+            const receipt = await recordingLifecycle.read(state.userId,state.recordingSessionId);
+            if (receipt) {
+                try {
+                    await stopBackgroundLocationRecording({ expectedRecordingSessionId: state.recordingSessionId,
+                        continueLiveSharing: (state.liveShareOwnerValues ?? []).length > 0 });
+                } catch (error) {
+                    console.error("Pending recording stop retained for explicit retry:", error);
+                }
+                return;
+            }
+
             const startedAtMs = state.startedAt
                 ? new Date(state.startedAt).getTime()
                 : Number.NaN;
@@ -1114,6 +1180,7 @@ export function useForegroundLocationRecorder({
                     ? state.distanceMeters
                     : distanceMeters;
 
+            recordingStartBoundaryRef.current = state.startedAt ?? null;
             recordingSessionIdRef.current = state.recordingSessionId;
             recordingUserIdRef.current = state.userId;
             liveLocationIdRef.current = state.liveLocationId ?? null;
@@ -1274,6 +1341,8 @@ export function useForegroundLocationRecorder({
             sessionDistanceMetersRef.current = distanceMeters;
 
             const pendingOwner = await getCurrentUser();
+            if ((await recordingLifecycle.pending(pendingOwner.userId)).length)
+                throw new Error("前の記録の停止・保存・破棄を完了してください。");
             if (await planStopReceipts.read(pendingOwner.userId))
                 throw new Error("前のアクティビティの保存確認を完了してください。");
             const newSessionId = createRecordingSessionId();
@@ -1289,6 +1358,7 @@ export function useForegroundLocationRecorder({
             lastSavedLocationRef.current = null;
 
             const startedAt = new Date().toISOString();
+            recordingStartBoundaryRef.current = startedAt;
 
             await saveBackgroundLocationDebugLog({
                 userId: recordingUserIdRef.current,
@@ -1523,7 +1593,7 @@ export function useForegroundLocationRecorder({
                     distanceMeters: sessionDistanceMeters,
                     liveShareOwnerValues: normalizedLiveShareOwnerValues,
                     liveLocationId: liveLocationIdRef.current,
-                    lastSavedLocation: {
+                    lastSavedLocation: isBeforeRecordingStart(currentLocationRecordedAtMs, startedAt) ? null : {
                         latitude: currentLocation.coords.latitude,
                         longitude: currentLocation.coords.longitude,
                         recordedAt: currentLocationRecordedAtMs,
@@ -1910,6 +1980,14 @@ export function useForegroundLocationRecorder({
             const finishedSessionId = recordingSessionIdRef.current;
 
             const finishedUserId = recordingUserIdRef.current;
+            if (!finishedSessionId || !finishedUserId) return null;
+            const settings = getActiveRecordingSettings();
+            const intent = await recordingLifecycle.requestStop({ userId: finishedUserId, sessionId: finishedSessionId,
+                stoppedAtMs: Date.now(), intervalMs: settings.intervalMs, distanceMeters: settings.distanceMeters,
+                sharedOwners: [...normalizedLiveShareOwnerValues] });
+            if (["SAVED","SAVE_REQUESTED","DISCARD_REQUESTED","DISCARDED"].includes(intent.state))
+                throw new Error("この記録は終了処理済みです。新しい記録として開始してください。");
+
 
             /*
              * 停止操作に入った時点で、
@@ -1934,20 +2012,42 @@ export function useForegroundLocationRecorder({
             recordingSubscriptionRef.current?.remove();
             recordingSubscriptionRef.current = null;
 
+            const shouldContinueLiveSharing =
+                normalizedLiveShareOwnerValues.length > 0;
+
+            try {
+                await stopBackgroundLocationRecording({
+                    continueLiveSharing: shouldContinueLiveSharing,
+                    expectedRecordingSessionId: finishedSessionId,
+                });
+                const confirmed = await getBackgroundRecordingStatus();
+                if (confirmed.state?.isRecording) throw new Error("記録の停止が確定していません。停止処理を再試行してください。");
+                await recordingLifecycle.stopped(finishedUserId,finishedSessionId);
+            } catch (error) {
+                console.error(
+                    "Stop background location recording error:",
+                    error,
+                );
+                throw error; // Keep refs and stop intent. Never open the save modal on a failed stop.
+            }
+
+
             /*
-             * background側の記録状態を解除する前に、
-             * 最終地点を保存する。
+             * 測位停止後、停止要求時刻以前の最新キャッシュだけを最終地点として保存する。
+             * 新たな測位要求や停止境界の延長は行わない。
              */
             if (!options.skipFinalLocationSave && finishedSessionId) {
                 try {
                     const currentLocation =
-                        await Location.getCurrentPositionAsync({
-                            accuracy: Location.Accuracy.Balanced,
-                        });
+                        simplifiedLocationValidationEnabled
+                            ? await readSimplifiedRecordingLocation(finishedUserId!, finishedSessionId)
+                            : await Location.getLastKnownPositionAsync({ maxAge: 30000, requiredAccuracy: 100 });
+                    if (!currentLocation) throw new Error("SIMPLIFIED_FINAL_FIX_UNAVAILABLE");
 
-                    await updateLiveLocation(currentLocation);
-
-                    await saveLocationLog(currentLocation, true);
+                    if (currentLocation.timestamp <= intent.stoppedAtMs) {
+                        await updateLiveLocation(currentLocation);
+                        await saveLocationLog(currentLocation, true);
+                    }
                 } catch (error) {
                     /*
                      * 最終地点の取得・保存に失敗しても、
@@ -1980,25 +2080,6 @@ export function useForegroundLocationRecorder({
                         error,
                     );
                 }
-            }
-
-            /*
-             * 最終地点保存とSQLiteキュー送信が終わった後に、
-             * background側の記録状態を解除する。
-             */
-            const shouldContinueLiveSharing =
-                normalizedLiveShareOwnerValues.length > 0;
-
-            try {
-                await stopBackgroundLocationRecording({
-                    continueLiveSharing: shouldContinueLiveSharing,
-                    expectedRecordingSessionId: finishedSessionId,
-                });
-            } catch (error) {
-                console.error(
-                    "Stop background location recording error:",
-                    error,
-                );
             }
 
             /*
@@ -2045,6 +2126,7 @@ export function useForegroundLocationRecorder({
         [
             saveLocationLog,
             updateLiveLocation,
+            getActiveRecordingSettings,
             drainSQLiteQueueBeforeStop,
             normalizedLiveShareOwnerValues,
         ],
@@ -2376,6 +2458,12 @@ export function useForegroundLocationRecorder({
         let cancelled = false;
 
         const startLiveSharingWatcher = async () => {
+            if (simplifiedLocationValidationEnabled && isRecording) {
+                liveSharingSubscriptionRef.current?.remove();
+                liveSharingSubscriptionRef.current = null;
+                return;
+            }
+
             if (normalizedLiveShareOwnerValues.length === 0) {
                 liveSharingSubscriptionRef.current?.remove();
                 liveSharingSubscriptionRef.current = null;
@@ -2459,6 +2547,7 @@ export function useForegroundLocationRecorder({
         intervalMs,
         distanceMeters,
         updateLiveLocation,
+        simplifiedLocationValidationEnabled ? isRecording : false,
     ]);
 
     useEffect(() => {
@@ -2696,6 +2785,32 @@ export function useForegroundLocationRecorder({
     useEffect(() => {
         void restoreRecordingState();
     }, [restoreRecordingState]);
+
+    useEffect(() => {
+        if (!simplifiedLocationValidationEnabled || !isRecording) return;
+        let cancelled = false, busy = false, lastDisplayedTimestamp = 0;
+        const update = async () => {
+            if (cancelled || busy || AppState.currentState !== "active") return;
+            const owner = recordingUserIdRef.current, session = recordingSessionIdRef.current;
+            if (!owner || !session) return;
+            busy = true;
+            try {
+                const location = await readSimplifiedRecordingLocation(owner, session);
+                if (!cancelled && isRecordingRef.current && recordingSessionIdRef.current === session
+                    && recordingUserIdRef.current === owner && location && location.timestamp !== lastDisplayedTimestamp) {
+                    lastDisplayedTimestamp = location.timestamp;
+                    updateDistanceFromStart(location);
+                    observeLocationDecision(() => ({ path: "foreground", stage: "receipt", userId: owner, sessionId: session,
+                        reason: "simplified-ui-background-cache", nativeEvidence: nativeLocationEvidence(location),
+                        point: { ...location.coords, recordedAtMs: location.timestamp } }));
+                }
+            } catch { /* Display failure must not stop background recording. */ }
+            finally { busy = false; }
+        };
+        void update();
+        const timer = setInterval(() => { void update(); }, 1000);
+        return () => { cancelled = true; clearInterval(timer); };
+    }, [isRecording, updateDistanceFromStart]);
 
     return {
         isRecording,

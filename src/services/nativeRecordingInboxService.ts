@@ -1,4 +1,7 @@
+import { simplifiedLocationValidationEnabled } from "./simplifiedLocationValidationService";
 import { Platform } from "react-native";
+import { observeLocationDecision } from "./locationDecisionDiagnosticService";
+import { nativeLocationEvidence } from "./locationDecisionDiagnosticCore";
 import { requireOptionalNativeModule } from "expo-modules-core";
 import { fetchAuthSession } from "aws-amplify/auth";
 import type { LocationObject } from "expo-location";
@@ -22,13 +25,13 @@ export function nativeRecordingDeliveryOptions(state: {
     isRecording: boolean;
     userId: string; recordingSessionId?: string | null; startedAt?: string | null;
     intervalMs: number; distanceMeters: number;
-}): { aclogRecordingContext?: string } {
+}): { aclogRecordingContext?: string; aclogSimplifiedLocation?: boolean } {
     if (!state.isRecording || !inboxModule() || !state.recordingSessionId || !state.startedAt) return {};
     const startedAtMs = Date.parse(state.startedAt);
     if (!Number.isFinite(startedAtMs)) throw new Error("INVALID_NATIVE_RECORDING_START");
     const context: RecordingDeliveryContext = { userId: state.userId, recordingSessionId: state.recordingSessionId,
         startedAtMs, intervalMs: state.intervalMs, distanceMeters: state.distanceMeters };
-    return { aclogRecordingContext: JSON.stringify(context) };
+    return { aclogRecordingContext: JSON.stringify(context), ...(simplifiedLocationValidationEnabled ? { aclogSimplifiedLocation: true } : {}) };
 }
 
 export async function receiveNativeRecordingInbox(serialized: string, upload = true): Promise<void> {
@@ -37,6 +40,13 @@ export async function receiveNativeRecordingInbox(serialized: string, upload = t
     const batch = JSON.parse(serialized) as RecordingInboxBatch;
     await handoffRecordingInboxBatch({ batch,
         persist: async ({ context, rows }) => {
+            for (const row of rows) observeLocationDecision(() => ({
+                path: "native-inbox", stage: "receipt", userId: context.userId, sessionId: context.recordingSessionId,
+                nativeRowId: row.id, receivedAtMs: Date.now(),
+                nativeEvidence: nativeLocationEvidence(row.location),
+                point: { ...row.location.coords, recordedAtMs: row.location.timestamp },
+                intervalMs: context.intervalMs, distanceMeters: context.distanceMeters,
+            }));
             const { enqueueLocationBatchForAudit } = await import("./locationLocationQueueService");
             return enqueueLocationBatchForAudit({ userId: context.userId, recordingSessionId: context.recordingSessionId,
                 source: "background", locations: rows.map(r => r.location as LocationObject), receivedAt: new Date().toISOString() });

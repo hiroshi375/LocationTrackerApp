@@ -1,7 +1,8 @@
+import { recordingLifecycle } from "./recordingLifecycleService";
 // src/services/backgroundLocationService.ts
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { nativeRecordingDeliveryOptions, sealAndFlushNativeRecordingInbox, resumeNativeRecordingInbox } from "./nativeRecordingInboxService";
+import { nativeRecordingDeliveryOptions, sealAndFlushNativeRecordingInbox } from "./nativeRecordingInboxService";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import { Alert, Linking, Platform } from "react-native";
@@ -695,6 +696,8 @@ async function startBackgroundLiveSharingInternal({
      * 記録taskを維持したまま共有先だけ更新する。
      */
     if (previousState?.isRecording === true) {
+        if (previousState.recordingSessionId && await recordingLifecycle.read(previousState.userId,previousState.recordingSessionId))
+            throw new Error("記録の停止処理が未完了です。共有設定を変える前に停止処理を完了してください。");
         const nextState: BackgroundRecordingState = {
             ...previousState,
             liveShareOwnerValues: normalizedLiveShareOwnerValues,
@@ -1142,6 +1145,8 @@ async function restorePreviousLocationTask(
         return;
     }
 
+    if (previousState.recordingSessionId && await recordingLifecycle.read(previousState.userId,previousState.recordingSessionId)) return;
+
     const shouldRestoreRecording =
         previousState.isRecording === true &&
         Boolean(previousState.recordingSessionId);
@@ -1188,6 +1193,10 @@ export async function startBackgroundLocationRecording(
     return withBackgroundLifecycleLock(
         "startBackgroundLocationRecording",
         async () => {
+            if (await recordingLifecycle.read(params.userId, params.recordingSessionId))
+                throw new Error("終了処理を開始した記録は再開できません。新しい記録として開始してください。");
+            if ((await recordingLifecycle.pending(params.userId)).length)
+                throw new Error("前の記録の停止・保存・破棄を完了してください。");
             await startBackgroundLocationRecordingInternal(params);
         },
     );
@@ -1692,27 +1701,33 @@ async function startBackgroundLocationRecordingInternal({
 export async function stopBackgroundLocationRecording(
     options: StopBackgroundLocationRecordingOptions = {},
 ): Promise<void> {
-    return withBackgroundLifecycleLock(
-        "stopBackgroundLocationRecording",
-        async () => {
-            try {
-                await stopBackgroundLocationRecordingInternal(options);
-            } catch (error) {
-                // A failed stop keeps the recording usable; do not leave its journal sealed.
-                try {
-                    const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);
-                    if (raw) {
-                        const state = JSON.parse(raw) as BackgroundRecordingState;
-                        if (state.isRecording && state.recordingSessionId)
-                            await resumeNativeRecordingInbox(state.userId, state.recordingSessionId);
-                    }
-                } catch (resumeError) {
-                    console.warn("Native recording inbox resume failed; original jobs retained", resumeError);
-                }
-                throw error;
-            }
-        },
-    );
+    return withBackgroundLifecycleLock("stopBackgroundLocationRecording", async () => {
+        const raw = await AsyncStorage.getItem(BACKGROUND_RECORDING_STATE_KEY);
+        const state = raw ? JSON.parse(raw) as BackgroundRecordingState : null;
+        const same = state?.recordingSessionId && state.userId &&
+            (options.expectedRecordingSessionId === undefined || state.recordingSessionId === options.expectedRecordingSessionId);
+        if (same && !(await recordingLifecycle.read(state!.userId,state!.recordingSessionId!))) {
+            await recordingLifecycle.requestStop({ userId: state!.userId, sessionId: state!.recordingSessionId!,
+                stoppedAtMs: Date.now(),
+                intervalMs: Number.isFinite(state!.intervalMs) && state!.intervalMs>0 ? state!.intervalMs : 30000,
+                distanceMeters: Number.isFinite(state!.distanceMeters) && state!.distanceMeters>=0 ? state!.distanceMeters : 50,
+                sharedOwners: Array.isArray(state!.liveShareOwnerValues) ? state!.liveShareOwnerValues.filter(x=>typeof x==="string") : [] });
+        }
+        // Stop measurement before network finalization. On cloud failure keep the intent and pending rows,
+        // but do not leave GPS recording running or reopen its inbox.
+        if (same && await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME)) {
+            await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME);
+            if (await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME))
+                throw new Error("BACKGROUND_LOCATION_TASK_STILL_STARTED_AFTER_STOP");
+        }
+        await stopBackgroundLocationRecordingInternal(options);
+        const targetSession = options.expectedRecordingSessionId ?? state?.recordingSessionId;
+        if (state?.userId && targetSession && (same || !state.isRecording)) {
+            const receipt = await recordingLifecycle.read(state.userId,targetSession);
+            if (receipt?.state === "STOP_REQUESTED" || receipt?.state === "STOPPED")
+                await recordingLifecycle.stopped(state.userId,targetSession);
+        }
+    });
 }
 
 async function stopBackgroundLocationRecordingInternal(
@@ -2052,6 +2067,12 @@ async function stopBackgroundLocationRecordingInternal(
             },
         });
 
+        if (localStateSaved && !(await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME))) {
+            await startBackgroundLiveSharingInternal({ userId: stateForUpdate.userId,
+                intervalMs: stateForUpdate.intervalMs, distanceMeters: stateForUpdate.distanceMeters,
+                liveShareOwnerValues: stateForUpdate.liveShareOwnerValues ?? [], liveLocationId: stateForUpdate.liveLocationId ?? null });
+        }
+
         return;
     }
 
@@ -2073,7 +2094,8 @@ async function stopBackgroundLocationRecordingInternal(
     /*
      * 1. Cloud側の共有停止。
      *
-     * Cloud停止が成功する前にOS Taskを停止しない。
+     * 共有専用の停止ではCloud確認を先に行う。
+     * 自動記録の測位は、呼出元が停止要求を永続化した後に先に停止している。
      */
     if (hasLocalSharingEvidence) {
         try {
@@ -2616,6 +2638,8 @@ export async function updateBackgroundRecordingLiveLocationId(
 
     try {
         const state = JSON.parse(raw) as BackgroundRecordingState;
+        if (state.recordingSessionId && await recordingLifecycle.read(state.userId,state.recordingSessionId)) return;
+
 
         if (
             expectedRecordingSessionId !== undefined &&
@@ -2690,6 +2714,8 @@ export async function updateBackgroundRecordingExpiresAt(
 
     try {
         const state = JSON.parse(raw) as BackgroundRecordingState;
+        if (state.recordingSessionId && await recordingLifecycle.read(state.userId,state.recordingSessionId)) return;
+
 
         if (state.recordingSessionId !== recordingSessionId) {
             return;

@@ -1,5 +1,10 @@
+import { isBeforeRecordingStart } from "../services/recordingStartBoundary";
+import { recordingLifecycle } from "../services/recordingLifecycleService";
+import { holdAbnormalLocationForReview } from "../services/locationQualityReviewService";
 import { recordIOSReceipt, recordIOSDelayStage } from "../services/iosDelayDiagnosticService";
 import { acceptedLocationBaselines } from "../services/acceptedLocationBaselineService";
+import { observeLocationDecision } from "../services/locationDecisionDiagnosticService";
+import { nativeLocationEvidence } from "../services/locationDecisionDiagnosticCore";
 import { selectAcceptedBaseline } from "../services/acceptedLocationBaselineCore";
 import { createBackgroundLiveUpdateScheduler } from "../services/backgroundLiveUpdateScheduler";
 import { runBackgroundLiveFastPath } from "../services/backgroundLiveFastPath";
@@ -546,6 +551,7 @@ type SavedLocation = {
 };
 
 type BackgroundLocationSkipReason =
+    | "beforeRecordingStart"
     | "invalidCoordinate"
     | "lowAccuracy"
     | "abnormalSpeed"
@@ -1894,6 +1900,9 @@ TaskManager.defineTask(
                             saveConditionSkippedCount += 1;
                             break;
 
+                        case "beforeRecordingStart":
+                            break; // Diagnosed separately; not a distance/accuracy failure.
+
                         case "planLimitReached":
                             /*
                              * Freeプラン上限による停止。
@@ -2696,6 +2705,8 @@ async function updateBackgroundRecordingStateIfCurrent(
     /*
      * 3. 既存の更新処理を実行。
      */
+    if (currentState.recordingSessionId && await recordingLifecycle.read(currentState.userId,currentState.recordingSessionId))
+        return null; // A delayed callback must never rewrite a stopped/saved session into ordinary state.
     const updatedState = updater(currentState);
 
     /*
@@ -2910,6 +2921,13 @@ async function saveBackgroundLocation(
             ? location.timestamp
             : Date.now();
 
+    if (isBeforeRecordingStart(recordedAtMs, state.startedAt)) {
+        observeLocationDecision(() => ({ path: "background-direct", stage: "decision",
+            userId: state.userId, sessionId: state.recordingSessionId ?? "",
+            point: { latitude, longitude, recordedAtMs }, reason: "beforeRecordingStart" }));
+        return { saved: false, nextState: state, skippedReason: "beforeRecordingStart" };
+    }
+
     const recordedAt = new Date(recordedAtMs).toISOString();
     const accuracy = location.coords.accuracy ?? null;
     const recordingSessionId = state.recordingSessionId;
@@ -2984,6 +3002,10 @@ async function saveBackgroundLocation(
     }
 
     if (isLowAccuracyLocation(accuracy)) {
+        observeLocationDecision(() => ({
+            path: "background-direct", stage: "decision", userId: state.userId, sessionId: recordingSessionId,
+            point: { latitude, longitude, recordedAtMs, accuracy, speed: location.coords.speed }, reason: "lowAccuracy-before-lock",
+        }));
         return {
             saved: false,
             nextState: state,
@@ -3088,6 +3110,25 @@ async function saveBackgroundLocation(
             ...latestState,
             lastSavedLocation,
         };
+        observeLocationDecision(() => ({
+            path: "background-direct", stage: "baseline", userId: latestState.userId, sessionId: recordingSessionId,
+            nativeEvidence: nativeLocationEvidence(location),
+            point: { latitude, longitude, recordedAtMs, accuracy, speed: location.coords.speed },
+            baseline: lastSavedLocation ? { ...lastSavedLocation, recordedAtMs: lastSavedLocation.recordedAt } : null,
+            baselineCandidates: [
+                { name: "background", point: latestState.lastSavedLocation ? { ...latestState.lastSavedLocation, recordedAtMs: latestState.lastSavedLocation.recordedAt } : null },
+                { name: "foreground", point: foregroundLastSavedLocation ? { ...foregroundLastSavedLocation, recordedAtMs: foregroundLastSavedLocation.recordedAt } : null },
+                { name: "shared", point: sharedAcceptedLocation ? { ...sharedAcceptedLocation, recordedAtMs: sharedAcceptedLocation.recordedAt } : null },
+            ],
+            intervalMs: latestState.intervalMs, distanceMeters: latestState.distanceMeters,
+            reason: "before-speed-duplicate-save-condition",
+        }));
+        const noteDiagnosticDecision = (reason: string) => observeLocationDecision(() => ({
+            path: "background-direct", stage: "decision", userId: latestState.userId, sessionId: recordingSessionId,
+            point: { latitude, longitude, recordedAtMs, accuracy, speed: location.coords.speed },
+            baseline: lastSavedLocation ? { ...lastSavedLocation, recordedAtMs: lastSavedLocation.recordedAt } : null,
+            intervalMs: latestState.intervalMs, distanceMeters: latestState.distanceMeters, reason,
+        }));
 
         if (
             isAbnormalSpeedLocation(
@@ -3103,6 +3144,9 @@ async function saveBackgroundLocation(
                 longitude,
                 recordedAtMs,
             );
+            await holdAbnormalLocationForReview({ userId: latestState.userId, sessionId: recordingSessionId,
+                latitude, longitude, recordedAtMs });
+            noteDiagnosticDecision("abnormalSpeed");
 
             await safeSaveBackgroundLocationDebugLog({
                 userId: latestState.userId,
@@ -3137,6 +3181,7 @@ async function saveBackgroundLocation(
                 recordedAtMs,
             )
         ) {
+            noteDiagnosticDecision("exactDuplicate");
             return {
                 saved: false,
                 nextState: latestState,
@@ -3152,6 +3197,7 @@ async function saveBackgroundLocation(
                 recordedAtMs,
             )
         ) {
+            noteDiagnosticDecision("nearDuplicate");
             return {
                 saved: false,
                 nextState: latestState,
@@ -3167,6 +3213,7 @@ async function saveBackgroundLocation(
                 evaluationState,
             )
         ) {
+            noteDiagnosticDecision("saveConditionNotMet");
             return {
                 saved: false,
                 nextState: latestState,
@@ -3182,6 +3229,7 @@ async function saveBackgroundLocation(
             longitude,
             accuracy,
         });
+        noteDiagnosticDecision("eligible-before-plan-reservation");
         const locationLogId = createLocationLogId(locationUniqueKey);
         planLimitLocationLogId = locationLogId;
         /*

@@ -1,3 +1,4 @@
+import { savedSessionFence } from "./sessionLifecycleFence";
 import { randomUUID } from "node:crypto";
 import { DeleteCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { ingestLocationLog } from "./locationLogIngest";
@@ -55,10 +56,13 @@ export async function createLegacyRecordingSession(userId: string, username: str
             { ConditionCheck: { TableName: tables.operations(), Key: { recordingSessionRecordId: canonicalId },
                 ConditionExpression: "attribute_not_exists(discardOperation)" } },
             { Put: { TableName: tables.sessions(), Item: row, ConditionExpression: "attribute_not_exists(id)" } },
+            savedSessionFence(userId,input.recordingSessionId),
         ] }));
     } catch (error: any) {
         if (error.CancellationReasons?.[0]?.Code === "ConditionalCheckFailed")
             throw new Error("SESSION_DISCARDED: この記録は破棄されています。");
+        if (error.CancellationReasons?.[2]?.Code === "ConditionalCheckFailed")
+            throw new Error("SESSION_DISCARDED: 破棄処理が開始されたため、記録を新規作成できません。");
         if (error.CancellationReasons?.[1]?.Code === "ConditionalCheckFailed")
             throw new Error("ConditionalCheckFailedException: conditional request failed (already exists)");
         throw error;

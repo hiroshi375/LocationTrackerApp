@@ -1,4 +1,11 @@
+import { isBeforeRecordingStart, matchingRecordingStart } from "./recordingStartBoundary";
+import { getRecordingPlanLimitState } from "./recordingPlanLimitService";
+import { recordingLifecycle } from "./recordingLifecycleService";
+import { mayReplayStoppedPoint } from "./recordingLifecycleCore";
+import { collectNonHeldRows } from "./locationQualityReviewCore";
+import { ENABLE_LOCATION_QUALITY_REVIEW, hasPendingLocationQualityReview, holdAbnormalLocationForReview } from "./locationQualityReviewService";
 import { acceptedLocationBaselines } from "./acceptedLocationBaselineService";
+import { observeLocationDecision } from "./locationDecisionDiagnosticService";
 import { selectAcceptedBaseline } from "./acceptedLocationBaselineCore";
 import { isAccountDeletionPending } from "./accountDeletionState";
 import { createLocationLog } from "./locationLogWriteService";
@@ -76,6 +83,9 @@ export type DrainLocationQueueResult = {
         | "timeBudgetExceeded"
         | "createTimedOut"
         | "createFailed"
+        | "qualityReviewPending"
+        | "stoppedSessionReviewPending"
+        | "startBoundaryReviewPending"
         | "locationSaveLockBusy"
         | "planLimitReached";
 };
@@ -96,6 +106,9 @@ export type DrainLocationQueueRepeatedResult = {
         | "timeBudgetExceeded"
         | "createTimedOut"
         | "createFailed"
+        | "qualityReviewPending"
+        | "stoppedSessionReviewPending"
+        | "startBoundaryReviewPending"
         | "locationSaveLockBusy"
         | "planLimitReached"
         | "maxIterationsReached";
@@ -281,6 +294,9 @@ export async function drainLocationQueueRepeatedly(
          * SQLite rowはpendingのままなので、
          * 少し待って次iterationで再試行する。
          */
+        if (result.stopReason === "startBoundaryReviewPending") { stopReason = "startBoundaryReviewPending"; break; }
+        if (result.stopReason === "stoppedSessionReviewPending") { stopReason = "stoppedSessionReviewPending"; break; }
+        if (result.stopReason === "qualityReviewPending") { stopReason = "qualityReviewPending"; break; }
         if (result.stopReason === "locationSaveLockBusy") {
             stopReason = "locationSaveLockBusy";
 
@@ -428,18 +444,19 @@ async function drainLocationQueue(
 
     let stopReason: DrainLocationQueueResult["stopReason"] = "completed";
 
-    const pendingRows = await getPendingLocationQueueRows({
-        userId: input.userId,
-        recordingSessionId: input.recordingSessionId,
-        olderThanMs: input.forceIncludeRecent
-            ? Date.now()
-            : Date.now() - SQLITE_QUEUE_UPLOAD_MIN_AGE_MS,
-        limit: maxItems,
-    });
+    const queueRead = { userId: input.userId, recordingSessionId: input.recordingSessionId,
+        olderThanMs: input.forceIncludeRecent ? Date.now() : Date.now() - SQLITE_QUEUE_UPLOAD_MIN_AGE_MS, limit: maxItems };
+    const selection = ENABLE_LOCATION_QUALITY_REVIEW ? await collectNonHeldRows({
+        fetch: after => getPendingLocationQueueRows({ ...queueRead, after }),
+        isHeld: row => hasPendingLocationQualityReview({ userId: row.user_id, sessionId: row.recording_session_id,
+            latitude: row.latitude, longitude: row.longitude, recordedAtMs: row.recorded_at_ms }),
+        limit: maxItems, deadlineAtMs, now: Date.now,
+    }) : { rows: await getPendingLocationQueueRows(queueRead), heldCount: 0 };
+    const pendingRows = selection.rows;
 
     if (pendingRows.length === 0) {
         return {
-            pendingCount: 0,
+            pendingCount: selection.heldCount,
             processedCount: 0,
             sentCount: 0,
             duplicateCount: 0,
@@ -447,10 +464,11 @@ async function drainLocationQueue(
             failedCount: 0,
             timedOutCount: 0,
             durationMs: Date.now() - startedAtMs,
-            stopReason: "empty",
+            stopReason: selection.heldCount ? "qualityReviewPending" : "empty",
         };
     }
 
+    const recordingStartedAt = matchingRecordingStart(input.recordingSessionId, await getRecordingPlanLimitState());
     let lastAcceptedLocation: AcceptedLocation | null = null;
 
     for (const row of pendingRows) {
@@ -459,7 +477,16 @@ async function drainLocationQueue(
             break;
         }
 
+        if (isBeforeRecordingStart(row.recorded_at_ms, recordingStartedAt)) {
+            stopReason = "startBoundaryReviewPending";
+            break; // Retain pending payload and status; do not reinterpret an old fix as current.
+        }
         processedCount += 1;
+        if (!mayReplayStoppedPoint(await recordingLifecycle.read(row.user_id,row.recording_session_id),row.recorded_at_ms)) {
+            stopReason = "stoppedSessionReviewPending";
+            break; // Keep the pending row and its payload; never classify/skip/delete it.
+        }
+
         if (await isLocationQueueSessionDiscarded(row.user_id, row.recording_session_id)) {
             await markLocationQueueRowSkipped(row.location_log_id, "SESSION_DISCARDED");
             skippedCount += 1;
@@ -508,21 +535,66 @@ async function drainLocationQueue(
             break;
         }
 
+        const lockAcquiredAtMs = Date.now();
         let reservationCreated = false;
         let reservationReachedLimit = false;
 
         try {
             // Re-read after acquiring the same lock used by foreground/background writes.
-            const previous = await getLatestAcceptedLocationQueueRow({
-                userId: row.user_id, recordingSessionId: row.recording_session_id,
-                atOrBeforeMs: row.recorded_at_ms,
-            });
+            const lookupStartedAtMs = Date.now();
+            let previous: PendingLocationQueueRow | null;
+            try {
+                previous = await getLatestAcceptedLocationQueueRow({
+                    userId: row.user_id, recordingSessionId: row.recording_session_id,
+                    atOrBeforeMs: row.recorded_at_ms,
+                });
+            } catch (error) {
+                observeLocationDecision(() => ({ path: "sqlite-queue", stage: "decision",
+                    userId: row.user_id, sessionId: row.recording_session_id, pointId: locationLogId,
+                    point: { latitude: row.latitude, longitude: row.longitude, recordedAtMs: row.recorded_at_ms },
+                    lookup: { status: "read-error", atOrBeforeMs: row.recorded_at_ms, returnedCount: null,
+                        startedAtMs: lookupStartedAtMs, completedAtMs: Date.now() },
+                    timing: { lockAcquiredAtMs }, reason: "baseline-lookup-read-error" }));
+                throw error;
+            }
+            const lookupCompletedAtMs = Date.now();
             let shared: AcceptedLocation | null = null;
-            try { shared = await acceptedLocationBaselines.read(row.user_id, row.recording_session_id); }
-            catch (error) { console.error("Read accepted baseline cache failed:", error); }
+            let sharedReadStatus: "found" | "not-found" | "read-error" = "not-found";
+            try {
+                shared = await acceptedLocationBaselines.read(row.user_id, row.recording_session_id);
+                sharedReadStatus = shared ? "found" : "not-found";
+            } catch (error) { sharedReadStatus = "read-error"; console.error("Read accepted baseline cache failed:", error); }
+            const previousInBatch = lastAcceptedLocation;
             lastAcceptedLocation = selectAcceptedBaseline(row.recorded_at_ms,
                 lastAcceptedLocation, previous ? toAcceptedLocation(previous) : null, shared);
+            const reviewPoint = { userId: row.user_id, sessionId: row.recording_session_id,
+                latitude: row.latitude, longitude: row.longitude, recordedAtMs: row.recorded_at_ms };
+            // Keep the original queue row pending. A new baseline cannot silently undo a quality hold.
+            if (await hasPendingLocationQualityReview(reviewPoint)) continue;
             const skipReason = evaluateQueueLocationSkipReason(row, lastAcceptedLocation, input.intervalMs, input.distanceMeters);
+            observeLocationDecision(() => ({
+                path: "sqlite-queue", stage: "decision", userId: row.user_id,
+                sessionId: row.recording_session_id, pointId: locationLogId,
+                point: { latitude: row.latitude, longitude: row.longitude, recordedAtMs: row.recorded_at_ms,
+                    accuracy: row.accuracy, speed: row.speed },
+                receivedAtMs: Date.parse(row.received_at),
+                baseline: lastAcceptedLocation ? { ...lastAcceptedLocation, recordedAtMs: lastAcceptedLocation.recordedAt } : null,
+                baselineCandidates: [
+                    { name: "previous-in-batch", point: previousInBatch ? { ...previousInBatch, recordedAtMs: previousInBatch.recordedAt } : null },
+                    { name: "accepted-predecessor", point: previous ? { latitude: previous.latitude, longitude: previous.longitude, recordedAtMs: previous.recorded_at_ms } : null },
+                    { name: "shared", point: shared ? { ...shared, recordedAtMs: shared.recordedAt } : null },
+                ],
+                lookup: { status: previous ? "found" : "not-found", atOrBeforeMs: row.recorded_at_ms,
+                    returnedCount: previous ? 1 : 0, sharedReadStatus, selectedQueueStatus: previous?.queue_status,
+                    startedAtMs: lookupStartedAtMs, completedAtMs: lookupCompletedAtMs },
+                timing: { lockAcquiredAtMs },
+                reason: skipReason ?? "eligible-before-plan-reservation",
+                intervalMs: input.intervalMs, distanceMeters: input.distanceMeters,
+            }));
+            if (skipReason === "abnormalSpeed") {
+                await holdAbnormalLocationForReview(reviewPoint);
+                if (await hasPendingLocationQualityReview(reviewPoint)) continue;
+            }
             if (skipReason) {
                 await markLocationQueueRowSkipped(row.location_log_id, skipReason);
                 skippedCount += 1;

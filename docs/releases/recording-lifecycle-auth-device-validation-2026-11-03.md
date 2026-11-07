@@ -160,3 +160,65 @@ JSバンドルSHA-256は`0b36362341f0f6906d27fd67a88b1909e965f13529d7c0cc700e531
 - tests/recordingStartBoundary.test.ts／tests/recordingStopFailure.test.cjs：-125043ms/-1ms/同時/+1ms/+30s、正常な遅延受信、別セッション、未知境界、pending保持、実際の背景保存関数・キュー関数を検査。既存の停止・保存・破棄・再送・サマリー回帰も実行。
 
 端末更新・EASビルド・OTA・本番反映・既存記録の書換えは未実施。実機合格ではない。次は検証104だけへのローカル反映後、開始/停止の時計時刻と実際の測位範囲を照合し、保存・破棄・再起動と元未送信2件の全行ハッシュを再確認する。単に約60秒待ったことだけで表示時間60秒を期待しない（表示は採用測位の先頭末尾差）。
+
+
+## 記録時間の見直しと製品ファイル区分（2026-11-07）
+
+実操作約62秒に対して36秒表示となった試験を受け、開始・停止ジャーナルに任意のstarted_at_ms列を追加する。既存DBへは加算的に列を追加し旧行はNULLのまま保持する。手動停止時は既存の開始ref、背景停止時は同セッションの背景stateから開始時刻を保存し、最初の停止要求で開始/停止を固定する。新規保存の確定停止情報がある場合だけ記録時間に採用する。自動停止時刻が渡される場合は有効範囲内で停止時刻を優先する。境界情報がない旧記録は測位時刻へフォールバックする。保存済みサマリーの時刻は再集計で維持する。距離・GPS元ログ・movingDurationSecondsは変更しない。
+
+今回の新規ファイルは0。既存の製品コード6ファイル（Hook、recordingPeriod、backgroundLocationService、recordingLifecycleCore/Service、recordingSessionService）と既存テスト3ファイルを更新する。端末・クラウド保存データの移行や再計算を実行していない。実機再検証は必要。
+
+### 最終出荷構成の区分（確定前）
+
+|区分|ファイル/範囲|扱い|
+|---|---|---|
+|製品に必要|recordingLifecycleCore/Service/RecoveryService、recordingStartBoundary、recordingPeriod、記録Hook/画面/保存・再送/背景処理の保護、backend sessionLifecycleFence/legacyRecordingWrite/discardRecordingSession|記録保護・記録時間のため採用対象。旧版互換と実機合格後に出荷確定|
+|採用判断が必要|locationDecision系、diagnosticLogCleanupCore、headlessDiagnosticExportService、Native診断パッチ、locationQualityReview系、simplifiedLocationValidation系、locationValidation設定|既存コードから参照があるため単純な削除・EAS除外は禁止。診断/暫定対策を製品で残すか個別決定し、参照・フラグ・Native生成物も回帰検査する|
+|検証専用|diagnostics/location-probe、scripts/diagnostics、tests、.amplify内の検証起動コード・成果物・端末DB・認証情報|製品の実行エントリに含めない。認証情報・端末DBはGitへも追加しない。パッケージ除外状況は下記参照|
+|開発文書|docs/releasesの調査・検証記録|Gitで保持。アプリ実行コードではない|
+|由来未確認|recordingContinuationService 2.ts|未追跡のまま保持。製品へ追加しない|
+
+検証専用欄の出荷パッケージ除外は、既存 `.easignore` の `.amplify/` を確認済み。その他の検証フォルダはまだ除外を実装していないため、最終出荷前にEASアーカイブとJS/Native成果物を別々に検査する。Gitで追跡することとアプリへ内蔵することは別である。
+
+
+## 時間修正版の地図表示経路の追加修正
+
+HF104iOS記録時間修正確認（session-1794062910663-c47qdxwa）は、sandbox保存サマリーが開始2026-11-07T14:48:30.664Z、終了14:49:33.018Z（62.354秒）である一方、地図が測位範囲を使い36秒表示となった。保存修正は動作したが画面経路の検査が不足していた。LocationMapScreenの既存sessionStartAt/sessionEndAtで、同じsessionIdの保存サマリー時刻を優先する。過去sessionの一時的なsummary残りは使わない。liveは従来どおり現在時刻まで、summaryがない旧記録は地点範囲へフォールバックする。
+
+既存recordingSummaryPeriodテストへ実際の地図変数式を実行する検査を追加し、保存時間62秒、summaryなし/他sessionの36秒フォールバック、live現在時刻を確認した。新規ファイルは0。既存保存データの書換えは不要で、修正版で同じ履歴を開き直して検証する。movingDurationSecondsは移動指標であり今回の総記録時間修正で変更しない。
+
+
+## 2026-11-08 再起動後の取得DB照合
+
+ユーザーの個別コピー成功後、DB/WAL/SHMを原本から別のevidence/workingへ複製。両DBのintegrity_checkはok。元の合成未送信2件はpendingを維持し、旧AsyncStorageのseedHashとSELECT *全行ハッシュが一致（64d504e5...）。保存session-1794062910663-c47qdxwaはSAVED、開始1794062910664・停止1794062973018で62.354秒。別の正常破棄session-1794063570253-22hcgh9tはDISCARDED、キュー0件。旧ジャーナル2件もSAVEDのまま、追加開始列はNULLで保持。
+
+ただしキューは計27件すべてpendingで、内訳は元合成2件、開始境界保存確認13件、時間修正確認12件。後者12件には開始前測位3件が含まれ、送信試行数はすべて0。開始前をクラウドへ採用しないことと、端末の生受信キューを保持することは区別する。元2件の保持は合格だが、残る25件についてミラー/受領確認待ち/開始境界保留を切り分ける必要がある。pending27を未送信2件や未送信0件と報告してはならない。全体の実機結合は完了としない。
+
+ユーザーはスワイプ終了後ホームアイコン起動で、ログイン・停止・保存記録・正常破棄・62秒表示の保持を確認済み。追加記録や一括再送・キュー削除はまだ行わない。
+
+
+## 2026-11-08 pending25件のクラウド受領・採否の読み取り照合
+
+DynamoDB BatchGetItemをConsistentReadで実行し、未処理キー0で25件を照合。3件は同一IDかつ所有者/session/測位時刻/座標が一致するクラウド記録を確認。残り22件には同一IDのクラウド記録なし。実際のevaluateQueueLocationSkipReasonをオフライン実行し、時間修正確認12件は開始前3・受領済2・saveConditionNotMet7。旧開始境界確認13件は受領済1・nearDuplicate2・saveConditionNotMet8・最初のクラウド測位より前2（永続開始時刻なしのため採否は未確定）。計25件は受領済3、既存条件で対象外17、確かな開始前3、旧境界不明2に区分される。クラウド記録は測位時刻順の先行受領点を基準にした静的照合であり、過去の非同期スケジュールを完全再現したものではない。
+
+原因は新たに追加した開始境界保留が先頭行でbreakし、後続の受領確認・保存条件判定も止めること。開始境界を一時planだけから取得すると停止後に失う問題もあった。既存collectNonHeldRowsを開始境界にも使用し、保留行の状態/payloadを変えずにページングして後続を選ぶ。開始境界は同所有者/sessionの永続ジャーナル優先、なければ同sessionのplanを使用する。未知の旧境界をsessionId等から推測して製品の判定へ流用しない。既存キューSQLの時刻同値の並びもlocation_log_idで固定した。保留を含むpending件数を報告する。
+
+既存recordingStopFailureテストで実際のdrain/collectorを実行し、保留行の非変更、全保留時の停止、永続境界を使い後続の正常行が採否経路へ到達することを確認。関連117件とTypeScript検査成功。新規製品ファイル0。端末キュー・クラウドデータの一括再送、status更新、削除、既存保存サマリーの再集計は未実施。旧境界不明2件は引き続き保留判断が必要。修正はローカルのみで未ビルド・未配信。
+
+
+## 2026-11-08 再送保留通過確認の実機DB・クラウド照合
+
+HF104iOS再送保留通過確認（session-1794065890448-lpb8di7s）について取得DB/WALを原本から作業コピーへ複製し検査。両DB integrity_check=ok。旧27件はSELECT *全列で27/27一致（元合成pending2件と旧試験25件）。
+
+新規キュー11件は開始前2件pending保持、sent2件、skipped7件（nearDuplicate2、exactDuplicate1、saveConditionNotMet4）。開始前の2件はクラウドに存在せず、セッション全クラウド5地点にも開始前測位はない。sent2件は同IDのクラウド受領を確認した。先頭の開始前保留があっても後続の採否・送信が実機で進んだことを確認。
+
+ジャーナルSAVED、開始2026-11-08 00:38:10.448 JST、停止00:39:13.212 JSTで62.764秒。クラウドサマリーの開始・終了と一致し、実機表示00:01:02と整合。サマリーpointCount5・distance0m。コピー時点の総キューは旧27＋新11=38件、pendingは旧27＋開始前2=29件。pendingが0になったとは報告しない。旧境界不明2件の処分/再送は行わない。
+
+ユーザー指定の4項目は本試験で確認できた。更新後のAndroid共通コード回帰、故障条件・長時間・共有継続等の全体要件をこの短時間iOS試験のみで合格とはしない。実機再送試験はここで追加記録を要求せず、結果整理と残差分確認へ進む。
+
+
+## 2026-11-08 共通差分の整理とAndroid回帰準備
+
+専用ブランチfix/recording-lifecycle-location-1.0.6で共通差分を再検査。関連117テスト、アプリ/バックエンドTypeScript検査、差分空白検査に成功。未コミットの修正は製品コード9・既存テスト3・本検証文書1ファイルで、新規ファイルは0。時間境界の永続化、保存済み期間の維持、地図表示のサマリー優先、保留を残して後続再送を判定する処理を一体の回帰単位とする。
+
+Android検証版はNative単一経路の検証専用設定を保持する既存Metro/Gradle設定を確認。現在のアプリは10434で、最新共通差分はまだAndroidへ更新していない。初回ADB確認はツール環境の一時ログ権限制限により開始できず、接続未確認。実機のログイン名・停止状態・USB接続をユーザーへ確認中。通常版・測位比較アプリを更新しない。最新Android実機試験・長時間・共有継続は未合格で、iOS短時間結果やNodeテストから代替合格にはしない。

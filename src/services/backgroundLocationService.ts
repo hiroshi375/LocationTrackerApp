@@ -1708,6 +1708,7 @@ export async function stopBackgroundLocationRecording(
             (options.expectedRecordingSessionId === undefined || state.recordingSessionId === options.expectedRecordingSessionId);
         if (same && !(await recordingLifecycle.read(state!.userId,state!.recordingSessionId!))) {
             await recordingLifecycle.requestStop({ userId: state!.userId, sessionId: state!.recordingSessionId!,
+                startedAtMs: state!.startedAt ? Date.parse(state!.startedAt) : null,
                 stoppedAtMs: Date.now(),
                 intervalMs: Number.isFinite(state!.intervalMs) && state!.intervalMs>0 ? state!.intervalMs : 30000,
                 distanceMeters: Number.isFinite(state!.distanceMeters) && state!.distanceMeters>=0 ? state!.distanceMeters : 50,

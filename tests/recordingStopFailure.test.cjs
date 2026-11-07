@@ -7,7 +7,7 @@ function callback(name,env,source){
 }
 function fixture(error,failJournal=false){
  const events=[],ref=v=>({current:v});
- const env={useCallback:f=>f,recordingSessionIdRef:ref('s'),recordingUserIdRef:ref('A'),recordingWatcherGenerationRef:ref(0),
+ const env={useCallback:f=>f,recordingStartBoundaryRef:ref(null),recordingSessionIdRef:ref('s'),recordingUserIdRef:ref('A'),recordingWatcherGenerationRef:ref(0),
  recordingSubscriptionRef:ref({remove(){events.push('watcher-removed')}}),liveLocationIdRef:ref('live'),isRecordingRef:ref(true),startLocationRef:ref({}),lastSavedLocationRef:ref({}),
  normalizedLiveShareOwnerValues:['viewer'],getActiveRecordingSettings:()=>({intervalMs:30000,distanceMeters:50}),
  recordingLifecycle:{async requestStop(){if(failJournal)throw Error('disk');events.push('intent-durable');return{state:'STOP_REQUESTED',stoppedAtMs:Date.now()}},stopped:async()=>events.push('stop-confirmed')},
@@ -64,9 +64,13 @@ test('native stop precedes cloud/sharing finalization and durable confirmation',
 test('post-stop queue row is retained without skip/delete/failure marking or a cloud request',async()=>{
  const source=fs.readFileSync('src/services/locationQueueUploadService.ts','utf8'),tree=ts.createSourceFile('queue.ts',source,ts.ScriptTarget.Latest,true);let node;
  function visit(n){if(ts.isFunctionDeclaration(n)&&n.name?.getText(tree)==='drainLocationQueue')node=n;ts.forEachChild(n,visit)}visit(tree);assert.ok(node);
- const payload={user_id:'A',recording_session_id:'s',recorded_at_ms:1001,queue_status:'pending',latitude:35,longitude:139};const original=structuredClone(payload),events=[];
- const env={getRecordingPlanLimitState:async()=>null,matchingRecordingStart:()=>null,isBeforeRecordingStart:()=>false,SQLITE_QUEUE_UPLOAD_TIME_BUDGET_MS:10000,SQLITE_QUEUE_UPLOAD_MIN_AGE_MS:0,resolveQueueUploadMaxItems:()=>25,ENABLE_LOCATION_QUALITY_REVIEW:false,
- getPendingLocationQueueRows:async()=>[payload],recordingLifecycle:{read:async()=>({state:'STOPPED',stoppedAtMs:1000})},
+ const payload={location_log_id:'one',user_id:'A',recording_session_id:'s',recorded_at_ms:1001,queue_status:'pending',latitude:35,longitude:139};const original=structuredClone(payload),events=[];
+ const collectorSource=fs.readFileSync('src/services/locationQualityReviewCore.ts','utf8');
+ const collectorTree=ts.createSourceFile('core.ts',collectorSource,ts.ScriptTarget.Latest,true);
+ const collectorNode=collectorTree.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.getText(collectorTree)==='collectNonHeldRows');
+ const collectorOutput={};new Function('exports',ts.transpileModule(collectorNode.getText(collectorTree),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(collectorOutput);
+ const env={collectNonHeldRows:collectorOutput.collectNonHeldRows,getRecordingPlanLimitState:async()=>null,matchingRecordingStart:()=>null,isBeforeRecordingStart:()=>false,SQLITE_QUEUE_UPLOAD_TIME_BUDGET_MS:10000,SQLITE_QUEUE_UPLOAD_MIN_AGE_MS:0,resolveQueueUploadMaxItems:()=>25,ENABLE_LOCATION_QUALITY_REVIEW:false,
+ getPendingLocationQueueRows:async input=>!input.after||input.after.recordedAtMs<payload.recorded_at_ms?[payload]:[],recordingLifecycle:{read:async()=>({state:'STOPPED',stoppedAtMs:1000})},
  mayReplayStoppedPoint:(r,t)=>t<=r.stoppedAtMs,markLocationQueueRowSkipped:async()=>events.push('BAD-skip'),createLocationLog:async()=>events.push('BAD-send')};
  const code=ts.transpileModule(node.getText(tree),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
  const fn=new Function(...Object.keys(env),code+';return drainLocationQueue;')(...Object.values(env));const r=await fn({userId:'A',recordingSessionId:'s'});
@@ -75,6 +79,15 @@ test('post-stop queue row is retained without skip/delete/failure marking or a c
  const early=new Function(...Object.keys(earlyEnv),code+';return drainLocationQueue;')(...Object.values(earlyEnv));
  const held=await early({userId:'A',recordingSessionId:'s'});
  assert.equal(held.stopReason,'startBoundaryReviewPending');assert.deepEqual(events,[]);assert.deepEqual(payload,original);assert.equal(held.processedCount,0);
+
+ const valid={...payload,location_log_id:'two',recorded_at_ms:2001};
+ const scanEnv={...earlyEnv,recordingLifecycle:{read:async()=>({state:'SAVED',startedAtMs:2000,stoppedAtMs:3000})},
+ getRecordingPlanLimitState:async()=>{throw Error('must-use-durable-start')},mayReplayStoppedPoint:()=>true,
+ getPendingLocationQueueRows:async input=>[payload,valid].filter(x=>!input.after||x.recorded_at_ms>input.after.recordedAtMs),
+ isLocationQueueSessionDiscarded:async()=>{throw Error('valid-row-reached-normal-processing')}};
+ const scan=new Function(...Object.keys(scanEnv),code+';return drainLocationQueue;')(...Object.values(scanEnv));
+ await assert.rejects(scan({userId:'A',recordingSessionId:'s'}),/valid-row-reached-normal-processing/);
+ assert.deepEqual(payload,original);assert.deepEqual(events,[]);
 
 });
 test('discard UI protects an already stored summary before local discard fence or server mutation',async()=>{
@@ -128,4 +141,18 @@ test('actual background save rejects a pre-start batched fix before plan/lock/AP
  const old=structuredClone(point);const result=await run(point,state,'receipt',{});
  assert.equal(result.skippedReason,'beforeRecordingStart');assert.deepEqual(point,old);assert.deepEqual(events,['beforeRecordingStart']);
  await assert.rejects(run({...point,timestamp:2000},state,'receipt',{}),/reached-normal-plan-path/);
+});
+
+
+test('actual SQLite service initialization migrates an old database without changing its receipt',async()=>{
+ const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(':memory:');
+ const core={};new Function('exports',ts.transpileModule(fs.readFileSync('src/services/recordingLifecycleCore.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(core);
+ db.exec(core.LIFECYCLE_SCHEMA.replace(', started_at_ms REAL',''));
+ db.exec("INSERT INTO recording_lifecycle VALUES ('A','old','STOPPED',1000,30000,50,'[]',NULL)");
+ const adapter={async execAsync(s){assert.equal(s.includes('function'),false);db.exec(s);},async runAsync(s,v){return db.prepare(s).run(...v);},async getFirstAsync(s,v){return db.prepare(s).get(...v)??null;},async getAllAsync(s,v){return db.prepare(s).all(...v);}};
+ const output={};const code=ts.transpileModule(fs.readFileSync('src/services/recordingLifecycleService.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+ new Function('exports','require',code)(output,name=>{if(name==='expo-sqlite')return {openDatabaseAsync:async()=>adapter};if(name==='./recordingLifecycleCore')return core;throw Error(name)});
+ const old=await output.recordingLifecycle.read('A','old');assert.equal(old.startedAtMs,null);assert.equal(old.stoppedAtMs,1000);
+ await output.recordingLifecycle.requestStop({userId:'A',sessionId:'new',startedAtMs:100,stoppedAtMs:200,intervalMs:30000,distanceMeters:50,sharedOwners:[]});
+ assert.equal((await output.recordingLifecycle.read('A','new')).startedAtMs,100);
 });

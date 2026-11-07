@@ -2127,14 +2127,19 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         : 0;
 
     const sessionStartAt =
-        isOwnLiveRecordingMap && recordingSessionSummary?.startedAt
+        recordingSessionSummary?.recordingSessionId === activeSessionId &&
+        recordingSessionSummary?.startedAt
             ? recordingSessionSummary.startedAt
             : activeSessionId && editableLocationLogs.length > 0
               ? editableLocationLogs[0].recordedAt
               : null;
 
     const sessionEndAt =
-        activeSessionId && editableLocationLogs.length > 0
+        !isOwnLiveRecordingMap &&
+        recordingSessionSummary?.recordingSessionId === activeSessionId &&
+        recordingSessionSummary?.endedAt
+            ? recordingSessionSummary.endedAt
+            : activeSessionId && editableLocationLogs.length > 0
             ? editableLocationLogs[editableLocationLogs.length - 1].recordedAt
             : null;
 

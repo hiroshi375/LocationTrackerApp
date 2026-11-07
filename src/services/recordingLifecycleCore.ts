@@ -11,6 +11,7 @@ export type RecordingLifecycleReceipt = {
   sessionId: string;
   state: RecordingLifecycleState;
   stoppedAtMs: number;
+  startedAtMs?: number | null;
   intervalMs: number;
   distanceMeters: number;
   sharedOwners: string[];
@@ -28,17 +29,25 @@ export type LifecycleDatabase = {
 export const LIFECYCLE_SCHEMA = `CREATE TABLE IF NOT EXISTS recording_lifecycle (
  user_id TEXT NOT NULL, session_id TEXT NOT NULL, state TEXT NOT NULL,
  stopped_at_ms REAL NOT NULL, interval_ms REAL NOT NULL, distance_meters REAL NOT NULL,
- shared_owners TEXT NOT NULL, save_name TEXT, PRIMARY KEY(user_id,session_id));`;
+ shared_owners TEXT NOT NULL, save_name TEXT, started_at_ms REAL, PRIMARY KEY(user_id,session_id));`;
 type Row = {
   user_id: string;
   session_id: string;
   state: RecordingLifecycleState;
   stopped_at_ms: number;
+  started_at_ms?: number | null;
   interval_ms: number;
   distance_meters: number;
   shared_owners: string;
   save_name: string | null;
 };
+/** Additive migration: old receipts and queue payloads are left intact. */
+export async function initializeRecordingLifecycleDatabase(db: LifecycleDatabase) {
+  await db.execAsync(LIFECYCLE_SCHEMA);
+  const columns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(recording_lifecycle)", []);
+  if (!columns.some(column => column.name === "started_at_ms"))
+    await db.execAsync("ALTER TABLE recording_lifecycle ADD COLUMN started_at_ms REAL");
+}
 export function createRecordingLifecycleStore(
   open: () => Promise<LifecycleDatabase>,
 ) {
@@ -75,6 +84,7 @@ export function createRecordingLifecycleStore(
       sessionId: r.session_id,
       state: r.state,
       stoppedAtMs: r.stopped_at_ms,
+      startedAtMs: r.started_at_ms ?? null,
       intervalMs: r.interval_ms,
       distanceMeters: r.distance_meters,
       sharedOwners: owners,
@@ -95,6 +105,7 @@ export function createRecordingLifecycleStore(
   async function requestStop(r: Omit<RecordingLifecycleReceipt, "state">) {
     validate(r.userId, r.sessionId);
     if (
+      (r.startedAtMs != null && (!Number.isFinite(r.startedAtMs) || r.startedAtMs > r.stoppedAtMs)) ||
       !Number.isFinite(r.stoppedAtMs) ||
       !Number.isFinite(r.intervalMs) ||
       r.intervalMs <= 0 ||
@@ -107,7 +118,7 @@ export function createRecordingLifecycleStore(
     await (
       await open()
     ).runAsync(
-      "INSERT OR IGNORE INTO recording_lifecycle (user_id,session_id,state,stopped_at_ms,interval_ms,distance_meters,shared_owners) VALUES (?,?, 'STOP_REQUESTED',?,?,?,?)",
+      "INSERT OR IGNORE INTO recording_lifecycle (user_id,session_id,state,stopped_at_ms,interval_ms,distance_meters,shared_owners,started_at_ms) VALUES (?,?, 'STOP_REQUESTED',?,?,?,?,?)",
       [
         r.userId,
         r.sessionId,
@@ -115,6 +126,7 @@ export function createRecordingLifecycleStore(
         r.intervalMs,
         r.distanceMeters,
         JSON.stringify(r.sharedOwners),
+        r.startedAtMs ?? null,
       ],
     );
     return (await read(r.userId, r.sessionId))!;

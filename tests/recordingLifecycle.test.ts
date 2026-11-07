@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   createRecordingLifecycleStore,
   LIFECYCLE_SCHEMA,
+  initializeRecordingLifecycleDatabase,
   mayReplayStoppedPoint,
 } from "../src/services/recordingLifecycleCore";
 const { DatabaseSync } = require("node:sqlite");
@@ -131,4 +132,23 @@ test("known zero-point save can return to normal unsaved discard; confirmed save
  await f.store.releaseUnsentSave("A","one");await f.store.prepareDiscard("A","one");await f.store.discarded("A","one");
  const g=fixture();await g.store.requestStop(r);await g.store.stopped("A","one");await g.store.prepareSave("A","one","saved");await g.store.saved("A","one");
  await assert.rejects(g.store.releaseUnsentSave("A","one"));assert.equal((await g.store.read("A","one"))?.state,"SAVED");
+});
+
+
+test("start and stop are frozen across restart and repeated stop", async()=>{
+ const f=fixture();await f.store.requestStop({...r,startedAtMs:100});
+ await f.restart().requestStop({...r,startedAtMs:200,stoppedAtMs:3000});
+ const value=await f.restart().read('A','one');assert.equal(value!.startedAtMs,100);assert.equal(value!.stoppedAtMs,1000);
+});
+test("invalid inverted bounds preserve the original pending journal",async()=>{
+ const f=fixture();await assert.rejects(f.store.requestStop({...r,startedAtMs:1001}));
+ assert.equal(await f.store.read('A','one'),null);
+});
+test("additive migration preserves a legacy receipt and is repeatable",async()=>{
+ const db=new DatabaseSync(':memory:');db.exec(LIFECYCLE_SCHEMA.replace(', started_at_ms REAL',''));
+ db.exec("INSERT INTO recording_lifecycle VALUES ('A','old','STOPPED',1000,30000,50,'[]',NULL)");
+ const adapter={async execAsync(s:string){db.exec(s);},async runAsync(s:string,v:any[]){return db.prepare(s).run(...v);},async getFirstAsync<T>(s:string,v:any[]){return db.prepare(s).get(...v) as T;},async getAllAsync<T>(s:string,v:any[]){return db.prepare(s).all(...v) as T[];}};
+ await initializeRecordingLifecycleDatabase(adapter);await initializeRecordingLifecycleDatabase(adapter);
+ const receipt=await createRecordingLifecycleStore(async()=>adapter).read('A','old');
+ assert.equal(receipt!.stoppedAtMs,1000);assert.equal(receipt!.startedAtMs,null);assert.equal(receipt!.state,'STOPPED');
 });

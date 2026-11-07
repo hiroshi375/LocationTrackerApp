@@ -1983,6 +1983,7 @@ export function useForegroundLocationRecorder({
             if (!finishedSessionId || !finishedUserId) return null;
             const settings = getActiveRecordingSettings();
             const intent = await recordingLifecycle.requestStop({ userId: finishedUserId, sessionId: finishedSessionId,
+                startedAtMs: recordingStartBoundaryRef.current ? Date.parse(recordingStartBoundaryRef.current) : null,
                 stoppedAtMs: Date.now(), intervalMs: settings.intervalMs, distanceMeters: settings.distanceMeters,
                 sharedOwners: [...normalizedLiveShareOwnerValues] });
             if (["SAVED","SAVE_REQUESTED","DISCARD_REQUESTED","DISCARDED"].includes(intent.state))

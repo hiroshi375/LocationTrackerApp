@@ -5,7 +5,8 @@ import {
     calculateRouteDistanceMeters,
     normalizeRouteLogs,
 } from "../lib/locationRoute";
-import { getRecordingPeriod } from "../lib/recordingPeriod";
+import { recordingLifecycle } from "./recordingLifecycleService";
+import { getRecordingPeriod, resolveRecordingSummaryPeriod } from "../lib/recordingPeriod";
 import {
     type ActivityType,
     classifyActivitySession,
@@ -243,7 +244,7 @@ export async function upsertRecordingSessionSummary(
         return;
     }
 
-    const { startAt, endAt } = getRecordingPeriod(logs);
+    let { startAt, endAt } = getRecordingPeriod(logs);
 
     if (!startAt || !endAt) {
         return;
@@ -322,6 +323,14 @@ export async function upsertRecordingSessionSummary(
         ) ??
         existingSessions[0] ??
         null;
+
+    // Only a new stopped recording needs local bounds. Backfill/reclassification of saved
+    // records must not rewrite their time or depend on a device-local receipt.
+    const period = resolveRecordingSummaryPeriod({ startAt, endAt }, existing,
+        existing ? null : await recordingLifecycle.read(currentUser.userId, recordingSessionId), options?.autoStoppedAt);
+    startAt = period.startAt;
+    endAt = period.endAt;
+    if (!startAt || !endAt) return;
 
     const useManualClassification = existing?.classificationSource === "MANUAL";
     const activityType = useManualClassification

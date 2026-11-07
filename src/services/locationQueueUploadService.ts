@@ -444,12 +444,25 @@ async function drainLocationQueue(
 
     let stopReason: DrainLocationQueueResult["stopReason"] = "completed";
 
+    // The journal survives clearing the active plan state and restarting the app.
+    const lifecycle = await recordingLifecycle.read(input.userId, input.recordingSessionId);
+    const recordingStartedAt = lifecycle?.startedAtMs != null && Number.isFinite(lifecycle.startedAtMs)
+        ? new Date(lifecycle.startedAtMs).toISOString()
+        : matchingRecordingStart(input.recordingSessionId, await getRecordingPlanLimitState());
+    let startBoundaryHeldCount = 0;
     const queueRead = { userId: input.userId, recordingSessionId: input.recordingSessionId,
         olderThanMs: input.forceIncludeRecent ? Date.now() : Date.now() - SQLITE_QUEUE_UPLOAD_MIN_AGE_MS, limit: maxItems };
-    const selection = ENABLE_LOCATION_QUALITY_REVIEW ? await collectNonHeldRows({
+    const selection = ENABLE_LOCATION_QUALITY_REVIEW || recordingStartedAt ? await collectNonHeldRows({
         fetch: after => getPendingLocationQueueRows({ ...queueRead, after }),
-        isHeld: row => hasPendingLocationQualityReview({ userId: row.user_id, sessionId: row.recording_session_id,
-            latitude: row.latitude, longitude: row.longitude, recordedAtMs: row.recorded_at_ms }),
+        isHeld: async row => {
+            if (isBeforeRecordingStart(row.recorded_at_ms, recordingStartedAt)) {
+                startBoundaryHeldCount++;
+                return true; // Preserve the row, but do not starve later eligible rows.
+            }
+            return ENABLE_LOCATION_QUALITY_REVIEW && await hasPendingLocationQualityReview({
+                userId: row.user_id, sessionId: row.recording_session_id,
+                latitude: row.latitude, longitude: row.longitude, recordedAtMs: row.recorded_at_ms });
+        },
         limit: maxItems, deadlineAtMs, now: Date.now,
     }) : { rows: await getPendingLocationQueueRows(queueRead), heldCount: 0 };
     const pendingRows = selection.rows;
@@ -464,11 +477,10 @@ async function drainLocationQueue(
             failedCount: 0,
             timedOutCount: 0,
             durationMs: Date.now() - startedAtMs,
-            stopReason: selection.heldCount ? "qualityReviewPending" : "empty",
+            stopReason: startBoundaryHeldCount ? "startBoundaryReviewPending" : selection.heldCount ? "qualityReviewPending" : "empty",
         };
     }
 
-    const recordingStartedAt = matchingRecordingStart(input.recordingSessionId, await getRecordingPlanLimitState());
     let lastAcceptedLocation: AcceptedLocation | null = null;
 
     for (const row of pendingRows) {
@@ -927,7 +939,7 @@ async function drainLocationQueue(
     }
 
     return {
-        pendingCount: pendingRows.length,
+        pendingCount: pendingRows.length + selection.heldCount,
         processedCount,
         sentCount,
         duplicateCount,

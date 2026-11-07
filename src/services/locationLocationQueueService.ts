@@ -676,7 +676,7 @@ export async function getPendingLocationQueueRows(input: {
             AND recording_session_id = $recordingSessionId
             AND recorded_at_ms <= $olderThanMs
             ${input.after ? "AND (recorded_at_ms > $afterMs OR (recorded_at_ms = $afterMs AND location_log_id > $afterId))" : ""}
-        ORDER BY recorded_at_ms ASC${input.after ? ", location_log_id ASC" : ""}
+        ORDER BY recorded_at_ms ASC, location_log_id ASC
         LIMIT $limit
         `,
         {

@@ -16,9 +16,10 @@ const archiveDirectory = () => {
 const PROTECTION_KEY = "location-decision-protection-v1";
 const MAX_PROTECTED_FILES = 2048;
 const MAX_PROTECTED_BYTES = 64 * 1024 * 1024;
-type Protection = { schema: 1; targets: { userId: string; sessionId: string }[];
+const protectionEligibleAfterMs = Date.now();
+type Protection = { schema: 1; eligibleAfterMs?: number; targets: { userId: string; sessionId: string }[];
     capacityFailures: number; interruptedWrites?: number; lastInterruptedWrite?: string; pendingWrite: string | null };
-const emptyProtection = (): Protection => ({ schema: 1, targets: [], capacityFailures: 0, pendingWrite: null });
+const emptyProtection = (): Protection => ({ schema: 1, eligibleAfterMs: protectionEligibleAfterMs, targets: [], capacityFailures: 0, pendingWrite: null });
 const protectionDirectory = () => `${archiveDirectory()}protected-v1/`;
 async function readProtection(): Promise<Protection> {
     const raw = await AsyncStorage.getItem(PROTECTION_KEY);
@@ -38,7 +39,15 @@ async function protectPage(name: string, value: string) {
         state.interruptedWrites = (state.interruptedWrites ?? 0) + 1;
         state.lastInterruptedWrite = state.pendingWrite;
     }
-    for (const row of page.rows) {
+    const protectedRows = page.rows.filter((row: any) => {
+        if (typeof row.userId !== "string" || typeof row.sessionId !== "string") return false;
+        if (state.targets.some(t => t.userId === row.userId && t.sessionId === row.sessionId)) return true;
+        const createdAtMs = Number(/^session-(\d+)-/.exec(row.sessionId)?.[1]);
+        return Number.isFinite(createdAtMs) && createdAtMs >= (state.eligibleAfterMs ?? protectionEligibleAfterMs);
+    });
+    if (!protectedRows.length) return;
+    value = JSON.stringify({ ...page, rows: protectedRows });
+    for (const row of protectedRows) {
         if (typeof row.userId !== "string" || typeof row.sessionId !== "string") continue;
         if (!state.targets.some(t => t.userId === row.userId && t.sessionId === row.sessionId)) {
             if (state.targets.length === 4) {

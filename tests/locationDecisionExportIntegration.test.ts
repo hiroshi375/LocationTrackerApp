@@ -61,7 +61,7 @@ function protectionFixture(shared?: { files: Map<string,string>; storage: Map<st
   throw Error(name);
  });
  return {state,deleted,directory,exports,fail:(v:boolean)=>{failWrite=v;},oversize:()=>{oversized=true;},
-  append:(session:string,seq:number,time:number)=>exports.observeLocationDecision({userId:'owner',sessionId:session,runtimeId:'receipt-'+time,sequence:seq,observedAtMs:time})};
+  append:(session:string,seq:number,time:number)=>exports.observeLocationDecision({userId:'owner',sessionId:session.startsWith('session-') ? session : 'session-9999999999999-'+session,runtimeId:'receipt-'+time,sequence:seq,observedAtMs:time})};
 }
 test('protected evidence survives rolling cleanup, restart and repeated export without release',async()=>{
  const f=protectionFixture();
@@ -120,4 +120,11 @@ test('protected file-count cap rejects new pages without deleting retained pages
  f.append('target',1,100);const result=JSON.parse(await f.exports.readLocationDecisionDiagnostics());
  assert.equal(result.archive.protection.files,2048);assert.equal(result.archive.protection.status,'incomplete');
  assert.ok(result.archive.protection.capacityFailures>0);assert.equal(f.deleted.length,0);
+});
+
+test('replayed old sessions do not occupy protection slots reserved for new validation',async()=>{
+ const f=protectionFixture();f.append('session-1000-old',1,100);let result=JSON.parse(await f.exports.readLocationDecisionDiagnostics());
+ assert.equal(result.archive.protection.targets.length,0);assert.equal(result.archive.protection.files,0);
+ f.append('new',2,200);result=JSON.parse(await f.exports.readLocationDecisionDiagnostics());
+ assert.equal(result.archive.protection.targets.length,1);assert.ok(result.archive.protection.targets[0].sessionId.endsWith('-new'));
 });

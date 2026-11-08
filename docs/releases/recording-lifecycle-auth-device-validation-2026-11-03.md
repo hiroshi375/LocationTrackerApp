@@ -432,3 +432,17 @@ S1完了後、各OSを1台ずつ実施する。OS再起動は通常版にも影�
 Ⅲ-④はS1両OS、R1両OS、SAVE_REQUESTED中のUI誤破棄拒否の実機証拠、非NULL継続/上限情報を持つ保存再試行の境界回帰を点検する。既存保存記録を実際に破棄する試験は行わない。Androidの過去起動即終了は今回非再現で原因未特定。iOS SceneのURL/背景起動等と記録中OS再起動はⅥ・Ⅶにも残す。
 
 製品コード/テスト/検証文書と、私有診断原本・認証情報・故障注入resolver・隔離Nativeプロジェクトを分離する。今回Gitへ私有領域や未確認の重複ファイルを追加しない。全体2/10（20%）、Ⅲ3/4（75%）を維持。
+
+
+## 2026-11-08 Ⅲ最終点検・完了
+
+両OSの共有継続試験は、記録だけ停止・保存後も専用閲覧側1人への共有を継続し、90秒ロック後も記録非再開・保存表示不変を実機確認。Androidは62.486秒/2.8202688319226397m/4地点、iOSは165.418秒/0m/11地点。クラウド強整合読取りで各サマリー1件、停止後測位混入0、isRecording=false/recordingSessionId=null/shareEnabled=trueを確認。停止後の共有更新はAndroid11:59:54.340/iOS12:37:13.439 JST。正確なロック区間の時刻は未取得のため、区間内の連続更新間隔は証明していない。共有停止後はクラウドisActive=false/shareEnabled=false/sharedOwners=[]。Android pending88、iOS pending46の全行hashを維持。
+
+停止状態のOS再起動：iOS123827→125805でpending46/sent12/skipped66、全pending行hash/全体hash/終了ジャーナル9件/故障イベントが一致。Android130920→131704でpending88/sent10/duplicate1/skipped60、全pending行hash/全体hash/終了ジャーナル7件/故障イベントが一致。ユーザーが通常の再起動、停止表示・既存保存時間不変・未完了表示なしを確認。原本9ファイルとSHA256一覧は私有integration/sharing-reboot-20261108へコピー保全。
+
+残る2点は既存tests/recordingSummaryPeriod.test.cjsへ2テストを追加して検証。製品ファイル追加/変更なし。
+
+1. 実画面TSXのPressable(onPress=handleDiscardSession)からdisabled式を抽出し、saveRequested=trueで無効、正常未保存時は有効、処理中は無効を確認。実際の破棄ハンドラーを抽出・実行し、UI呼出しを迂回したケースでもprepareDiscard拒否からキュー/サーバー削除へ到達しないことを確認。ライフサイクルの実ストア検査でもSAVE_REQUESTEDの破棄拒否・再起動保持・正常未保存破棄を確認。ハンドラー検査の依存先はmock、実ストア検査は別テスト。実機で未知状態の破棄ボタンを押したとの主張はしない。
+2. 実upsertRecordingSessionSummaryを実行し、非NULLのlastContinuationConfirmedAt/confirmationCount=2/autoStoppedAt/autoStopReasonを持つ既存サマリーについて、継続タイムアウトと無料上限停止の2ケースを各2回保存再試行。ID・開始停止・4項目を保持、既存入力不変・GPS更新なしを確認。クライアントモデル境界の自動回帰であり、非NULLケースをクラウドへ書いた試験ではない。
+
+関連44テスト（recordingLifecycle、serverSessionLifecycle、recordingStopFailure、recordingSummaryPeriod）とtsc --noEmit成功。実機の両OS保存/破棄/復旧/共有/停止状態OS再起動と自動境界検査を合わせⅢを完了とする。実機押下・隔離クラウド非NULLデータでの追加E2EはⅦの出荷回帰候補として区別し、未実施を隠さない。記録中OS再起動・長時間背景起動・SceneのURL等はⅥ/Ⅶ。Android静置異常距離はⅣ/Ⅴで未解決。全体3/10（30%）、Ⅲ4/4（100%）。ビルド/配信/端末データ変更なし。

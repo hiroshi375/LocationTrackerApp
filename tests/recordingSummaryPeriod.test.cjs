@@ -136,3 +136,50 @@ test("actual map ignores an old session summary and falls back when a legacy sum
 test("actual live map keeps using current time rather than a saved summary end",()=>{
     assert.equal(mapDurationFixture({recordingSessionId:"current",startedAt:"2026-11-07T14:48:30.664Z",endedAt:"2026-11-07T14:48:31Z"},true).activityDurationSeconds,62);
 });
+
+test('save-response retry preserves non-null continuation and auto-stop metadata without options', async () => {
+    for (const reason of ['CONTINUATION_TIMEOUT', 'FREE_PLAN_DURATION_LIMIT']) {
+        const existing = { id: 'saved', userId: 'A', recordingSessionId: 's',
+            startedAt: '2026-10-31T14:00:00Z', endedAt: '2026-10-31T16:00:00Z',
+            lastContinuationConfirmedAt: '2026-10-31T15:00:00Z', continuationConfirmationCount: 2,
+            autoStoppedAt: '2026-10-31T16:00:00Z', autoStopReason: reason };
+        const before = structuredClone(existing), f = fixture(existing, false, false, { state: 'SAVE_REQUESTED' });
+        await f.save(); await f.save();
+        for (const write of f.writes) for (const key of ['id','startedAt','endedAt','lastContinuationConfirmedAt','continuationConfirmationCount','autoStoppedAt','autoStopReason'])
+            assert.equal(write[key], existing[key], `${reason}: ${key}`);
+        assert.deepEqual(existing, before); assert.equal(f.logWrites.length, 0);
+    }
+});
+
+test('actual discard UI disables unknown-save action and forced handler cannot reach queue/server deletion', async () => {
+    const source = fs.readFileSync('src/screens/LocationHomeScreen.tsx', 'utf8');
+    const tree = ts.createSourceFile('home.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let handler, disabled;
+    function visit(node) {
+        if (ts.isVariableDeclaration(node) && node.name.getText(tree) === 'handleDiscardSession') handler = node.initializer.getText(tree);
+        if (ts.isJsxOpeningElement(node)) {
+            const attrs = node.attributes.properties;
+            if (attrs.some(a => a.name?.getText(tree) === 'onPress' && a.initializer?.expression?.getText(tree) === 'handleDiscardSession'))
+                disabled = attrs.find(a => a.name?.getText(tree) === 'disabled')?.initializer.expression.getText(tree);
+        }
+        ts.forEachChild(node, visit);
+    }
+    visit(tree); assert.ok(handler); assert.ok(disabled);
+    const isDisabled = new Function('savingSessionName','saveRequested',`return ${disabled}`);
+    assert.equal(isDisabled(false,true),true); assert.equal(isDisabled(false,false),false); assert.equal(isDisabled(true,false),true);
+    const calls = [], alerts = [];
+    const env = { pendingSessionId:'s', savingSessionName:false, sessionNameMutationRef:{current:false},
+        Keyboard:{dismiss(){}}, setSavingSessionName(){}, getCurrentUser:async()=>({userId:'A'}),
+        ensureSessionStopped:async()=>{}, pendingRecordingIntervalMs:30000, recordIntervalMs:30000,
+        pendingRecordingDistanceMeters:50, recordDistanceMeters:50, pendingSessionShareOwnerValues:[],
+        hasSessionSummary:async()=>false,
+        recordingLifecycle:{prepareDiscard:async()=>{calls.push('fence');throw Error('SAVE_REQUESTED: discard rejected');}},
+        requestLocationQueueSessionDiscard:async()=>{calls.push('queue-delete');},
+        client:{mutations:{discardRecordingSession:async()=>{calls.push('server-delete');}}},
+        Alert:{alert:(...args)=>alerts.push(args)}, console:{error(){}},
+    };
+    const code = ts.transpileModule(`const extracted = ${handler};`, {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+    const invoke = new Function(...Object.keys(env), code+';return extracted;')(...Object.values(env));
+    await invoke(); assert.deepEqual(calls,['fence']); assert.equal(alerts.length,1);
+    assert.match(alerts[0][1],/SAVE_REQUESTED/); assert.equal(env.sessionNameMutationRef.current,false);
+});

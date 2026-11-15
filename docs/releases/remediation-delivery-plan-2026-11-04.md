@@ -93,3 +93,14 @@ Native付き静置（漂流/大きな飛び）は距離10m以内を数値合格�
 ## 2026-11-15 正常移動Native実測を取得
 
 検証104で背景（時計アプリ表示）の8分21秒をSAVED、20保存点/103Native点・Native速度/速度精度103/103を取得。元pending88は11/10と全行hash不変。診断保護3/4、内部seq欠落0。K90候補は176.867mを100%維持、L90速度必須は全体98.5%でも低速区間19.674→7.020mへ縮むため現条件は不可。Kも区間外受信を切った往復では76.7%となり、境界・短記録の安全性は未確定。全入力距離維持と実距離精度は別。送信済み等のSQLite件数は減っており、全データ不変とは呼ばない。詳細は原因監査へ追記。製品変更・ビルド・配信なし。Ⅳ条件検討継続、全体3/10（30%）。
+
+
+## 2026-11-15 検証104のPlay課金商品登録・RevenueCat照合
+
+10秒/10mのNative正常移動対照に必要なPremium購入検証の準備として、ユーザー承認の範囲で検証104専用のPlayアプリ（com.hiroshisato.locationtrackerapp.incident104、Play app 4973931142994901669）を作成。ライセンステスターを設定し、RevenueCatの検証104専用Playアプリ appd774c607e4 に既存サービスアカウントJSONを保存した。通常版の商品・認証設定は変更していない。
+
+ローカルAAB 10440を専用アップロード鍵で署名し、パッケージ/ビルド番号/BILLING権限/非debuggable/OTA無効/隔離認証・API接続/本番接続先不在を検査。初回のデバッグ署名はアップロード前に検出し、私有Gradle設定のfinalizeDslで修正・再生成した。最終AAB SHA-256は8d910d8e2a7df1b817d28f5bce64f71667ad54800d6b0842ef0fd2bb159aad20。内部テストの10440-incident104-registration-draftとして「変更を保存しました」を確認。未公開下書きのみで、配信・端末上書き・EAS・OTAは行っていない。鍵と詳細検査記録は.amplify配下の私有ファイルに保持し、Gitには含めない。
+
+Playの買い切り商品premium_lifetimeを検証104へ作成。名前AcLog Fit 検証104 PREMIUM、購入オプションstandard、日本のみJPY100、有効・下位互換あり・複数数量OFFを確認。通常版の日本JPY100を読み取り参照した。RevenueCat商品prod87c2cce4f8はNon-consumable、Store Status Published（商品の状態でありアプリ配信ではない）、利用権限premium、Offering defaultへ対応。Pull from store後のPricingでJPY100/Japanと更新時刻を確認した。
+
+RevenueCat認証再検査は、in-app product catalogとsubscription catalog/base plansの読み取りに成功する一方、subscription purchases検査に「No application was found for the given package name」が残る。商品取得成功と購入検証成功を区別し、認証総合合格・購入可能とは断定しない。現端末10440は旧RevenueCat公開SDKキーのままなので、検証専用キーを使うローカル更新と実購入テストは別途必要。端末データ保持のためPlay用アップロード署名AABを端末に上書きしない。購入・配信は未実施。Ⅳ対応中、全体3/10（30%）を維持する。

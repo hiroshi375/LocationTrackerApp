@@ -1,3 +1,5 @@
+import * as Application from "expo-application";
+import { recordingRouteReceipts } from "./recordingRouteReceiptService";
 import { simplifiedLocationValidationEnabled } from "./simplifiedLocationValidationService";
 import { Platform } from "react-native";
 import { observeLocationDecision } from "./locationDecisionDiagnosticService";
@@ -14,6 +16,9 @@ type InboxModule = {
     discardAcLogMotionEvidenceAsync?: (userId: string, sessionId: string) => Promise<void>;
     deleteAcLogRecordingInboxOwnerAsync: (userId: string) => Promise<void>;
 };
+
+const hasProductionRouteReceipts = Platform.OS === "android"
+    && Application.applicationId === "com.hiroshisato.locationtrackerapp";
 
 function inboxModule(): InboxModule | null {
     if (Platform.OS !== "android") return null;
@@ -48,8 +53,14 @@ export async function receiveNativeRecordingInbox(serialized: string, upload = t
                 intervalMs: context.intervalMs, distanceMeters: context.distanceMeters,
             }));
             const { enqueueLocationBatchForAudit } = await import("./locationLocationQueueService");
-            return enqueueLocationBatchForAudit({ userId: context.userId, recordingSessionId: context.recordingSessionId,
+            const queued = await enqueueLocationBatchForAudit({ userId: context.userId, recordingSessionId: context.recordingSessionId,
                 source: "background", locations: rows.map(r => r.location as LocationObject), receivedAt: new Date().toISOString() });
+            if (hasProductionRouteReceipts && queued.invalidCount === 0
+                && queued.receivedCount === rows.length && queued.insertedCount + queued.duplicateCount === rows.length) {
+                try { await recordingRouteReceipts.append({ context, rows }); }
+                catch { console.warn("Recording route receipts could not be saved"); }
+            }
+            return queued;
         },
         acknowledge: (context, ids) => native.ackAcLogRecordingInboxAsync(context.userId, context.recordingSessionId, ids),
     });
@@ -86,9 +97,11 @@ export async function resumeNativeRecordingInbox(userId: string, sessionId: stri
 
 export async function deleteNativeRecordingInboxForAccount(userId: string): Promise<void> {
     await inboxModule()?.deleteAcLogRecordingInboxOwnerAsync(userId);
+    if (hasProductionRouteReceipts) await recordingRouteReceipts.removeOwner(userId);
 }
 
 /** Compatibility cleanup for diagnostic rows left by older native builds. Also seals late receipts. */
 export async function discardNativeQualityEvidence(userId: string, sessionId: string): Promise<void> {
     await inboxModule()?.discardAcLogMotionEvidenceAsync?.(userId, sessionId);
+    if (hasProductionRouteReceipts) await recordingRouteReceipts.removeSession(userId, sessionId);
 }

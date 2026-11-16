@@ -400,11 +400,14 @@ diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/locat
      val size = mDeferredLocations.size
      var lastLocation = if (size > 0) mDeferredLocations[size - 1] else mLastReportedLocation
      for (location in locations) {
-@@ -252,11 +277,31 @@
+@@ -252,11 +277,34 @@
        // so only one location at the specific timestamp can schedule a job.
        if (timestamp > sLastTimestamp) {
          val bundle = LocationResponse(location).toBundle(PersistableBundle::class.java)
-+
++        if (context.packageName == "com.hiroshisato.locationtrackerapp" && mTask?.options?.get("aclogRecordingContext") is String) {
++          if (location.hasAccuracy()) bundle.putDouble("aclogRouteAccuracy", location.accuracy.toDouble())
++          if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O && location.hasSpeed() && location.hasSpeedAccuracy()) bundle.putDouble("aclogRouteSpeed", location.speed.toDouble())
++        }
          data.add(bundle)
          sLastTimestamp = timestamp
        }
@@ -432,7 +435,7 @@ diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/locat
        // Save last reported location, reset the distance and clear a list of locations.
        mLastReportedLocation = mDeferredLocations[mDeferredLocations.size - 1]
        mDeferredDistance = 0.0
-@@ -264,6 +309,61 @@
+@@ -264,6 +312,61 @@
  
        // Schedule new job.
        taskManagerUtils.scheduleJob(context, mTask, data)

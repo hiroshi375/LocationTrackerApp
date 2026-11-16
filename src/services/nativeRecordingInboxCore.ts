@@ -5,7 +5,13 @@ export type RecordingDeliveryContext = {
     intervalMs: number;
     distanceMeters: number;
 };
-type InboxLocation = { timestamp: number; coords: { latitude: number; longitude: number } };
+type InboxLocation = {
+    timestamp: number;
+    coords: { latitude: number; longitude: number };
+    mocked?: boolean;
+    aclogRouteAccuracy?: number;
+    aclogRouteSpeed?: number;
+};
 export type RecordingInboxBatch = { context: RecordingDeliveryContext; rows: { id: number; location: InboxLocation }[] };
 
 export function matchesRecordingReceipt(location: { timestamp: number; aclogOwner?: string; aclogSessionId?: string },

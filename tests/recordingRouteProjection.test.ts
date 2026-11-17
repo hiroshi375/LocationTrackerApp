@@ -32,3 +32,11 @@ test("stopping while moving retains the last point and excludes post-stop fixes"
     assert.equal(result.route.at(-1), receipts[4]);
     assert.ok(result.route.every(p => p.recordedAtMs <= 22_000));
 });
+
+test("short low-speed reversals retain movement with a small end-to-end displacement", () => {
+    const receipts = [point(0, 0, 0.4), point(5, 2.7, 0.4), point(10, 0, 0.4), point(15, 2.7, 0.4), point(20, 2.2, 0.4)];
+    const recorded = [receipts[0], receipts[4]];
+    const result = projectRecordingRoute(recorded, receipts, { startedAtMs: 0, observedThroughMs: 21_000, stoppedAtMs: 21_000 });
+    assert.deepEqual(result.route, recorded);
+    assert.ok(Math.abs(result.distanceMeters - 2.2) < 0.01);
+});

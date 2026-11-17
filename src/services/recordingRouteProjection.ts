@@ -21,7 +21,7 @@ function hasMovement(points: RecordingRoutePoint[]) {
     const accuracy = median(points.map(p => p.accuracy!));
     const net = distance(points[0], points.at(-1)!);
     const length = points.reduce((sum, p, i) => i ? sum + distance(points[i - 1], p) : sum, 0);
-    return accuracy <= 25 && net >= Math.max(3, accuracy) && length > 0 && net / length >= 0.30
+    return accuracy <= 25 && net >= Math.max(2, accuracy * 0.65) && length > 0 && net / length >= 0.20
         && points.filter(p => p.speed !== null && p.speed >= 0.20).length / points.length >= 0.30;
 }
 

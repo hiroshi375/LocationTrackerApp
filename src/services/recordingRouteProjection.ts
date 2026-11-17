@@ -25,6 +25,12 @@ function hasMovement(points: RecordingRoutePoint[]) {
         && points.filter(p => p.speed !== null && p.speed >= 0.20).length / points.length >= 0.30;
 }
 
+function hasStationarySpeed(points: RecordingRoutePoint[]) {
+    return points.length >= 3 && points.at(-1)!.recordedAtMs - points[0].recordedAtMs >= 8000
+        && points.every((point, index) => point.speed !== null && point.speed >= 0 && point.speed < 0.20
+            && (index === 0 || point.recordedAtMs - points[index - 1].recordedAtMs <= 7500));
+}
+
 function shiftedAtStop(point: RecordingRoutePoint, before: RecordingRoutePoint[]) {
     if (before.length < 4 || point.accuracy === null || point.recordedAtMs - before[0].recordedAtMs < 12000) return false;
     if (before.some((p, i) => p.speed === null || p.speed >= 0.20
@@ -54,9 +60,24 @@ export function projectRecordingRoute(saved: readonly RecordingRoutePoint[], rec
         const p = native[index];
         const tail = end - p.recordedAtMs < WINDOW_MS;
         const window = native.slice(Math.max(0, index - HALF_OUTLIER_WINDOW), index + HALF_OUTLIER_WINDOW + 1);
-        if (boundary.stoppedAtMs === undefined && (tail || native.length - index - 1 < HALF_OUTLIER_WINDOW)) {
-            decisions.push({ point, decision: "waiting-for-following-fixes" });
-            continue;
+        let first = index;
+        while (first > 0 && p.recordedAtMs - native[first - 1].recordedAtMs <= WINDOW_MS) first--;
+        const before = native.slice(first, index + 1);
+        let last = index;
+        while (last + 1 < native.length && native[last + 1].recordedAtMs - p.recordedAtMs <= WINDOW_MS) last++;
+        const after = native.slice(index, last + 1);
+        const released = hasMovement(before) || (!tail && hasMovement(after));
+        if (boundary.stoppedAtMs === undefined) {
+            // A sustained stationary speed can corroborate a drift even when the coordinates move.
+            if (basicPredecessor && (hasStationarySpeed(before) || (!tail && hasStationarySpeed(after)))) {
+                decisions.push({ point, decision: "held" });
+                continue;
+            }
+            const stationaryAnchor = index === 0 && hasStationarySpeed(after);
+            if (tail || (native.length - index - 1 < HALF_OUTLIER_WINDOW && !released && !stationaryAnchor)) {
+                decisions.push({ point, decision: "waiting-for-following-fixes" });
+                continue;
+            }
         }
         const center = medoid(window);
         const radii = window.map(q => distance(center, q));
@@ -65,12 +86,6 @@ export function projectRecordingRoute(saved: readonly RecordingRoutePoint[], rec
         const basic = allowed && (!basicPredecessor || basicPredecessor.accuracy === null || p.accuracy === null
             || distance(basicPredecessor, p) > Math.min(25, Math.max(5, (basicPredecessor.accuracy + p.accuracy) / 2)));
         if (basic) basicPredecessor = p;
-        let first = index;
-        while (first > 0 && p.recordedAtMs - native[first - 1].recordedAtMs <= WINDOW_MS) first--;
-        const before = native.slice(first, index + 1);
-        let last = index;
-        while (last + 1 < native.length && native[last + 1].recordedAtMs - p.recordedAtMs <= WINDOW_MS) last++;
-        const released = hasMovement(before) || (!tail && hasMovement(native.slice(index, last + 1)));
         const decision = !basic && !released ? "held"
             : boundary.stoppedAtMs !== undefined && tail && shiftedAtStop(p, before) ? "held-at-stop" : "kept";
         decisions.push({ point, decision });

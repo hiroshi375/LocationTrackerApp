@@ -8,13 +8,13 @@ const log = (point: ReturnType<typeof fix>, id: string) =>
     Object.freeze({ ...point, recordedAt: new Date(point.recordedAtMs).toISOString(), id });
 
 test("map line and distance wait together for follow-up fixes", () => {
-    const points = Array.from({ length: 15 }, (_, i) => fix(i * 5, i * 3, 0.6));
-    const logs = [log(points[0], "start"), log(points[1], "moving")];
-    const early = buildRecordingMapRoute(logs, recordingMapEvidence(0, points.slice(0, 4))!, logs);
-    assert.deepEqual(early, { logs: [], distanceMeters: 0 });
+    const points = Array.from({ length: 11 }, (_, i) => fix(i * 5, i * 9, 1.8));
+    const logs = [log(points[0], "start"), log(points[6], "moving")];
+    const early = buildRecordingMapRoute(logs, recordingMapEvidence(0, points.slice(0, 10))!, logs);
+    assert.deepEqual(early, { logs: [logs[0]], distanceMeters: 0 });
     const later = buildRecordingMapRoute(logs, recordingMapEvidence(0, points)!, logs);
     assert.deepEqual(later?.logs, logs);
-    assert.ok(Math.abs(later!.distanceMeters - 3) < 0.01);
+    assert.ok(Math.abs(later!.distanceMeters - 54) < 0.01);
 });
 
 test("saved route holds a terminal shift without modifying the original and reports both displayed amounts", () => {
@@ -38,4 +38,17 @@ test("old and incomplete recordings fall back, and unmatched points keep the ori
     assert.equal(buildRecordingMapRoute([unmatched], evidence, []), null);
     assert.deepEqual(buildRecordingMapRoute([matching, unmatched], evidence, [matching])?.logs, [matching]);
     assert.deepEqual(buildRecordingMapRoute([matching, unmatched], evidence, [matching, unmatched])?.logs, [matching, unmatched]);
+});
+
+test("live distance stays flat during a sustained stationary coordinate drift", () => {
+    const points = Array.from({ length: 31 }, (_, i) => i < 6
+        ? fix(i * 5, i * 10, 2)
+        : fix(i * 5, 50 + (i - 5) * 8, 0.05));
+    const logs = [0, 5, 6, 10, 15, 20, 25].map(i => log(points[i], String(i)));
+    for (const receiptCount of [16, 21, 26, 31]) {
+        const result = buildRecordingMapRoute(logs.filter(item => item.recordedAtMs <= points[receiptCount - 1].recordedAtMs),
+            recordingMapEvidence(0, points.slice(0, receiptCount))!, logs);
+        assert.deepEqual(result?.logs, logs.slice(0, 2));
+        assert.ok(Math.abs(result!.distanceMeters - 50) < 0.01);
+    }
 });

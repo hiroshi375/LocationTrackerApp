@@ -1,5 +1,6 @@
 import { useRecordingMapEvidence } from "../hooks/useRecordingMapEvidence";
 import { buildRecordingMapRoute, changedRecordingMapDistance } from "../services/recordingMapRoute";
+import { getCurrentUserProfile } from "../services/userProfileService";
 import { watchLiveLocations } from "../services/liveLocationReadService";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useIsFocused } from "@react-navigation/native";
@@ -326,6 +327,19 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         isOwnLiveRecordingMap,
         isFocused,
     );
+    const [canCompareDistances, setCanCompareDistances] = useState(false);
+    useFocusEffect(useCallback(() => {
+        setCanCompareDistances(false);
+        if (!isActivityHistoryMap || !routeEvidence) return;
+        let active = true;
+        void getCurrentUserProfile().then(profile => {
+            if (active) setCanCompareDistances(profile?.role === "admin");
+        }).catch(() => {
+            if (active) setCanCompareDistances(false);
+        });
+        return () => { active = false; };
+    }, [isActivityHistoryMap, routeEvidence]));
+
     const displayedSessionRoute = useMemo(() => {
         if (!routeEvidence) return null;
         const sessionLogs = logs.filter(log => log.recordingSessionId === activeSessionId);
@@ -2007,7 +2021,6 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         routeLogs.length > 0 ? routeLogs[routeLogs.length - 1] : null;
 
     const currentLocationLineCoordinates =
-        !displayedSessionRoute &&
         isLiveRecordingMap &&
         !isSharedCurrentLocationOnlyMap &&
         latestRecordedLog &&
@@ -2176,7 +2189,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
           ? recordingSessionSummary.distanceMeters
           : (routeDistanceMeters ?? 0));
 
-    const savedDistanceComparison = isActivityHistoryMap && displayedSessionRoute
+    const savedDistanceComparison = canCompareDistances && isActivityHistoryMap && displayedSessionRoute
         ? changedRecordingMapDistance(
               recordingSessionSummary?.recordingSessionId === activeSessionId
                   ? recordingSessionSummary.distanceMeters

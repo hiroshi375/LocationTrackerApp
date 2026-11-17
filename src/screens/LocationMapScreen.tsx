@@ -1,3 +1,5 @@
+import { useRecordingMapEvidence } from "../hooks/useRecordingMapEvidence";
+import { buildRecordingMapRoute, changedRecordingMapDistance } from "../services/recordingMapRoute";
 import { watchLiveLocations } from "../services/liveLocationReadService";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useIsFocused } from "@react-navigation/native";
@@ -8,7 +10,7 @@ import { getUrl } from "aws-amplify/storage";
 import Constants from "expo-constants";
 import * as Location from "expo-location";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -319,6 +321,17 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         !isSharedLiveLocationMap,
     );
 
+    const routeEvidence = useRecordingMapEvidence(
+        !isSampleActivity && !isSharedActivityHistory && (isOwnLiveRecordingMap || isActivityHistoryMap) ? activeSessionId : null,
+        isOwnLiveRecordingMap,
+        isFocused,
+    );
+    const displayedSessionRoute = useMemo(() => {
+        if (!routeEvidence) return null;
+        const sessionLogs = logs.filter(log => log.recordingSessionId === activeSessionId);
+        return buildRecordingMapRoute(sessionLogs, routeEvidence, buildRouteLogs(sessionLogs));
+    }, [activeSessionId, logs, routeEvidence]);
+
     /*
      * 自分の自動記録中とアクティビティ履歴では、
      * 共通のアクティビティ地図UIを使用する。
@@ -424,7 +437,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         const currentMap = mapRef.current;
 
         const sessionRouteLogs = activeSessionId
-            ? buildRouteLogs(
+            ? displayedSessionRoute?.logs ?? buildRouteLogs(
                   logs.filter(
                       (log) => log.recordingSessionId === activeSessionId,
                   ),
@@ -495,6 +508,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             );
         }
     }, [
+        displayedSessionRoute,
         mapReady,
         isMapVisible,
         isSharedCurrentLocationOnlyMap,
@@ -1477,7 +1491,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         }
 
         const routeLogsForOverview = activeSessionId
-            ? buildRouteLogs(
+            ? displayedSessionRoute?.logs ?? buildRouteLogs(
                   logs.filter(
                       (log) => log.recordingSessionId === activeSessionId,
                   ),
@@ -1531,6 +1545,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             clearTimeout(timerId);
         };
     }, [
+        displayedSessionRoute,
         hasLoadedMapPreferences,
         mapReady,
         isLiveRecordingMap,
@@ -1572,7 +1587,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             return;
         }
 
-        const sessionRouteLogs = buildRouteLogs(
+        const sessionRouteLogs = displayedSessionRoute?.logs ?? buildRouteLogs(
             logs.filter((log) => log.recordingSessionId === activeSessionId),
         );
 
@@ -1617,6 +1632,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
             clearTimeout(timerId);
         };
     }, [
+        displayedSessionRoute,
         hasLoadedMapPreferences,
         routeViewMode,
         mapReady,
@@ -1901,7 +1917,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         startTour,
     ]);
 
-    if (!hasLoaded || loading) {
+    if (!hasLoaded || loading || routeEvidence === undefined) {
         return (
             <View style={styles.center}>
                 <ActivityIndicator />
@@ -1931,7 +1947,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
 
     const isSelectedMode = selectedLocation !== null;
 
-    const routeLogs = buildRouteLogs(visibleLogs);
+    const routeLogs = displayedSessionRoute?.logs ?? buildRouteLogs(visibleLogs);
 
     /*
      * 編集一覧ではbuildRouteLogs()を使わない。
@@ -1991,6 +2007,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
         routeLogs.length > 0 ? routeLogs[routeLogs.length - 1] : null;
 
     const currentLocationLineCoordinates =
+        !displayedSessionRoute &&
         isLiveRecordingMap &&
         !isSharedCurrentLocationOnlyMap &&
         latestRecordedLog &&
@@ -2080,13 +2097,14 @@ export default function LocationMapScreen({ route, navigation }: Props) {
     const routeFitButtonText =
         routeViewMode === "route" ? "現在地を表示" : "ルート全体を表示";
 
-    const routeDistanceMeters =
+    const routeDistanceMeters = displayedSessionRoute?.distanceMeters ?? (
         activeSessionId && routeLogs.length >= 2
             ? calculateRouteDistanceMeters(routeLogs)
-            : null;
+            : null);
 
-    const displayDistanceText =
-        typeof recordingSessionSummary?.distanceMeters === "number"
+    const displayDistanceText = displayedSessionRoute
+        ? formatDistance(displayedSessionRoute.distanceMeters)
+        : typeof recordingSessionSummary?.distanceMeters === "number"
             ? formatDistance(recordingSessionSummary.distanceMeters)
             : routeDistanceMeters !== null
               ? formatDistance(routeDistanceMeters)
@@ -2152,11 +2170,23 @@ export default function LocationMapScreen({ route, navigation }: Props) {
      * 自動記録中:
      *   最新のLocationLogから計算した距離を優先する。
      */
-    const activityDistanceMeters = isOwnLiveRecordingMap
+    const activityDistanceMeters = displayedSessionRoute?.distanceMeters ?? (isOwnLiveRecordingMap
         ? (routeDistanceMeters ?? recordingSessionSummary?.distanceMeters ?? 0)
         : typeof recordingSessionSummary?.distanceMeters === "number"
           ? recordingSessionSummary.distanceMeters
-          : (routeDistanceMeters ?? 0);
+          : (routeDistanceMeters ?? 0));
+
+    const savedDistanceComparison = isActivityHistoryMap && displayedSessionRoute
+        ? changedRecordingMapDistance(
+              recordingSessionSummary?.recordingSessionId === activeSessionId
+                  ? recordingSessionSummary.distanceMeters
+                  : calculateRouteDistanceMeters(buildRouteLogs(visibleLogs)),
+              displayedSessionRoute.distanceMeters,
+          )
+        : null;
+    const distanceComparisonLabel = savedDistanceComparison
+        ? `変更前 ${savedDistanceComparison.before.toLocaleString("ja-JP")} m ／ 変更後 ${savedDistanceComparison.after.toLocaleString("ja-JP")} m`
+        : null;
 
     const activityDistanceMetersText = Math.round(
         activityDistanceMeters,
@@ -2550,6 +2580,9 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                                 </Text>
                             </View>
 
+                            {distanceComparisonLabel && (
+                                <Text style={styles.activityDistanceUnit}>{distanceComparisonLabel}</Text>
+                            )}
                             <View style={styles.activityStatsDivider} />
 
                             <View style={styles.activityStatsRow}>
@@ -3171,6 +3204,9 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                         </Text>
                     </View>
 
+                    {distanceComparisonLabel && (
+                        <Text style={styles.activityDistanceUnit}>{distanceComparisonLabel}</Text>
+                    )}
                     <View style={styles.activityStatsDivider} />
 
                     <View style={styles.activityStatsRow}>

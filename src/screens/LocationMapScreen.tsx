@@ -2594,7 +2594,9 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                             </View>
 
                             {distanceComparisonLabel && (
-                                <Text style={styles.activityDistanceUnit}>{distanceComparisonLabel}</Text>
+                                <Text style={styles.activityDistanceComparison}>
+                                    {distanceComparisonLabel}
+                                </Text>
                             )}
                             <View style={styles.activityStatsDivider} />
 
@@ -3218,7 +3220,9 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                     </View>
 
                     {distanceComparisonLabel && (
-                        <Text style={styles.activityDistanceUnit}>{distanceComparisonLabel}</Text>
+                        <Text style={styles.activityDistanceComparison}>
+                            {distanceComparisonLabel}
+                        </Text>
                     )}
                     <View style={styles.activityStatsDivider} />
 
@@ -4168,6 +4172,13 @@ const styles = StyleSheet.create({
     activityDistanceUnit: {
         fontSize: 21,
         fontWeight: "600",
+    },
+
+    activityDistanceComparison: {
+        alignSelf: "stretch",
+        fontSize: 14,
+        fontWeight: "600",
+        textAlign: "center",
     },
 
     activityStatsDivider: {

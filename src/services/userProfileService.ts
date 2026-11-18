@@ -337,7 +337,7 @@ export async function getCurrentUserProfile(): Promise<CurrentUserProfile> {
     };
 }
 
-async function findExistingUserProfile(
+export async function findExistingUserProfile(
     userId: string,
 ): Promise<UserProfileRecord | null> {
     const userProfileModel = client.models.UserProfile as any;

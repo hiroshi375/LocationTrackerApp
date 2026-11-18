@@ -29,6 +29,7 @@ import {
 } from "react-native";
 
 import { client } from "../lib/client";
+import { findExistingUserProfile } from "../services/userProfileService";
 import { getUnsharedHistoricalGroups, type HistoricalShareGroup } from "../services/historicalShareGroups";
 import { SAMPLE_ACTIVITY_SESSION } from "../data/sampleActivity";
 import { useSubscription } from "../hooks/useSubscription";
@@ -702,42 +703,7 @@ export default function LocationLogScreen({ navigation, route }: Props) {
 
             const currentUser = await getCurrentUser();
 
-            /*
-             * 現在ユーザーの共有用ownerValueを取得する。
-             */
-            const userProfileModel = client.models.UserProfile as any;
-
-            const profileResult = await userProfileModel.list({
-                filter: {
-                    userId: {
-                        eq: currentUser.userId,
-                    },
-                },
-                limit: 10,
-            });
-
-            if (profileResult.errors) {
-                console.error(
-                    "Current UserProfile load errors:",
-                    profileResult.errors,
-                );
-
-                Alert.alert(
-                    "取得エラー",
-                    "共有用ユーザー情報を取得できませんでした。",
-                );
-
-                return;
-            }
-
-            const currentProfile =
-                (profileResult.data ?? []).find(
-                    (profile: any) =>
-                        profile?.userId === currentUser.userId &&
-                        typeof profile?.ownerValue === "string" &&
-                        profile.ownerValue.length > 0,
-                ) ?? null;
-
+            const currentProfile = await findExistingUserProfile(currentUser.userId);
             const currentOwnerValue = currentProfile?.ownerValue ?? null;
 
             if (!currentOwnerValue) {

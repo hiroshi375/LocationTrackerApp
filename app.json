@@ -104,7 +104,8 @@
             "expo-router",
             "expo-image-picker",
             "./plugins/withImagePickerCropColors",
-            "./plugins/withIosPodDeploymentTarget"
+            "./plugins/withIosPodDeploymentTarget",
+            "./plugins/withIosSceneLifecycle"
         ],
         "extra": {
             "eas": {

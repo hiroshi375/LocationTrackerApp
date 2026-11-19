@@ -1,11 +1,35 @@
+import * as Application from "expo-application";
+import { Platform } from "react-native";
 import { recordingLifecycle } from "./recordingLifecycleService";
 import { mayReplayStoppedPoint } from "./recordingLifecycleCore";
 import { hasPendingLocationQualityReview } from "./locationQualityReviewService";
 import { client } from "../lib/client";
 import { observeLocationDecision } from "./locationDecisionDiagnosticService";
 
+let queueEvidenceReleasedOwner: string | undefined;
+
+export function isQueueEvidenceHoldBuild(): boolean {
+    return process.env.EXPO_PUBLIC_ADMIN_QUEUE_EVIDENCE === "1"
+        && Platform.OS === "ios"
+        && (Application.nativeBuildVersion === "14" || Application.nativeBuildVersion === "15")
+        && Application.applicationId === "com.hiroshisato.locationtrackerapp";
+}
+
+export function isQueueEvidenceUploadHeld(ownerId: unknown): boolean {
+    return isQueueEvidenceHoldBuild()
+        && (!queueEvidenceReleasedOwner || queueEvidenceReleasedOwner !== ownerId);
+}
+
+export function releaseQueueEvidenceUpload(ownerId: string): void {
+    if (!isQueueEvidenceHoldBuild() || !ownerId) throw new Error("送信保留は解除できません。");
+    queueEvidenceReleasedOwner = ownerId;
+}
+
 /** The server determines sharing from current grants; queued owner arrays are not authoritative. */
 export async function createLocationLog(input: Record<string, unknown>) {
+    if (isQueueEvidenceUploadHeld(input.userId)) {
+        return { data: null, errors: [{ message: "QUEUE_EVIDENCE_UPLOAD_HELD" }] };
+    }
     const { sharedOwners: _ignored, owner: _owner, ...record } = input;
     if (await hasPendingLocationQualityReview({ userId: String(record.userId ?? ""), sessionId: String(record.recordingSessionId ?? ""),
         latitude: Number(record.latitude), longitude: Number(record.longitude), recordedAtMs: Date.parse(String(record.recordedAt)) })) {

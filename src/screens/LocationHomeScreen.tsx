@@ -75,11 +75,13 @@ import {
 } from "../services/recordingSessionService";
 import {
     ensureUserProfile,
+    findExistingUserProfile,
     getCurrentUserProfile,
     updateCurrentUserAppUsage,
 } from "../services/userProfileService";
 import { createMonthKey } from "../services/userActivityAggregationService";
-import { exportHeadlessDiagnosticLog } from "../services/headlessDiagnosticExportService";
+import { exportAdminQueueEvidence, exportHeadlessDiagnosticLog, isAdminQueueEvidenceEnabled } from "../services/headlessDiagnosticExportService";
+import { isQueueEvidenceUploadHeld, releaseQueueEvidenceUpload } from "../services/locationLogWriteService";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import type { ComponentProps } from "react";
 import {
@@ -2150,6 +2152,50 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
         }
     };
 
+    const handleExportAdminQueueEvidence = async (): Promise<void> => {
+        if (!isAdmin || !isAdminQueueEvidenceEnabled() || isRecording || exportingHeadlessDiagnostic) return;
+        setExportingHeadlessDiagnostic(true);
+        try {
+            const user = await getCurrentUser();
+            const profile = await findExistingUserProfile(user.userId);
+            if (profile?.role !== "admin" || (await getCurrentUser()).userId !== user.userId) {
+                throw new Error("管理者権限を確認できませんでした。");
+            }
+            await exportAdminQueueEvidence(user.userId);
+        } catch (error) {
+            Alert.alert("未送信データ診断", error instanceof Error ? error.message : "診断を出力できませんでした。");
+        } finally {
+            setExportingHeadlessDiagnostic(false);
+        }
+    };
+
+    const handleReplayAdminQueueEvidence = async (): Promise<void> => {
+        if (!isAdmin || !isAdminQueueEvidenceEnabled() || isRecording || !pendingSessionId || discardRequested || exportingHeadlessDiagnostic) return;
+        setExportingHeadlessDiagnostic(true);
+        try {
+            const { userId } = await getCurrentUser();
+            const profile = await findExistingUserProfile(userId);
+            const receipt = await recordingLifecycle.read(userId, pendingSessionId);
+            if (profile?.role !== "admin" || (await getCurrentUser()).userId !== userId || receipt?.state !== "STOPPED") {
+                throw new Error("管理者と停止済みの対象記録を確認できませんでした。");
+            }
+            if (isQueueEvidenceUploadHeld(userId)) releaseQueueEvidenceUpload(userId);
+            const { drainLocationQueueRepeatedly } = await import("../services/locationQueueUploadService");
+            const result = await drainLocationQueueRepeatedly({
+                userId,
+                recordingSessionId: pendingSessionId,
+                intervalMs: receipt.intervalMs,
+                distanceMeters: receipt.distanceMeters,
+                forceIncludeRecent: true,
+            });
+            Alert.alert("未送信データの再送", `送信 ${result.sentCount}件、重複 ${result.duplicateCount}件、残り ${result.remainingPendingCount ?? "未確認"}件（${result.stopReason}）`);
+        } catch (error) {
+            Alert.alert("未送信データの再送", error instanceof Error ? error.message : "再送を確認できませんでした。");
+        } finally {
+            setExportingHeadlessDiagnostic(false);
+        }
+    };
+
     const handleDebugSQLiteSkipReasons = async () => {
         try {
             const recordingSessionId = "session-1786392243158-zldkkj1c";
@@ -3679,6 +3725,14 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                             disabled={isRecording}
                             backgroundColor="#27445c"
                         />
+                        {isAdminQueueEvidenceEnabled() && (
+                            <AppButton
+                                title="未送信データの比較用診断を出力"
+                                onPress={() => { void handleExportAdminQueueEvidence(); }}
+                                disabled={isRecording || exportingHeadlessDiagnostic}
+                                backgroundColor="#27445c"
+                            />
+                        )}
                         <AppButton
                             title="SQLite skip理由を確認"
                             onPress={handleDebugSQLiteSkipReasons}
@@ -3932,6 +3986,24 @@ export default function LocationHomeScreen({ navigation, route }: Props) {
                             <Text style={styles.modalDescription}>
                                 {discardRequested ? "未完了の破棄処理を再開できます。" : "この自動記録アクティビティの名前を入力してください。"}
                             </Text>
+
+                            {isAdmin && isAdminQueueEvidenceEnabled() && !discardRequested && (
+                                <View>
+                                    <AppButton
+                                        title="未送信データの比較用診断を出力"
+                                        onPress={() => { void handleExportAdminQueueEvidence(); }}
+                                        disabled={savingSessionName || exportingHeadlessDiagnostic}
+                                    />
+                                    <AppButton
+                                        title="比較採取後に送信保留を解除して再送"
+                                        onPress={() => Alert.alert("送信保留を解除", "上書き後の診断を保存しましたか？", [
+                                            { text: "キャンセル", style: "cancel" },
+                                            { text: "解除して再送", onPress: () => { void handleReplayAdminQueueEvidence(); } },
+                                        ])}
+                                        disabled={savingSessionName || exportingHeadlessDiagnostic}
+                                    />
+                                </View>
+                            )}
 
                             <TextInput
                                 style={styles.sessionNameModalInput}

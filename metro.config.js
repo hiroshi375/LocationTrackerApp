@@ -7,6 +7,13 @@ config.resolver.nodeModulesPaths = [path.resolve(__dirname, "node_modules")];
 
 config.resolver.disableHierarchicalLookup = false;
 
+// Local release evidence contains separate native projects and Pods.
+const defaultBlockList = config.resolver.blockList;
+config.resolver.blockList = [
+    ...(Array.isArray(defaultBlockList) ? defaultBlockList : [defaultBlockList]),
+    /[/\\]\.amplify[/\\](?:release-[^/\\]+|login-recording-incident-20261103)(?:[/\\]|$)/,
+];
+
 // Opt-in only for the side-by-side local incident APK. Never rewrite the
 // production outputs file or let this test bundle connect to the production API.
 if (process.env.ACLOG_ISOLATED_TEST === "incident104") {

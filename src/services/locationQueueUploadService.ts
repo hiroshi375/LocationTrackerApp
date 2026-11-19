@@ -8,7 +8,7 @@ import { acceptedLocationBaselines } from "./acceptedLocationBaselineService";
 import { observeLocationDecision } from "./locationDecisionDiagnosticService";
 import { selectAcceptedBaseline } from "./acceptedLocationBaselineCore";
 import { isAccountDeletionPending } from "./accountDeletionState";
-import { createLocationLog } from "./locationLogWriteService";
+import { createLocationLog, isQueueEvidenceUploadHeld } from "./locationLogWriteService";
 import { fetchAuthSession } from "aws-amplify/auth";
 
 import {
@@ -80,6 +80,7 @@ export type DrainLocationQueueResult = {
         | "empty"
         | "completed"
         | "alreadyRunning"
+        | "queueEvidenceUploadHeld"
         | "timeBudgetExceeded"
         | "createTimedOut"
         | "createFailed"
@@ -103,6 +104,7 @@ export type DrainLocationQueueRepeatedResult = {
         | "empty"
         | "completed"
         | "alreadyRunning"
+        | "queueEvidenceUploadHeld"
         | "timeBudgetExceeded"
         | "createTimedOut"
         | "createFailed"
@@ -195,7 +197,8 @@ export async function drainLocationQueueSafely(
      * timeout後も元のPromise自体はキャンセルされないため、
      * ロックだけを失効させると多重drainになる。
      */
-    if (await isAccountDeletionPending(input.userId) || drainQueueState) {
+    const evidenceHeld = isQueueEvidenceUploadHeld(input.userId);
+    if (evidenceHeld || await isAccountDeletionPending(input.userId) || drainQueueState) {
         return {
             pendingCount: 0,
             processedCount: 0,
@@ -205,7 +208,7 @@ export async function drainLocationQueueSafely(
             failedCount: 0,
             timedOutCount: 0,
             durationMs: 0,
-            stopReason: "alreadyRunning",
+            stopReason: evidenceHeld ? "queueEvidenceUploadHeld" : "alreadyRunning",
         };
     }
 
@@ -281,6 +284,7 @@ export async function drainLocationQueueRepeatedly(
         }
 
         if (
+            result.stopReason === "queueEvidenceUploadHeld" ||
             result.stopReason === "alreadyRunning" ||
             result.stopReason === "createFailed"
         ) {

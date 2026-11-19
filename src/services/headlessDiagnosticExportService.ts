@@ -7,6 +7,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import * as SQLite from "expo-sqlite";
 import { Sha256 } from "@aws-crypto/sha256-js";
+import { isQueueEvidenceHoldBuild, isQueueEvidenceUploadHeld } from "./locationLogWriteService";
 
 const CURRENT_FILE_NAME = "headless-native-diagnostic.log";
 
@@ -161,6 +162,75 @@ async function readTestQueueSnapshot(): Promise<string> {
             await db.closeAsync();
         }
     }
+}
+
+const queueEvidenceLimit = 10000;
+
+export function isAdminQueueEvidenceEnabled(): boolean {
+    return isQueueEvidenceHoldBuild();
+}
+
+/** The caller verifies the administrator and supplies their signed-in owner ID. */
+export async function exportAdminQueueEvidence(ownerId: string): Promise<void> {
+    if (!isAdminQueueEvidenceEnabled() || !ownerId) throw new Error("診断を利用できません。");
+    const dbName = "location-tracker.db";
+    const dbPath = SQLite.defaultDatabaseDirectory.replace(/\/$/, "") + "/" + dbName;
+    if (!(await FileSystem.getInfoAsync(dbPath.startsWith("file://") ? dbPath : `file://${dbPath}`)).exists) {
+        throw new Error("位置記録のSQLiteファイルが見つかりません。");
+    }
+
+    const db = await SQLite.openDatabaseAsync(dbName, { useNewConnection: true });
+    let rows;
+    let counts;
+    try {
+        await db.execAsync("PRAGMA query_only=ON; BEGIN DEFERRED TRANSACTION;");
+        counts = await db.getAllAsync<{ queue_status: string; count: number }>(
+            "SELECT queue_status, COUNT(*) AS count FROM location_location_queue WHERE user_id = ? GROUP BY queue_status ORDER BY queue_status",
+            ownerId,
+        );
+        rows = await db.getAllAsync<{ location_log_id: string; recording_session_id: string } & Record<string, unknown>>(
+            `SELECT location_log_id, location_unique_key, recording_session_id, source, recorded_at,
+                recorded_at_ms, received_at, latitude, longitude, accuracy, altitude,
+                altitude_accuracy, heading, speed, shared_owners_json, created_at
+            FROM location_location_queue WHERE user_id = ? AND queue_status = 'pending'
+            ORDER BY location_log_id LIMIT ?`,
+            ownerId, queueEvidenceLimit + 1,
+        );
+        await db.execAsync("COMMIT");
+    } finally {
+        await db.closeAsync();
+    }
+
+    const hash = async (value: unknown) => {
+        const digest = new Sha256();
+        digest.update(JSON.stringify(value));
+        return Array.from(await digest.digest(), byte => byte.toString(16).padStart(2, "0")).join("");
+    };
+    const complete = rows.length <= queueEvidenceLimit;
+    const pendingRows = [];
+    if (complete) {
+        for (const row of rows) {
+            const payload = Object.fromEntries(Object.keys(row).sort().map(key => [key, row[key]]));
+            pendingRows.push({
+                pointHash: await hash(row.location_log_id),
+                sessionHash: await hash(row.recording_session_id),
+                payloadHash: await hash(payload),
+            });
+        }
+    }
+
+    await shareDiagnosticText(JSON.stringify({
+        schema: "admin-queue-evidence-v1",
+        capturedAt: new Date().toISOString(),
+        version: Application.nativeApplicationVersion,
+        build: Application.nativeBuildVersion,
+        uploadHeld: isQueueEvidenceUploadHeld(ownerId),
+        ownerHash: await hash(ownerId),
+        counts,
+        complete,
+        pendingHash: complete ? await hash(pendingRows) : null,
+        pendingRows,
+    }, null, 2));
 }
 
 async function shareDiagnosticText(text: string): Promise<void> {

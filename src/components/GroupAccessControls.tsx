@@ -1,7 +1,53 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, type ComponentProps } from "react";
 import { useFocusEffect } from "@react-navigation/native";
-import { Alert, Button, Modal, ScrollView, Text, View } from "react-native";
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { client } from "../lib/client";
+
+function GroupActionButton({
+    title,
+    onPress,
+    disabled = false,
+    destructive = false,
+    icon,
+}: {
+    title: string;
+    onPress: () => void;
+    disabled?: boolean;
+    destructive?: boolean;
+    icon?: ComponentProps<typeof MaterialCommunityIcons>["name"];
+}) {
+    return (
+        <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled }}
+            disabled={disabled}
+            onPress={onPress}
+            style={({ pressed }) => [
+                styles.actionButton,
+                destructive && styles.destructiveButton,
+                pressed && !disabled && (
+                    destructive ? styles.destructivePressed : styles.actionPressed
+                ),
+                disabled && styles.disabledButton,
+            ]}
+        >
+            {icon && (
+                <MaterialCommunityIcons
+                    name={icon}
+                    size={17}
+                    color={destructive ? "#c0392b" : "#0e7185"}
+                />
+            )}
+            <Text style={[
+                styles.actionText,
+                destructive && styles.destructiveText,
+            ]}>
+                {title}
+            </Text>
+        </Pressable>
+    );
+}
 
 type Operation = {
     groupId: string;
@@ -132,13 +178,17 @@ export function GroupAccessActions({
                 </Text>
             ) : group.role === "OWNER" ? (
                 <>
-                    <Button
+                    <GroupActionButton
                         title="メンバーを除外"
+                        destructive
+                        icon="account-minus-outline"
                         disabled={working}
                         onPress={() => setChoosingMember(true)}
                     />
-                    <Button
+                    <GroupActionButton
                         title="グループを無効化"
+                        destructive
+                        icon="account-group-outline"
                         disabled={working}
                         onPress={() =>
                             confirm(
@@ -149,8 +199,10 @@ export function GroupAccessActions({
                     />
                 </>
             ) : (
-                <Button
+                <GroupActionButton
                     title="このグループから脱退"
+                    destructive
+                    icon="exit-to-app"
                     disabled={working}
                     onPress={() =>
                         confirm("グループから脱退", "leaveShareGroup")
@@ -196,7 +248,7 @@ export function GroupAccessActions({
                                         key={member!.userId}
                                         style={{ marginVertical: 8 }}
                                     >
-                                        <Button
+                                        <GroupActionButton
                                             title={
                                                 member!.displayName ||
                                                 member!.userId
@@ -213,7 +265,7 @@ export function GroupAccessActions({
                                     </View>
                                 ))}
                         </ScrollView>
-                        <Button
+                        <GroupActionButton
                             title="キャンセル"
                             disabled={working}
                             onPress={() => setChoosingMember(false)}
@@ -310,7 +362,7 @@ export function GroupAccessOperationsPanel({
                     <Text>
                         共有権限の処理状況を取得できません。完了したかは未確認です。
                     </Text>
-                    <Button
+                    <GroupActionButton
                         title="処理状況を再取得"
                         onPress={() => {
                             void refresh();
@@ -357,7 +409,7 @@ export function GroupAccessOperationsPanel({
                                 )}
                             </Text>
                             {!op.message?.startsWith("NEEDS_MIGRATION") && (
-                                <Button
+                                <GroupActionButton
                                     title="処理を再開"
                                     onPress={() => {
                                         void operate(
@@ -373,7 +425,7 @@ export function GroupAccessOperationsPanel({
                                 </Text>
                             )}
                             {op.canCancel && (
-                                <Button
+                                <GroupActionButton
                                     title="失効開始前の処理を取り消す"
                                     onPress={() => {
                                         void operate(
@@ -390,3 +442,42 @@ export function GroupAccessOperationsPanel({
         </View>
     );
 }
+
+const styles = StyleSheet.create({
+    actionButton: {
+        minHeight: 40,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 5,
+        borderWidth: 1,
+        borderColor: "#b7d4dc",
+        borderRadius: 9,
+        backgroundColor: "#ffffff",
+    },
+    actionText: {
+        flexShrink: 1,
+        textAlign: "center",
+        color: "#0e7185",
+        fontSize: 11,
+        fontWeight: "700",
+    },
+    actionPressed: {
+        backgroundColor: "#edf7f9",
+    },
+    destructiveButton: {
+        borderColor: "#e3b9b5",
+        backgroundColor: "#fff8f7",
+    },
+    destructiveText: {
+        color: "#c0392b",
+    },
+    destructivePressed: {
+        backgroundColor: "#fdeceb",
+    },
+    disabledButton: {
+        opacity: 0.45,
+    },
+});

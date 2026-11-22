@@ -1,6 +1,6 @@
 # AcLog Fit 本番バックアップ計画・反映／復旧手順
 
-状態: 2026-11-22 本番反映済み。変更前12件AVAILABLE、PITR10件35日、日次12件35日、初回12件COMPLETED。隔離復元12件とPITR UserProfile復元が成功。SNS購読確認・TESTメール到達は確認済み。最初の定時実行は未確認。
+状態: 2026-11-22 本番反映済み。変更前12件AVAILABLE、PITR10件35日、日次12件35日、初回12件COMPLETED。隔離復元12件とPITR UserProfile復元が成功。SNS購読確認・TESTメール到達は確認済み。2026-11-23 03:00 JSTの定時12件がすべてCOMPLETED・35日保持であることを照合し、導入完了。
 
 ## 対象・構成
 
@@ -141,3 +141,10 @@ PYTHONDONTWRITEBYTECODE=1 python3 tests/test_backup_plan.py -v
 ## 本番15テーブルの取得時点統計
 
 2026-11-22 10:11 JSTに全15テーブルをConsistentRead/COUNTで全件走査し、全件ACTIVEを確認。複数テーブルの同一瞬間のスナップショットではない。容量はDescribeTableの遅延統計値（TableSizeBytes・各IndexSizeBytes）。詳細は証跡ディレクトリのproduction-table-counts-current.json/.csv。
+
+## 2026-11-23 定時実行の最終確認・導入完了
+
+- 03:00 JST作成の異なる12対象すべてをPlanId 3277033c-bed3-4393-9e4a-b3417cac84ae、RuleId f089aea6-a06d-485e-84a3-84005241142bで照合。手動取得分ではなくDaily0300JSTによる取得と確認。
+- 12ジョブすべてCOMPLETED。各RecoveryPointもCOMPLETED、ResourceArn一致、Lifecycle.DeleteAfterDays=35、CalculatedLifecycle.DeleteAt設定済み。
+- 完了時刻は03:14:44〜03:24:45 JST。PITR重要10件のENABLED/35日と復旧可能時刻、SNS購読確認済みも再確認。
+- 証跡: scheduled-verification-20261123.json（既存証跡ディレクトリ）。全導入工程を完了とする。今後は日次欠落確認、費用確認、保持期限到達後の世代削除確認を通常運用として継続する。

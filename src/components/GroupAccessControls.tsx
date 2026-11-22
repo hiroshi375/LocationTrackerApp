@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState, type ComponentProps } from "react";
 import { useFocusEffect } from "@react-navigation/native";
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { client } from "../lib/client";
 
@@ -85,6 +85,7 @@ type Group = {
               userId: string;
               role: string;
               displayName?: string | null;
+              iconImagePath?: string | null;
           } | null)[]
         | null;
 };
@@ -102,14 +103,26 @@ async function action(name: string, args: object): Promise<Operation> {
 }
 export function GroupAccessActions({
     group,
+    memberIconUrls = {},
     onChanged,
 }: {
     group: Group;
+    memberIconUrls?: Record<string, string>;
     onChanged: () => Promise<void>;
 }) {
     const busy = useRef(false);
     const [working, setWorking] = useState(false);
     const [choosingMember, setChoosingMember] = useState(false);
+    const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
+    const removableMembers = (group.members ?? []).filter(
+        (member): member is NonNullable<typeof member> => !!member && member.role !== "OWNER",
+    );
+    const selectedMember = removableMembers.find(member => member.userId === selectedMemberId);
+    const closeMemberPicker = () => {
+        if (working) return;
+        setChoosingMember(false);
+        setSelectedMemberId(null);
+    };
     const requestIds = useRef<Record<string, string>>({});
     const submit = async (name: string, targetUserId?: string) => {
         if (busy.current || group.operationId) return;
@@ -154,6 +167,7 @@ export function GroupAccessActions({
             busy.current = false;
             setWorking(false);
             setChoosingMember(false);
+            setSelectedMemberId(null);
         }
     };
     const confirm = (title: string, name: string, targetUserId?: string) =>
@@ -183,7 +197,7 @@ export function GroupAccessActions({
                         destructive
                         icon="account-minus-outline"
                         disabled={working}
-                        onPress={() => setChoosingMember(true)}
+                        onPress={() => { setSelectedMemberId(null); setChoosingMember(true); }}
                     />
                     <GroupActionButton
                         title="グループを無効化"
@@ -213,63 +227,70 @@ export function GroupAccessActions({
                 visible={choosingMember}
                 transparent
                 animationType="fade"
-                onRequestClose={() => {
-                    if (!working) setChoosingMember(false);
-                }}
+                onRequestClose={closeMemberPicker}
             >
-                <View
-                    style={{
-                        flex: 1,
-                        justifyContent: "center",
-                        padding: 24,
-                        backgroundColor: "rgba(0,0,0,0.4)",
-                    }}
-                >
-                    <View
-                        style={{
-                            maxHeight: "80%",
-                            backgroundColor: "white",
-                            padding: 16,
-                            borderRadius: 12,
-                        }}
-                    >
-                        <Text>除外するメンバーを選択</Text>
-                        <ScrollView
-                            style={{ flexGrow: 0, flexShrink: 1 }}
-                            keyboardShouldPersistTaps="handled"
-                        >
-                            {(group.members ?? [])
-                                .filter(
-                                    (member) =>
-                                        member && member.role !== "OWNER",
-                                )
-                                .map((member) => (
-                                    <View
-                                        key={member!.userId}
-                                        style={{ marginVertical: 8 }}
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>除外するメンバーを選択</Text>
+                        <Text style={styles.modalDescription}>
+                            「{group.name}」から除外するメンバーを1人選択してください。
+                        </Text>
+                        <ScrollView style={{ flexGrow: 0, flexShrink: 1 }} keyboardShouldPersistTaps="handled">
+                            {removableMembers.length === 0 && (
+                                <Text style={styles.emptyText}>除外できるメンバーはいません。</Text>
+                            )}
+                            {removableMembers.map(member => {
+                                const selected = member.userId === selectedMemberId;
+                                const displayName = member.displayName?.trim() || "ユーザー";
+                                const iconUrl = member.iconImagePath ? memberIconUrls[member.iconImagePath] : undefined;
+                                return (
+                                    <Pressable
+                                        key={member.userId}
+                                        accessibilityRole="radio"
+                                        accessibilityState={{ checked: selected, disabled: working }}
+                                        accessibilityLabel={displayName}
+                                        disabled={working}
+                                        onPress={() => setSelectedMemberId(member.userId)}
+                                        style={({ pressed }) => [
+                                            styles.memberRow,
+                                            selected && styles.memberRowSelected,
+                                            pressed && !working && styles.actionPressed,
+                                            working && styles.disabledButton,
+                                        ]}
                                     >
-                                        <GroupActionButton
-                                            title={
-                                                member!.displayName ||
-                                                member!.userId
-                                            }
-                                            disabled={working}
-                                            onPress={() =>
-                                                confirm(
-                                                    "メンバーを除外",
-                                                    "removeShareGroupMember",
-                                                    member!.userId,
-                                                )
-                                            }
+                                        {iconUrl ? (
+                                            <Image source={{ uri: iconUrl }} style={styles.memberIcon} resizeMode="cover" />
+                                        ) : (
+                                            <View style={[styles.memberIcon, styles.memberPlaceholder]}>
+                                                <Text style={styles.memberInitial}>{displayName.slice(0, 1).toUpperCase()}</Text>
+                                            </View>
+                                        )}
+                                        <Text style={styles.memberName}>{displayName}</Text>
+                                        <MaterialCommunityIcons
+                                            name={selected ? "radiobox-marked" : "radiobox-blank"}
+                                            size={24}
+                                            color={selected ? "#0e7185" : "#819198"}
                                         />
-                                    </View>
-                                ))}
+                                    </Pressable>
+                                );
+                            })}
                         </ScrollView>
-                        <GroupActionButton
-                            title="キャンセル"
-                            disabled={working}
-                            onPress={() => setChoosingMember(false)}
-                        />
+                        <View style={styles.pickerActions}>
+                            <GroupActionButton
+                                title="選択したメンバーを除外"
+                                destructive
+                                icon="account-minus-outline"
+                                disabled={working || !selectedMember}
+                                onPress={() => {
+                                    if (selectedMember) confirm(
+                                        "メンバーを除外：" + (selectedMember.displayName || "選択したメンバー"),
+                                        "removeShareGroupMember",
+                                        selectedMember.userId,
+                                    );
+                                }}
+                            />
+                            <GroupActionButton title="キャンセル" disabled={working} onPress={closeMemberPicker} />
+                        </View>
                     </View>
                 </View>
             </Modal>
@@ -444,6 +465,30 @@ export function GroupAccessOperationsPanel({
 }
 
 const styles = StyleSheet.create({
+    modalOverlay: {
+        flex: 1, backgroundColor: "rgba(0,0,0,0.35)",
+        alignItems: "center", justifyContent: "center", padding: 20,
+    },
+    modalContent: {
+        width: "100%", maxHeight: "80%", borderRadius: 14,
+        borderWidth: 1, borderColor: "#dfe7ea", padding: 18, backgroundColor: "#fff",
+    },
+    modalTitle: { fontSize: 18, fontWeight: "bold", color: "#203f4f", marginBottom: 8 },
+    modalDescription: { fontSize: 13, color: "#555", marginBottom: 12 },
+    memberRow: {
+        flexDirection: "row", alignItems: "center", gap: 10, padding: 10,
+        borderWidth: 1, borderColor: "#ddd", borderRadius: 8,
+        marginBottom: 8, backgroundColor: "#fff",
+    },
+    memberRowSelected: { borderColor: "#4b6f8f", backgroundColor: "#eef3f7" },
+    memberIcon: { width: 44, height: 44, borderRadius: 22 },
+    memberPlaceholder: {
+        alignItems: "center", justifyContent: "center", backgroundColor: "#e3edf2",
+    },
+    memberInitial: { color: "#4b6f8f", fontSize: 18, fontWeight: "700" },
+    memberName: { flex: 1, color: "#333", fontSize: 15, fontWeight: "bold" },
+    pickerActions: { marginTop: 12, gap: 8 },
+    emptyText: { paddingVertical: 20, color: "#71838c", textAlign: "center" },
     actionButton: {
         minHeight: 40,
         paddingVertical: 10,

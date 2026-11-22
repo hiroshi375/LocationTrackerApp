@@ -1,0 +1,67 @@
+{
+  "accountId": "005466002626",
+  "region": "ap-northeast-1",
+  "apiId": "yafsunxnuzb6hf2em4dxawtjfe",
+  "tables": [
+    {
+      "logicalName": "HistoricalShareGrant",
+      "name": "HistoricalShareGrant-yafsunxnuzb6hf2em4dxawtjfe-NONE",
+      "pitr": true
+    },
+    {
+      "logicalName": "LocationLog",
+      "name": "LocationLog-yafsunxnuzb6hf2em4dxawtjfe-NONE",
+      "pitr": true
+    },
+    {
+      "logicalName": "RecordingSession",
+      "name": "RecordingSession-yafsunxnuzb6hf2em4dxawtjfe-NONE",
+      "pitr": true
+    },
+    {
+      "logicalName": "ShareGroup",
+      "name": "ShareGroup-yafsunxnuzb6hf2em4dxawtjfe-NONE",
+      "pitr": true
+    },
+    {
+      "logicalName": "ShareGroupMember",
+      "name": "ShareGroupMember-yafsunxnuzb6hf2em4dxawtjfe-NONE",
+      "pitr": true
+    },
+    {
+      "logicalName": "UserActivityMonthlySummary",
+      "name": "UserActivityMonthlySummary-yafsunxnuzb6hf2em4dxawtjfe-NONE",
+      "pitr": false
+    },
+    {
+      "logicalName": "UserActivityWeeklySummary",
+      "name": "UserActivityWeeklySummary-yafsunxnuzb6hf2em4dxawtjfe-NONE",
+      "pitr": false
+    },
+    {
+      "logicalName": "UserProfile",
+      "name": "UserProfile-yafsunxnuzb6hf2em4dxawtjfe-NONE",
+      "pitr": true
+    },
+    {
+      "logicalName": "AccountDeletionTable",
+      "name": "amplify-locationtrackerapp-satouhiroshi-sandbox-0dc5-HistoricalShareOperations6EF4E006-1DL2GB23HMVRL-AccountDeletionTable8912A0D1-11PZLUS7WNBWM",
+      "pitr": true
+    },
+    {
+      "logicalName": "GroupAccessOperationTable",
+      "name": "amplify-locationtrackerapp-satouhiroshi-sandbox-0dc5-HistoricalShareOperations6EF4E006-1DL2GB23HMVRL-GroupAccessOperationTableFEA585D0-1SKSV04BQHMAK",
+      "pitr": true
+    },
+    {
+      "logicalName": "HistoricalShareOperationTable",
+      "name": "amplify-locationtrackerapp-satouhiroshi-sandbox-0dc5-HistoricalShareOperations6EF4E006-1DL2GB23HMVRL-HistoricalShareOperationTableE93257FD-18S6REPH7BRRJ",
+      "pitr": true
+    },
+    {
+      "logicalName": "SessionLogIndexTable",
+      "name": "amplify-locationtrackerapp-satouhiroshi-sandbox-0dc5-HistoricalShareOperations6EF4E006-1DL2GB23HMVRL-SessionLogIndexTable331E5712-1H63AMFHEVISK",
+      "pitr": true
+    }
+  ]
+}

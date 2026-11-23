@@ -18,6 +18,7 @@ import {
     Animated,
     FlatList,
     Image,
+    Modal,
     Platform,
     Pressable,
     StyleSheet,
@@ -3278,9 +3279,18 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                 </View>
             )}
 
-            {showLocationLogList &&
-                isActivityHistoryMap &&
-                !isSharedActivityHistory && (
+            {/* ネイティブのModalで、地図上のスタート・ゴールより前面に描画する */}
+            <Modal
+                visible={showLocationLogList && isActivityHistoryMap && !isSharedActivityHistory}
+                transparent
+                animationType="none"
+                statusBarTranslucent={false}
+                onRequestClose={() => {
+                    setShowLocationLogList(false);
+                    setSelectedLogId(null);
+                }}
+            >
+                <View style={styles.locationLogListModalContainer} pointerEvents="box-none">
                     <View
                         style={[
                             styles.locationLogListPanel,
@@ -3491,7 +3501,8 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                             />
                         </View>
                     </View>
-                )}
+                </View>
+            </Modal>
         </View>
     );
 }
@@ -4744,6 +4755,10 @@ const styles = StyleSheet.create({
         fontWeight: "bold",
     },
 
+    locationLogListModalContainer: {
+        flex: 1,
+    },
+
     locationLogListPanel: {
         position: "absolute",
         left: 8,
@@ -4754,6 +4769,8 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: "#c8d6e0",
         overflow: "hidden",
+        // Modal自体が地図とは別の最前面レイヤーに描画されるため、
+        // スタート・ゴールアイコン側とのzIndex/elevation競合を避ける。
     },
 
     locationLogListHeader: {
@@ -4813,56 +4830,58 @@ const styles = StyleSheet.create({
     },
 
     locationLogNoHeader: {
-        width: 22,
-        flexShrink: 1,
+        width: 26,
+        flexShrink: 0,
+        textAlign: "left",
         fontSize: 11,
         color: "#666666",
     },
 
     locationLogTimeHeader: {
-        width: 56,
-        flexShrink: 1,
+        flex: 1.3,
+        minWidth: 0,
+        textAlign: "center",
         fontSize: 11,
         color: "#666666",
     },
 
     locationLogDistanceHeader: {
-        width: 48,
-        flexShrink: 1,
+        flex: 0.9,
+        minWidth: 0,
         textAlign: "right",
-        paddingRight: 4,
+        paddingRight: 2,
         fontSize: 11,
         color: "#666666",
     },
 
     locationLogElapsedHeader: {
-        width: 48,
-        flexShrink: 1,
-        textAlign: "right",
-        paddingRight: 4,
+        flex: 1.15,
+        minWidth: 0,
+        textAlign: "center",
         fontSize: 11,
         color: "#666666",
     },
 
     locationLogSourceHeader: {
-        width: 78,
-        flexShrink: 1,
+        flex: 1.35,
+        minWidth: 0,
+        textAlign: "center",
         fontSize: 11,
         color: "#666666",
     },
 
     locationLogAccuracyHeader: {
-        width: 44,
-        marginRight: 8,
-        flexShrink: 1,
+        flex: 0.9,
+        minWidth: 0,
         textAlign: "right",
+        paddingRight: 2,
         fontSize: 11,
         color: "#666666",
     },
 
     locationLogDeleteHeaderSpace: {
-        width: 40,
-        marginLeft: "auto",
+        width: 42,
+        flexShrink: 0,
     },
 
     locationLogListItem: {
@@ -4885,44 +4904,46 @@ const styles = StyleSheet.create({
     },
 
     locationLogNo: {
-        width: 22,
-        flexShrink: 1,
+        width: 26,
+        flexShrink: 0,
+        textAlign: "left",
         fontSize: 12,
         color: "#555555",
     },
 
     locationLogTime: {
-        width: 56,
-        flexShrink: 1,
+        flex: 1.3,
+        minWidth: 0,
+        textAlign: "center",
         fontSize: 12,
         fontWeight: "600",
         color: "#222222",
     },
 
     locationLogDistance: {
-        width: 48,
-        flexShrink: 1,
+        flex: 0.9,
+        minWidth: 0,
         textAlign: "right",
-        paddingRight: 4,
+        paddingRight: 2,
         fontSize: 11,
         color: "#444444",
     },
 
     locationLogElapsed: {
-        width: 48,
-        flexShrink: 1,
-        textAlign: "right",
-        paddingRight: 4,
+        flex: 1.15,
+        minWidth: 0,
+        textAlign: "center",
         fontSize: 11,
         fontVariant: ["tabular-nums"],
         color: "#444444",
     },
 
     locationLogSourceColumn: {
-        width: 78,
-        flexShrink: 1,
+        flex: 1.35,
+        minWidth: 0,
         flexDirection: "row",
         alignItems: "center",
+        justifyContent: "center",
         gap: 3,
     },
 
@@ -4948,16 +4969,17 @@ const styles = StyleSheet.create({
     },
 
     locationLogSourceText: {
-        flex: 1,
+        flexShrink: 1,
+        maxWidth: 55,
         fontSize: 9,
         color: "#666666",
     },
 
     locationLogAccuracy: {
-        width: 44,
-        marginRight: 8,
-        flexShrink: 1,
+        flex: 0.9,
+        minWidth: 0,
         textAlign: "right",
+        paddingRight: 2,
         fontSize: 12,
         color: "#444444",
     },
@@ -4968,8 +4990,8 @@ const styles = StyleSheet.create({
     },
 
     locationLogDeleteButton: {
-        width: 40,
-        marginLeft: "auto",
+        width: 42,
+        flexShrink: 0,
         paddingVertical: 7,
         borderRadius: 6,
         backgroundColor: "#b94a48",

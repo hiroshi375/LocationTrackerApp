@@ -3296,7 +3296,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                                 </Text>
 
                                 <Text style={styles.locationLogListSubTitle}>
-                                    {editableLocationLogs.length}件
+                                    {editableLocationLogs.length}件 · 距離は前のポイントから
                                 </Text>
                             </View>
 
@@ -3323,6 +3323,9 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                             <Text style={styles.locationLogTimeHeader}>
                                 時刻
                             </Text>
+                            <Text style={styles.locationLogDistanceHeader}>
+                                距離
+                            </Text>
                             <Text style={styles.locationLogSourceHeader}>
                                 取得元
                             </Text>
@@ -3342,6 +3345,20 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                             }}
                             renderItem={({ item, index }) => {
                                 const isSelected = item.id === selectedLogId;
+                                // 経路補正の採否に関係なく、一覧の直前の原本ポイントと比較する。
+                                const previousPoint = editableLocationLogs[index - 1];
+                                const distanceMeters = previousPoint
+                                    ? calculateDistanceMeters(
+                                          previousPoint.latitude,
+                                          previousPoint.longitude,
+                                          item.latitude,
+                                          item.longitude,
+                                      )
+                                    : null;
+                                const distanceText =
+                                    distanceMeters !== null && Number.isFinite(distanceMeters)
+                                        ? `${distanceMeters.toFixed(1)}m`
+                                        : "—";
 
                                 const sourceText =
                                     item.source === "background" ? "B" : "F";
@@ -3382,11 +3399,16 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                                             )}
                                         </Text>
 
-                                        <View
-                                            style={
-                                                styles.locationLogSourceColumn
-                                            }
+                                        <Text
+                                            style={styles.locationLogDistance}
+                                            numberOfLines={1}
+                                            adjustsFontSizeToFit
+                                            accessibilityLabel={`前のポイントからの距離 ${distanceText}`}
                                         >
+                                            {distanceText}
+                                        </Text>
+
+                                        <View style={styles.locationLogSourceColumn}>
                                             <Text
                                                 style={[
                                                     styles.locationLogSourceBadge,
@@ -3402,6 +3424,7 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                                                 style={
                                                     styles.locationLogSourceText
                                                 }
+                                                numberOfLines={1}
                                             >
                                                 {sourceDetail}
                                             </Text>
@@ -4753,13 +4776,21 @@ const styles = StyleSheet.create({
     },
 
     locationLogNoHeader: {
-        width: 34,
+        width: 26,
         fontSize: 11,
         color: "#666666",
     },
 
     locationLogTimeHeader: {
-        width: 70,
+        width: 62,
+        fontSize: 11,
+        color: "#666666",
+    },
+
+    locationLogDistanceHeader: {
+        width: 56,
+        textAlign: "right",
+        paddingRight: 6,
         fontSize: 11,
         color: "#666666",
     },
@@ -4771,14 +4802,14 @@ const styles = StyleSheet.create({
     },
 
     locationLogAccuracyHeader: {
-        width: 62,
+        width: 52,
         textAlign: "right",
         fontSize: 11,
         color: "#666666",
     },
 
     locationLogDeleteHeaderSpace: {
-        width: 58,
+        width: 48,
     },
 
     locationLogListItem: {
@@ -4798,23 +4829,30 @@ const styles = StyleSheet.create({
     },
 
     locationLogNo: {
-        width: 34,
+        width: 26,
         fontSize: 12,
         color: "#555555",
     },
 
     locationLogTime: {
-        width: 70,
+        width: 62,
         fontSize: 12,
         fontWeight: "600",
         color: "#222222",
     },
 
+    locationLogDistance: {
+        width: 56,
+        textAlign: "right",
+        paddingRight: 6,
+        fontSize: 11,
+        color: "#444444",
+    },
+
     locationLogSourceColumn: {
         flex: 1,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 4,
+        alignItems: "flex-start",
+        gap: 2,
     },
 
     locationLogSourceBadge: {
@@ -4839,12 +4877,13 @@ const styles = StyleSheet.create({
     },
 
     locationLogSourceText: {
-        fontSize: 10,
+        maxWidth: "100%",
+        fontSize: 9,
         color: "#666666",
     },
 
     locationLogAccuracy: {
-        width: 62,
+        width: 52,
         textAlign: "right",
         fontSize: 12,
         color: "#444444",
@@ -4856,7 +4895,7 @@ const styles = StyleSheet.create({
     },
 
     locationLogDeleteButton: {
-        width: 52,
+        width: 42,
         marginLeft: 6,
         paddingVertical: 7,
         borderRadius: 6,

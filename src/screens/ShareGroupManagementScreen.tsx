@@ -1117,7 +1117,7 @@ export default function ShareGroupManagementScreen() {
                                         </View>
                                     </View>
 
-                                    <GroupAccessActions group={group} onChanged={loadGroups} />
+                                    <GroupAccessActions group={group} memberIconUrls={memberIconUrls} onChanged={loadGroups} />
                                     {isOwner && !group.operationId && (
                                         <View style={styles.ownerActionArea}>
                                             <Pressable

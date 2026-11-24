@@ -18,6 +18,7 @@ import {
     Animated,
     FlatList,
     Image,
+    Modal,
     Platform,
     Pressable,
     StyleSheet,
@@ -3278,9 +3279,18 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                 </View>
             )}
 
-            {showLocationLogList &&
-                isActivityHistoryMap &&
-                !isSharedActivityHistory && (
+            {/* ネイティブのModalで、地図上のスタート・ゴールより前面に描画する */}
+            <Modal
+                visible={showLocationLogList && isActivityHistoryMap && !isSharedActivityHistory}
+                transparent
+                animationType="none"
+                statusBarTranslucent={false}
+                onRequestClose={() => {
+                    setShowLocationLogList(false);
+                    setSelectedLogId(null);
+                }}
+            >
+                <View style={styles.locationLogListModalContainer} pointerEvents="box-none">
                     <View
                         style={[
                             styles.locationLogListPanel,
@@ -3290,13 +3300,13 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                         ]}
                     >
                         <View style={styles.locationLogListHeader}>
-                            <View>
+                            <View style={styles.locationLogListHeading}>
                                 <Text style={styles.locationLogListTitle}>
                                     記録ポイント一覧
                                 </Text>
 
                                 <Text style={styles.locationLogListSubTitle}>
-                                    {editableLocationLogs.length}件
+                                    {editableLocationLogs.length}件 · 経過時間・距離は前のポイントから
                                 </Text>
                             </View>
 
@@ -3318,140 +3328,181 @@ export default function LocationMapScreen({ route, navigation }: Props) {
                             </Pressable>
                         </View>
 
-                        <View style={styles.locationLogListColumnHeader}>
-                            <Text style={styles.locationLogNoHeader}>No.</Text>
-                            <Text style={styles.locationLogTimeHeader}>
-                                時刻
-                            </Text>
-                            <Text style={styles.locationLogSourceHeader}>
-                                取得元
-                            </Text>
-                            <Text style={styles.locationLogAccuracyHeader}>
-                                精度
-                            </Text>
-                            <View style={styles.locationLogDeleteHeaderSpace} />
-                        </View>
+                        <View style={styles.locationLogTable}>
+                            <View style={styles.locationLogListColumnHeader}>
+                                <Text style={styles.locationLogNoHeader} numberOfLines={1} adjustsFontSizeToFit>No.</Text>
+                                <Text style={styles.locationLogTimeHeader} numberOfLines={1} adjustsFontSizeToFit>
+                                    時刻
+                                </Text>
+                                <Text style={styles.locationLogElapsedHeader} numberOfLines={1} adjustsFontSizeToFit>
+                                    経過時間
+                                </Text>
+                                <Text style={styles.locationLogDistanceHeader} numberOfLines={1} adjustsFontSizeToFit>
+                                    距離
+                                </Text>
+                                <Text style={styles.locationLogSourceHeader} numberOfLines={1} adjustsFontSizeToFit>
+                                    取得元
+                                </Text>
+                                <Text style={styles.locationLogAccuracyHeader} numberOfLines={1} adjustsFontSizeToFit>
+                                    精度
+                                </Text>
+                                <View style={styles.locationLogDeleteHeaderSpace} />
+                            </View>
 
-                        <FlatList
-                            style={styles.locationLogFlatList}
-                            data={editableLocationLogs}
-                            keyExtractor={(item) => item.id}
-                            extraData={{
-                                selectedLogId,
-                                deletingLogId,
-                            }}
-                            renderItem={({ item, index }) => {
-                                const isSelected = item.id === selectedLogId;
+                            <FlatList
+                                style={styles.locationLogFlatList}
+                                data={editableLocationLogs}
+                                keyExtractor={(item) => item.id}
+                                extraData={{
+                                    selectedLogId,
+                                    deletingLogId,
+                                }}
+                                renderItem={({ item, index }) => {
+                                    const isSelected = item.id === selectedLogId;
+                                    // 経路補正の採否に関係なく、一覧の直前の原本ポイントと比較する。
+                                    const previousPoint = editableLocationLogs[index - 1];
+                                    const distanceMeters = previousPoint
+                                        ? calculateDistanceMeters(
+                                              previousPoint.latitude,
+                                              previousPoint.longitude,
+                                              item.latitude,
+                                              item.longitude,
+                                          )
+                                        : null;
+                                    const distanceText =
+                                        distanceMeters !== null && Number.isFinite(distanceMeters)
+                                            ? `${distanceMeters.toFixed(1)}m`
+                                            : "—";
 
-                                const sourceText =
-                                    item.source === "background" ? "B" : "F";
+                                    const sourceText =
+                                        item.source === "background" ? "B" : "F";
 
-                                const sourceDetail =
-                                    item.source === "background"
-                                        ? "background"
-                                        : "foreground";
+                                    const sourceDetail =
+                                        item.source === "background"
+                                            ? "Background"
+                                            : "Foreground";
 
-                                const accuracyText =
-                                    item.accuracy !== null &&
-                                    item.accuracy !== undefined
-                                        ? `${Number(item.accuracy).toFixed(1)}m`
-                                        : "-";
+                                    const accuracyText =
+                                        item.accuracy !== null &&
+                                        item.accuracy !== undefined
+                                            ? `${Number(item.accuracy).toFixed(1)}m`
+                                            : "-";
 
-                                const isLowAccuracy =
-                                    typeof item.accuracy === "number" &&
-                                    item.accuracy >= 100;
+                                    const isLowAccuracy =
+                                        typeof item.accuracy === "number" &&
+                                        item.accuracy >= 100;
 
-                                return (
-                                    <Pressable
-                                        style={[
-                                            styles.locationLogListItem,
-                                            isSelected &&
-                                                styles.locationLogListItemSelected,
-                                        ]}
-                                        onPress={() =>
-                                            handleSelectLocationLog(item)
-                                        }
-                                    >
-                                        <Text style={styles.locationLogNo}>
-                                            {index + 1}
-                                        </Text>
-
-                                        <Text style={styles.locationLogTime}>
-                                            {formatTimeWithSeconds(
-                                                item.recordedAt,
-                                            )}
-                                        </Text>
-
-                                        <View
-                                            style={
-                                                styles.locationLogSourceColumn
+                                    return (
+                                        <Pressable
+                                            style={[
+                                                styles.locationLogListItem,
+                                                isSelected &&
+                                                    styles.locationLogListItemSelected,
+                                            ]}
+                                            onPress={() =>
+                                                handleSelectLocationLog(item)
                                             }
                                         >
-                                            <Text
-                                                style={[
-                                                    styles.locationLogSourceBadge,
-                                                    item.source === "background"
-                                                        ? styles.locationLogSourceBackground
-                                                        : styles.locationLogSourceForeground,
-                                                ]}
-                                            >
-                                                {sourceText}
+                                            <Text style={styles.locationLogNo} numberOfLines={1} adjustsFontSizeToFit>
+                                                {index + 1}
+                                            </Text>
+
+                                            <Text style={styles.locationLogTime} numberOfLines={1} adjustsFontSizeToFit>
+                                                {formatTimeWithSeconds(
+                                                    item.recordedAt,
+                                                )}
                                             </Text>
 
                                             <Text
-                                                style={
-                                                    styles.locationLogSourceText
-                                                }
+                                                style={styles.locationLogElapsed}
+                                                numberOfLines={1}
+                                                adjustsFontSizeToFit
+                                                accessibilityLabel="前のポイントからの経過時間"
                                             >
-                                                {sourceDetail}
+                                                {formatPointElapsedTime(previousPoint?.recordedAt, item.recordedAt)}
                                             </Text>
-                                        </View>
 
-                                        <Text
-                                            style={[
-                                                styles.locationLogAccuracy,
-                                                isLowAccuracy &&
-                                                    styles.locationLogAccuracyWarning,
-                                            ]}
-                                        >
-                                            {accuracyText}
-                                        </Text>
-
-                                        {!isSampleActivity && (
-                                            <Pressable
-                                                style={[
-                                                    styles.locationLogDeleteButton,
-                                                    deletingLogId === item.id &&
-                                                        styles.locationLogDeleteButtonDisabled,
-                                                ]}
-                                                disabled={
-                                                    deletingLogId === item.id
-                                                }
-                                                onPress={(event) => {
-                                                    event.stopPropagation();
-
-                                                    handleDeleteLocationLog(
-                                                        item,
-                                                    );
-                                                }}
+                                            <Text
+                                                style={styles.locationLogDistance}
+                                                numberOfLines={1}
+                                                adjustsFontSizeToFit
+                                                accessibilityLabel={`前のポイントからの距離 ${distanceText}`}
                                             >
+                                                {distanceText}
+                                            </Text>
+
+                                            <View style={styles.locationLogSourceColumn}>
+                                                <Text
+                                                    style={[
+                                                        styles.locationLogSourceBadge,
+                                                        item.source === "background"
+                                                            ? styles.locationLogSourceBackground
+                                                            : styles.locationLogSourceForeground,
+                                                    ]}
+                                                >
+                                                    {sourceText}
+                                                </Text>
+
                                                 <Text
                                                     style={
-                                                        styles.locationLogDeleteButtonText
+                                                        styles.locationLogSourceText
                                                     }
+                                                    numberOfLines={1}
+                                                    adjustsFontSizeToFit
                                                 >
-                                                    {deletingLogId === item.id
-                                                        ? "..."
-                                                        : "削除"}
+                                                    {sourceDetail}
                                                 </Text>
-                                            </Pressable>
-                                        )}
-                                    </Pressable>
-                                );
-                            }}
-                        />
+                                            </View>
+
+                                            <Text
+                                                style={[
+                                                    styles.locationLogAccuracy,
+                                                    isLowAccuracy &&
+                                                        styles.locationLogAccuracyWarning,
+                                                ]}
+                                                numberOfLines={1}
+                                                adjustsFontSizeToFit
+                                            >
+                                                {accuracyText}
+                                            </Text>
+
+                                            {!isSampleActivity && (
+                                                <Pressable
+                                                    style={[
+                                                        styles.locationLogDeleteButton,
+                                                        deletingLogId === item.id &&
+                                                            styles.locationLogDeleteButtonDisabled,
+                                                    ]}
+                                                    disabled={
+                                                        deletingLogId === item.id
+                                                    }
+                                                    onPress={(event) => {
+                                                        event.stopPropagation();
+
+                                                        handleDeleteLocationLog(
+                                                            item,
+                                                        );
+                                                    }}
+                                                >
+                                                    <Text
+                                                        style={
+                                                            styles.locationLogDeleteButtonText
+                                                        }
+                                                    >
+                                                        {deletingLogId === item.id
+                                                            ? "..."
+                                                            : "削除"}
+                                                    </Text>
+                                                </Pressable>
+                                            )}
+                                        </Pressable>
+                                    );
+                                }}
+                            />
+                        </View>
                     </View>
-                )}
+                </View>
+            </Modal>
         </View>
     );
 }
@@ -3519,6 +3570,17 @@ function formatTimeWithSeconds(value: string) {
     const ss = String(date.getSeconds()).padStart(2, "0");
 
     return `${hh}:${mi}:${ss}`;
+}
+
+function formatPointElapsedTime(previousValue: string | undefined, value: string) {
+    if (!previousValue) return "—";
+    const elapsedMs = Date.parse(value) - Date.parse(previousValue);
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return "—";
+    const seconds = Math.round(elapsedMs / 1000);
+    const ss = String(seconds % 60).padStart(2, "0");
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${String(minutes).padStart(2, "0")}:${ss}`;
+    return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}:${ss}`;
 }
 
 function formatPeriod(startValue: string, endValue: string) {
@@ -4693,6 +4755,10 @@ const styles = StyleSheet.create({
         fontWeight: "bold",
     },
 
+    locationLogListModalContainer: {
+        flex: 1,
+    },
+
     locationLogListPanel: {
         position: "absolute",
         left: 8,
@@ -4703,6 +4769,8 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: "#c8d6e0",
         overflow: "hidden",
+        // Modal自体が地図とは別の最前面レイヤーに描画されるため、
+        // スタート・ゴールアイコン側とのzIndex/elevation競合を避ける。
     },
 
     locationLogListHeader: {
@@ -4719,6 +4787,11 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: "bold",
         color: "#333333",
+    },
+
+    locationLogListHeading: {
+        flex: 1,
+        marginRight: 8,
     },
 
     locationLogListSubTitle: {
@@ -4752,33 +4825,63 @@ const styles = StyleSheet.create({
         borderBottomColor: "#dddddd",
     },
 
+    locationLogTable: {
+        flex: 1,
+    },
+
     locationLogNoHeader: {
-        width: 34,
+        width: 26,
+        flexShrink: 0,
+        textAlign: "left",
         fontSize: 11,
         color: "#666666",
     },
 
     locationLogTimeHeader: {
-        width: 70,
+        flex: 1.3,
+        minWidth: 0,
+        textAlign: "center",
+        fontSize: 11,
+        color: "#666666",
+    },
+
+    locationLogDistanceHeader: {
+        flex: 0.9,
+        minWidth: 0,
+        textAlign: "right",
+        paddingRight: 2,
+        fontSize: 11,
+        color: "#666666",
+    },
+
+    locationLogElapsedHeader: {
+        flex: 1.15,
+        minWidth: 0,
+        textAlign: "center",
         fontSize: 11,
         color: "#666666",
     },
 
     locationLogSourceHeader: {
-        flex: 1,
+        flex: 1.35,
+        minWidth: 0,
+        textAlign: "center",
         fontSize: 11,
         color: "#666666",
     },
 
     locationLogAccuracyHeader: {
-        width: 62,
+        flex: 0.9,
+        minWidth: 0,
         textAlign: "right",
+        paddingRight: 2,
         fontSize: 11,
         color: "#666666",
     },
 
     locationLogDeleteHeaderSpace: {
-        width: 58,
+        width: 42,
+        flexShrink: 0,
     },
 
     locationLogListItem: {
@@ -4789,6 +4892,9 @@ const styles = StyleSheet.create({
         paddingVertical: 6,
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: "#dddddd",
+        borderLeftWidth: 4,
+        borderLeftColor: "transparent",
+        paddingLeft: 4,
     },
 
     locationLogListItemSelected: {
@@ -4798,30 +4904,54 @@ const styles = StyleSheet.create({
     },
 
     locationLogNo: {
-        width: 34,
+        width: 26,
+        flexShrink: 0,
+        textAlign: "left",
         fontSize: 12,
         color: "#555555",
     },
 
     locationLogTime: {
-        width: 70,
+        flex: 1.3,
+        minWidth: 0,
+        textAlign: "center",
         fontSize: 12,
         fontWeight: "600",
         color: "#222222",
     },
 
+    locationLogDistance: {
+        flex: 0.9,
+        minWidth: 0,
+        textAlign: "right",
+        paddingRight: 2,
+        fontSize: 11,
+        color: "#444444",
+    },
+
+    locationLogElapsed: {
+        flex: 1.15,
+        minWidth: 0,
+        textAlign: "center",
+        fontSize: 11,
+        fontVariant: ["tabular-nums"],
+        color: "#444444",
+    },
+
     locationLogSourceColumn: {
-        flex: 1,
+        flex: 1.35,
+        minWidth: 0,
         flexDirection: "row",
         alignItems: "center",
-        gap: 4,
+        justifyContent: "center",
+        gap: 3,
     },
 
     locationLogSourceBadge: {
-        width: 22,
-        height: 22,
-        lineHeight: 22,
-        borderRadius: 11,
+        width: 20,
+        height: 20,
+        lineHeight: 20,
+        borderRadius: 10,
         textAlign: "center",
         overflow: "hidden",
         fontSize: 11,
@@ -4839,13 +4969,17 @@ const styles = StyleSheet.create({
     },
 
     locationLogSourceText: {
-        fontSize: 10,
+        flexShrink: 1,
+        maxWidth: 55,
+        fontSize: 9,
         color: "#666666",
     },
 
     locationLogAccuracy: {
-        width: 62,
+        flex: 0.9,
+        minWidth: 0,
         textAlign: "right",
+        paddingRight: 2,
         fontSize: 12,
         color: "#444444",
     },
@@ -4856,8 +4990,8 @@ const styles = StyleSheet.create({
     },
 
     locationLogDeleteButton: {
-        width: 52,
-        marginLeft: 6,
+        width: 42,
+        flexShrink: 0,
         paddingVertical: 7,
         borderRadius: 6,
         backgroundColor: "#b94a48",

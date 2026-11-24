@@ -1,16 +1,16 @@
 {
     "android": {
         "latestVersion": "1.0.6",
-        "latestBuild": 30,
-        "minimumSupportedBuild": 30,
+        "latestBuild": 38,
+        "minimumSupportedBuild": 38,
         "storeUrl": "https://play.google.com/store/apps/details?id=com.hiroshisato.locationtrackerapp",
-        "message": "自動記録の保存・破棄、移動経路・距離表示、共有履歴の不具合を改善した1.0.6（30）へ更新してください。記録・共有を停止してからGoogle Playで更新してください。"
+        "message": "共有グループと記録ポイント一覧の表示を改善した1.0.6（38）へ更新してください。記録・共有を停止してからGoogle Playで更新してください。"
     },
     "ios": {
-        "latestVersion": "1.0.6",
-        "latestBuild": 18,
-        "minimumSupportedBuild": 18,
+        "latestVersion": "1.0.7",
+        "latestBuild": 26,
+        "minimumSupportedBuild": 26,
         "storeUrl": "https://apps.apple.com/app/id6818737493",
-        "message": "自動記録の保存・破棄、移動経路・距離表示、共有履歴の不具合を改善した1.0.6（18）へ更新してください。記録・共有を停止してからApp Storeで更新してください。"
+        "message": "共有グループと記録ポイント一覧の表示を改善した1.0.7（26）へ更新してください。記録・共有を停止してからApp Storeで更新してください。"
     }
 }

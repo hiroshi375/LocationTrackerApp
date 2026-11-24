@@ -4669,11 +4669,14 @@ const styles = StyleSheet.create({
     modalContent: {
         width: "100%",
         maxHeight: "80%",
-        borderRadius: 12,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: "#dfe7ea",
         padding: 18,
         backgroundColor: "#fff",
     },
     modalTitle: {
+        color: "#203f4f",
         fontSize: 18,
         fontWeight: "bold",
         marginBottom: 12,

@@ -105,7 +105,8 @@
             "expo-image-picker",
             "./plugins/withImagePickerCropColors",
             "./plugins/withIosPodDeploymentTarget",
-            "./plugins/withIosSceneLifecycle"
+            "./plugins/withIosSceneLifecycle",
+            "./plugins/withAndroidOptionalFeatures"
         ],
         "extra": {
             "eas": {
